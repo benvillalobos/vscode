@@ -216,4 +216,37 @@
 			color: var(--vscode-editorActionList-focusForeground);
 		}
 	}
+
+	&.submenu-parent {
+		position: relative;
+	}
+
+	&.submenu-item {
+		padding: 4px 8px;
+		margin: 1px 4px;
+		font-size: 12px;
+		line-height: 20px;
+
+		&:hover {
+			background: var(--vscode-editorActionList-focusBackground);
+			color: var(--vscode-editorActionList-focusForeground);
+		}
+	}
+}
+
+.submenu-container {
+	position: relative;
+
+	.submenu-items {
+		position: absolute;
+		left: 100%;
+		top: 0;
+		min-width: 160px;
+		background-color: var(--vscode-editorHoverWidget-background);
+		border: 1px solid var(--vscode-editorHoverWidget-border);
+		border-radius: 3px;
+		box-shadow: 0 2px 8px rgba(0, 0, 0, 0.16);
+		z-index: 1000;
+		padding: 4px 0;
+	}
 }

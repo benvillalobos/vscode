@@ -14,7 +14,7 @@ import { KeybindingLabel } from '../../../../../../../base/browser/ui/keybinding
 import { IAction } from '../../../../../../../base/common/actions.js';
 import { Codicon } from '../../../../../../../base/common/codicons.js';
 import { ResolvedKeybinding } from '../../../../../../../base/common/keybindings.js';
-import { IObservable, autorun, constObservable, derived, observableFromEvent, observableValue } from '../../../../../../../base/common/observable.js';
+import { IObservable, ISettableObservable, autorun, constObservable, derived, observableFromEvent, observableValue } from '../../../../../../../base/common/observable.js';
 import { OS } from '../../../../../../../base/common/platform.js';
 import { ThemeIcon } from '../../../../../../../base/common/themables.js';
 import { localize } from '../../../../../../../nls.js';
@@ -33,6 +33,7 @@ import { FirstFnArg, } from '../utils/utils.js';
 export class GutterIndicatorMenuContent {
 
 	private readonly _inlineEditsShowCollapsed: IObservable<boolean>;
+	private readonly _activeSubmenu: ISettableObservable<string | undefined>;
 
 	constructor(
 		private readonly _model: IInlineEditModel,
@@ -43,6 +44,7 @@ export class GutterIndicatorMenuContent {
 		@ICommandService private readonly _commandService: ICommandService,
 	) {
 		this._inlineEditsShowCollapsed = this._editorObs.getOption(EditorOption.inlineSuggest).map(s => s.edits.showCollapsed);
+		this._activeSubmenu = observableValue<string | undefined>('activeSubmenu', undefined);
 	}
 
 	public toDisposableLiveElement(): LiveElement {
@@ -104,6 +106,56 @@ export class GutterIndicatorMenuContent {
 				commandId: toggleShowCollapsedId
 			}))
 		);
+
+		const snooze = submenuOption({
+			id: 'snooze',
+			title: localize('snooze', "Snooze"),
+			icon: Codicon.bellSlash,
+			isActive: activeElement.map(v => v === 'snooze'),
+			onHoverChange: v => {
+				activeElement.set(v ? 'snooze' : undefined, undefined);
+				this._activeSubmenu.set(v ? 'snooze' : undefined, undefined);
+			},
+			submenuItems: [
+				{
+					id: 'snooze-1min',
+					title: localize('snooze1min', "1 minute"),
+					icon: Codicon.clock,
+					onAction: () => {
+						this._close(true);
+						return this._commandService.executeCommand('editor.action.inlineSuggest.snooze', 1);
+					}
+				},
+				{
+					id: 'snooze-5min',
+					title: localize('snooze5min', "5 minutes"),
+					icon: Codicon.clock,
+					onAction: () => {
+						this._close(true);
+						return this._commandService.executeCommand('editor.action.inlineSuggest.snooze', 5);
+					}
+				},
+				{
+					id: 'snooze-10min',
+					title: localize('snooze10min', "10 minutes"),
+					icon: Codicon.clock,
+					onAction: () => {
+						this._close(true);
+						return this._commandService.executeCommand('editor.action.inlineSuggest.snooze', 10);
+					}
+				},
+				{
+					id: 'snooze-more',
+					title: localize('snoozeMore', "More..."),
+					icon: Codicon.ellipsis,
+					onAction: () => {
+						this._close(true);
+						return this._commandService.executeCommand('editor.action.inlineSuggest.snooze');
+					}
+				}
+			],
+			activeSubmenu: this._activeSubmenu
+		});
 
 		const settings = option(createOptionArgs({
 			id: 'settings',
@@ -220,6 +272,107 @@ function option(props: {
 			}
 		})
 	]));
+}
+
+function submenuOption(props: {
+	id: string;
+	title: string;
+	icon: IObservable<ThemeIcon> | ThemeIcon;
+	isActive?: IObservable<boolean>;
+	onHoverChange?: (isHovered: boolean) => void;
+	submenuItems: Array<{
+		id: string;
+		title: string;
+		icon: IObservable<ThemeIcon> | ThemeIcon;
+		onAction?: () => void;
+	}>;
+	activeSubmenu: IObservable<string | undefined>;
+}) {
+	return derived({ name: 'inlineEdits.submenuOption' }, (_reader) => {
+		const isSubmenuVisible = props.activeSubmenu.map(active => active === props.id);
+
+		return n.div({
+			class: 'submenu-container',
+			style: {
+				position: 'relative'
+			}
+		}, [
+			n.div({
+				class: ['monaco-menu-option', 'submenu-parent', props.isActive?.map(v => v && 'active')],
+				onmouseenter: () => props.onHoverChange?.(true),
+				onmouseleave: () => props.onHoverChange?.(false),
+				tabIndex: 0,
+				style: {
+					borderRadius: 3,
+				}
+			}, [
+				n.elem('span', {
+					style: {
+						fontSize: 16,
+						display: 'flex',
+					}
+				}, [ThemeIcon.isThemeIcon(props.icon) ? renderIcon(props.icon) : props.icon.map(icon => renderIcon(icon))]),
+				n.elem('span', {}, [props.title]),
+				n.div({
+					style: {
+						marginLeft: 'auto',
+						display: 'flex',
+						alignItems: 'center'
+					}
+				}, [
+					n.elem('span', {
+						style: {
+							fontSize: 12,
+							color: asCssVariable(descriptionForeground),
+							marginLeft: '8px'
+						}
+					}, [renderIcon(Codicon.chevronRight)])
+				])
+			]),
+			isSubmenuVisible.map(visible => visible ? n.div({
+				class: 'submenu-items',
+				onmouseenter: () => props.onHoverChange?.(true),
+				onmouseleave: () => props.onHoverChange?.(false),
+				style: {
+					position: 'absolute',
+					left: '100%',
+					top: '0',
+					minWidth: '160px',
+					backgroundColor: 'var(--vscode-editorHoverWidget-background)',
+					border: '1px solid var(--vscode-editorHoverWidget-border)',
+					borderRadius: '3px',
+					boxShadow: '0 2px 8px rgba(0, 0, 0, 0.16)',
+					zIndex: 1000,
+					padding: '4px 0'
+				}
+			}, props.submenuItems.map(item =>
+				n.div({
+					class: 'monaco-menu-option submenu-item',
+					onclick: item.onAction,
+					onkeydown: e => {
+						if (e.key === 'Enter') {
+							item.onAction?.();
+						}
+					},
+					tabIndex: 0,
+					style: {
+						borderRadius: 3,
+						padding: '4px 8px',
+						margin: '1px 4px'
+					}
+				}, [
+					n.elem('span', {
+						style: {
+							fontSize: 14,
+							display: 'flex',
+							marginRight: '8px'
+						}
+					}, [ThemeIcon.isThemeIcon(item.icon) ? renderIcon(item.icon) : item.icon.map(icon => renderIcon(icon))]),
+					n.elem('span', {}, [item.title])
+				])
+			)) : undefined)
+		]);
+	});
 }
 
 // TODO: make this observable
