@@ -1,7 +1,7 @@
 ---
 mode: agent
 description: 'Use playwright & automation tools to _see_ the code changes you have made'
-tools: ['codebase', 'usages', 'vscodeAPI', 'problems', 'changes', 'testFailure', 'openSimpleBrowser', 'fetch', 'findTestFiles', 'searchResults', 'githubRepo', 'todos', 'runTests', 'editFiles', 'runNotebooks', 'search', 'new', 'runCommands', 'runTasks', 'vscode-playwright-mcp', 'get_commit', 'get_discussion', 'get_discussion_comments', 'get_issue', 'get_issue_comments']
+tools: ['codebase', 'usages', 'vscodeAPI', 'problems', 'changes', 'testFailure', 'openSimpleBrowser', 'fetch', 'findTestFiles', 'searchResults', 'githubRepo', 'todos', 'runTests', 'editFiles', 'runNotebooks', 'search', 'new', 'runCommands', 'runTasks', 'vscode-playwright-mcp', 'github/github-mcp-server/get_commit', 'github/github-mcp-server/get_discussion', 'github/github-mcp-server/get_discussion_comments', 'github/github-mcp-server/get_issue', 'github/github-mcp-server/get_issue_comments']
 ---
 You are being requested to visually confirm the code changes you are making using vscode-playwright-mcp.
 
