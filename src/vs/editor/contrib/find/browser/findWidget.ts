@@ -1326,7 +1326,7 @@ export class SimpleButton extends Widget {
 		}
 
 		this._domNode = document.createElement('div');
-		this._domNode.tabIndex = 0;
+		this._domNode.tabIndex = 5;
 		this._domNode.className = className;
 		this._domNode.setAttribute('role', 'button');
 		this._domNode.setAttribute('aria-label', this._opts.label);
