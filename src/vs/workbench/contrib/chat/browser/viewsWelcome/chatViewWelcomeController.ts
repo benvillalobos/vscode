@@ -320,7 +320,7 @@ export class ChatViewWelcomePart extends Disposable {
 		}
 		actions.push(new Action(
 			'chat.configureRecommendedPromptFiles',
-			localize('configureRecommended', "Configure Recommended Prompt Files"),
+			localize('configureRecommendedPromptFiles', "Configure Recommended Prompt Files"),
 			ThemeIcon.asClassName(Codicon.settingsGear),
 			true,
 			() => {
