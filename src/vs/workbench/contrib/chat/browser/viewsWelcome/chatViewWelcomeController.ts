@@ -319,12 +319,12 @@ export class ChatViewWelcomePart extends Disposable {
 			));
 		}
 		actions.push(new Action(
-			'chat.configureRecommendedPromptFiles',
-			localize('configureRecommendedPromptFiles', "Configure Recommended Prompt Files"),
+			'chat.configureRecommendedPrompt',
+			localize('configureRecommendedPrompts', "Configure Recommended Prompts"),
 			ThemeIcon.asClassName(Codicon.settingsGear),
 			true,
 			() => {
-				this.preferencesService.openSettings({ query: 'chat.promptFilesRecommendations', openToSide: true });
+				this.preferencesService.openSettings({ query: 'chat.promptFilesRecommendations' });
 			}
 		));
 		return actions;
