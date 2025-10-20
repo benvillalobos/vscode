@@ -319,8 +319,8 @@ export class ChatViewWelcomePart extends Disposable {
 			));
 		}
 		actions.push(new Action(
-			'chat.configureRecommendedPrompt',
-			localize('configureRecommendedPrompts', "Configure Recommended Prompts"),
+			'chat.configureSuggestedActions',
+			localize('configureSuggestedActions', "Configure Suggested Actions"),
 			ThemeIcon.asClassName(Codicon.settingsGear),
 			true,
 			() => {
