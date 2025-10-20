@@ -29,6 +29,7 @@ import { defaultButtonStyles } from '../../../../../platform/theme/browser/defau
 import { ChatAgentLocation } from '../../common/constants.js';
 import { IChatWidgetService } from '../chat.js';
 import { chatViewsWelcomeRegistry, IChatViewsWelcomeDescriptor } from './chatViewsWelcome.js';
+import { IPreferencesService } from '../../../../services/preferences/common/preferences.js';
 
 const $ = dom.$;
 
@@ -147,6 +148,7 @@ export class ChatViewWelcomePart extends Disposable {
 		@IConfigurationService private configurationService: IConfigurationService,
 		@IMarkdownRendererService private readonly markdownRendererService: IMarkdownRendererService,
 		@IContextMenuService private readonly contextMenuService: IContextMenuService,
+		@IPreferencesService private preferencesService: IPreferencesService
 	) {
 		super();
 
@@ -316,6 +318,15 @@ export class ChatViewWelcomePart extends Disposable {
 				}
 			));
 		}
+		actions.push(new Action(
+			'chat.configureRecommendedPromptFiles',
+			localize('configureRecommended', "Configure Recommended Prompt Files"),
+			ThemeIcon.asClassName(Codicon.settingsGear),
+			true,
+			() => {
+				this.preferencesService.openSettings({ query: 'chat.promptFilesRecommendations', openToSide: true });
+			}
+		));
 		return actions;
 	}
 
