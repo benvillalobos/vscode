@@ -592,7 +592,8 @@ export class StickyScrollController extends Disposable implements IEditorContrib
 	}
 
 	findScrollWidgetState(): StickyScrollWidgetState {
-		const maxNumberStickyLines = Math.min(this._maxStickyLines, this._editor.getOption(EditorOption.stickyScroll).maxLineCount);
+		const options = this._editor.getOption(EditorOption.stickyScroll);
+		const maxNumberStickyLines = Math.min(this._maxStickyLines, options.maxLineCount);
 		const scrollTop: number = this._editor.getScrollTop();
 		let lastLineRelativePosition: number = 0;
 		const startLineNumbers: number[] = [];
@@ -601,21 +602,41 @@ export class StickyScrollController extends Disposable implements IEditorContrib
 		if (arrayVisibleRanges.length !== 0) {
 			const fullVisibleRange = new StickyRange(arrayVisibleRanges[0].startLineNumber, arrayVisibleRanges[arrayVisibleRanges.length - 1].endLineNumber);
 			const candidateRanges = this._stickyLineCandidateProvider.getCandidateStickyLinesIntersecting(fullVisibleRange);
-			for (const range of candidateRanges) {
+			const cursor = this._editor.getPosition();
+			console.log('Cursor X: ' + cursor?.column);
+			console.log('Cursor Y: ' + cursor?.lineNumber);
+			for (let i = 0; i < candidateRanges.length; i++) {
+				const range = candidateRanges[i];
 				const start = range.startLineNumber;
 				const end = range.endLineNumber;
-				const topOfElement = range.top;
+				const topOfElement = range.top; // 0 + startLineHeight * line number
 				const bottomOfElement = topOfElement + range.height;
 				const topOfBeginningLine = this._editor.getTopForLineNumber(start) - scrollTop;
 				const bottomOfEndLine = this._editor.getBottomForLineNumber(end) - scrollTop;
 				if (topOfElement > topOfBeginningLine && topOfElement <= bottomOfEndLine) {
+					console.log(i + ': start (range.startLineNumber): ' + start);
+					console.log(i + ': end (range.endLineNumber): ' + end);
+					console.log(i + ': topOfElement (range.top): ' + topOfElement);
+					console.log(i + ': bottomOfElement (topOfElement + range.height): ' + bottomOfElement + '(' + topOfElement + ' + ' + range.height + ')');
+					console.log(i + ': Top of Beginning Line (editor.getTopForLineNumber(start) - scrollTop): ' + topOfBeginningLine + '(' + this._editor.getTopForLineNumber(start) + ' + ' + scrollTop + ')');
+					console.log(i + ': Bottom of End Line  (editor.getTopForLineNumber(end) - scrollTop): ' + bottomOfEndLine + '(' + this._editor.getTopForLineNumber(start) + ' + ' + scrollTop + ')');
+					console.log(i + ': ---');
 					startLineNumbers.push(start);
 					endLineNumbers.push(end + 1);
 					if (bottomOfElement > bottomOfEndLine) {
 						lastLineRelativePosition = bottomOfEndLine - bottomOfElement;
 					}
+
+					if (options.scopePreference === 'innerScopes' && startLineNumbers.length === maxNumberStickyLines + 1) {
+						startLineNumbers.shift();
+						endLineNumbers.shift();
+						break;
+					}
 				}
 				if (startLineNumbers.length === maxNumberStickyLines) {
+					if (options.scopePreference === 'innerScopes') {
+						continue;
+					}
 					break;
 				}
 			}
