@@ -176,14 +176,18 @@ export class StickyScrollWidget extends Disposable implements IOverlayWidget {
 	}
 
 	private _findIndexToRebuildFrom(previousLineNumbers: number[], newLineNumbers: number[], rebuildFromIndexCandidate?: number): number {
-		if (newLineNumbers.length === 0) {
-			return 0;
-		}
-		if (rebuildFromIndexCandidate !== undefined) {
-			return rebuildFromIndexCandidate;
-		}
-		const validIndex = newLineNumbers.findIndex(startLineNumber => !previousLineNumbers.includes(startLineNumber));
-		return validIndex === -1 ? 0 : validIndex;
+		return 0;
+		// if (newLineNumbers.length === 0) {
+		// 	return 0;
+		// }
+		// if (rebuildFromIndexCandidate !== undefined) {
+		// 	return rebuildFromIndexCandidate;
+		// }
+		// const innerScopes = this._editor.getOption(EditorOption.stickyScroll).scopePreference === 'innerScopes';
+		// const validIndex = innerScopes
+		// 	? previousLineNumbers.findIndex(startLineNumber => !newLineNumbers.includes(startLineNumber))
+		// 	: newLineNumbers.findIndex(startLineNumber => !previousLineNumbers.includes(startLineNumber));
+		// return validIndex === -1 ? 0 : validIndex;
 	}
 
 	private _updateWidgetWidth(): void {
