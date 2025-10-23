@@ -117,6 +117,8 @@ class VisualDiagnosticsOverlay extends Disposable {
 	private readonly _editor: ICodeEditor;
 	private readonly _widget: ConsolidatedDiagnosticsWidget;
 	private readonly _disposables = new DisposableStore();
+	private _lastMouseClientX: number = 0;
+	private _lastMouseClientY: number = 0;
 
 	constructor(editor: ICodeEditor) {
 		super();
@@ -133,31 +135,36 @@ class VisualDiagnosticsOverlay extends Disposable {
 		// Track mouse movement
 		this._disposables.add(this._editor.onMouseMove((e: IEditorMouseEvent) => {
 			if (e.event.browserEvent.type === 'mousemove') {
-				this._updateWidget(e.event.browserEvent.clientX, e.event.browserEvent.clientY);
+				this._lastMouseClientX = e.event.browserEvent.clientX;
+				this._lastMouseClientY = e.event.browserEvent.clientY;
+				this._updateWidget();
 			}
 		}));
 
 		this._disposables.add(this._editor.onMouseLeave(() => {
-			this._widget.hide();
+			// Don't hide the widget anymore, just keep showing last position
 		}));
 
 		// Track cursor position changes
 		this._disposables.add(this._editor.onDidChangeCursorPosition(() => {
-			// Widget will be updated on next mouse move
+			this._updateWidget();
 		}));
 
 		// Track layout changes
 		this._disposables.add(this._editor.onDidLayoutChange(() => {
-			// Widget will be updated on next mouse move
+			this._updateWidget();
 		}));
 
 		// Track scroll changes
 		this._disposables.add(this._editor.onDidScrollChange(() => {
-			// Widget will be updated on next mouse move
+			this._updateWidget();
 		}));
+
+		// Initial render
+		this._updateWidget();
 	}
 
-	private _updateWidget(clientX: number, clientY: number): void {
+	private _updateWidget(): void {
 		const editorRect = this._editor.getDomNode()?.getBoundingClientRect();
 		if (!editorRect) {
 			return;
@@ -168,8 +175,8 @@ class VisualDiagnosticsOverlay extends Disposable {
 		const scrollLeft = this._editor.getScrollLeft();
 
 		// Mouse coordinates
-		const mouseViewportX = Math.round(clientX - editorRect.left);
-		const mouseViewportY = Math.round(clientY - editorRect.top);
+		const mouseViewportX = Math.round(this._lastMouseClientX - editorRect.left);
+		const mouseViewportY = Math.round(this._lastMouseClientY - editorRect.top);
 		const mouseDocX = Math.round(mouseViewportX - layoutInfo.contentLeft + scrollLeft);
 		const mouseDocY = Math.round(mouseViewportY + scrollTop);
 
