@@ -46,7 +46,7 @@ class MouseCoordinateWidget implements IOverlayWidget {
 
 		// Raw coordinates (above mouse)
 		const rawLabel = document.createElement('div');
-		rawLabel.textContent = `(${rawX}, ${rawY})`;
+		rawLabel.textContent = `Viewport: (${rawX}, ${rawY})`;
 		rawLabel.style.position = 'absolute';
 		rawLabel.style.left = `${x + 10}px`;
 		rawLabel.style.top = `${y - 25}px`;
@@ -60,7 +60,7 @@ class MouseCoordinateWidget implements IOverlayWidget {
 
 		// Document-relative coordinates (below mouse)
 		const docLabel = document.createElement('div');
-		docLabel.textContent = `Doc: (${docX}, ${docY})`;
+		docLabel.textContent = `Document: (${docX}, ${docY})`;
 		docLabel.style.position = 'absolute';
 		docLabel.style.left = `${x + 10}px`;
 		docLabel.style.top = `${y + 10}px`;
@@ -112,17 +112,10 @@ class CornerCoordinatesWidget implements IOverlayWidget {
 
 	private _updateCorners(): void {
 		const layoutInfo = this._editor.getLayoutInfo();
-		const contentLeft = layoutInfo.contentLeft;
 		const contentWidth = layoutInfo.contentWidth;
 		const contentHeight = layoutInfo.height;
 
 		dom.clearNode(this._domNode);
-
-		// Top-left (0, 0)
-		const topLeft = this._createCornerLabel('(0, 0)');
-		topLeft.style.top = '2px';
-		topLeft.style.left = `${contentLeft + 2}px`;
-		this._domNode.appendChild(topLeft);
 
 		// Bottom-right (width, height)
 		const bottomRight = this._createCornerLabel(`(${contentWidth}, ${contentHeight})`);
@@ -198,7 +191,7 @@ class CursorCoordinateWidget implements IOverlayWidget {
 		}
 
 		this._domNode.style.display = 'block';
-		this._domNode.textContent = `(${position.column}, ${position.lineNumber})`;
+		this._domNode.textContent = `Cursor (col, line): (${position.column}, ${position.lineNumber})`;
 		this._domNode.style.left = `${layoutInfo.contentLeft + coords.left + 5}px`;
 		this._domNode.style.top = `${coords.top - 20}px`;
 		this._domNode.style.background = 'rgba(0, 180, 0, 0.8)';
@@ -283,31 +276,9 @@ class VisualDiagnosticsOverlay extends Disposable {
 
 		// Initial cursor update
 		this._cursorWidget.updatePosition();
-
-		// Replace line numbers with Y coordinates
-		this._replaceLineNumbersWithYCoordinates();
-	}
-
-	private _replaceLineNumbersWithYCoordinates(): void {
-		// Set custom line number renderer
-		this._editor.updateOptions({
-			lineNumbers: (lineNumber: number): string => {
-				const topPosition = this._editor.getTopForLineNumber(lineNumber);
-				const yCoordinate = Math.round(topPosition);
-				return String(yCoordinate);
-			}
-		});
-	}
-
-	private _restoreLineNumbers(): void {
-		// Restore original line numbers
-		this._editor.updateOptions({
-			lineNumbers: 'on'
-		});
 	}
 
 	override dispose(): void {
-		this._restoreLineNumbers();
 		this._editor.removeOverlayWidget(this._mouseWidget);
 		this._editor.removeOverlayWidget(this._cornerWidget);
 		this._editor.removeOverlayWidget(this._cursorWidget);
