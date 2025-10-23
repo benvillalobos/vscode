@@ -38,18 +38,71 @@ class MouseCoordinateWidget implements IOverlayWidget {
 		return null;
 	}
 
-	updatePosition(x: number, y: number, rawX: number, rawY: number, docX: number, docY: number): void {
+	updatePosition(x: number, y: number, rawX: number, rawY: number, docX: number, docY: number, editorWidth: number, editorHeight: number): void {
 		this._domNode.style.display = 'block';
 
 		// Create container for both labels
 		dom.clearNode(this._domNode);
 
-		// Raw coordinates (above mouse)
+		// Approximate label dimensions
+		const labelHeight = 20;
+		const labelWidth = 150; // Approximate width for labels
+		const offset = 10;
+		const spacing = 5; // Space between labels
+
+		// Calculate positions for viewport label (try above first)
+		let viewportTop = y - labelHeight - offset;
+		let viewportLeft = x + offset;
+
+		// If too close to top, position below instead
+		if (viewportTop < 0) {
+			viewportTop = y + offset;
+		}
+
+		// If too close to right edge, position to the left
+		if (viewportLeft + labelWidth > editorWidth) {
+			viewportLeft = x - labelWidth - offset;
+		}
+
+		// If too close to left edge, clamp
+		if (viewportLeft < 0) {
+			viewportLeft = offset;
+		}
+
+		// Calculate positions for document label
+		let docTop = y + offset;
+		let docLeft = x + offset;
+
+		// If viewport label is below cursor, document label needs to go further below
+		if (viewportTop >= y) {
+			docTop = viewportTop + labelHeight + spacing;
+		}
+
+		// If too close to bottom, position above the mouse
+		if (docTop + labelHeight > editorHeight) {
+			docTop = y - labelHeight - offset;
+			// If viewport label is also above, stack them
+			if (viewportTop < y) {
+				docTop = viewportTop - labelHeight - spacing;
+			}
+		}
+
+		// If too close to right edge, position to the left
+		if (docLeft + labelWidth > editorWidth) {
+			docLeft = x - labelWidth - offset;
+		}
+
+		// If too close to left edge, clamp
+		if (docLeft < 0) {
+			docLeft = offset;
+		}
+
+		// Raw coordinates (viewport label)
 		const rawLabel = document.createElement('div');
 		rawLabel.textContent = `Viewport: (${rawX}, ${rawY})`;
 		rawLabel.style.position = 'absolute';
-		rawLabel.style.left = `${x + 10}px`;
-		rawLabel.style.top = `${y - 25}px`;
+		rawLabel.style.left = `${viewportLeft}px`;
+		rawLabel.style.top = `${viewportTop}px`;
 		rawLabel.style.background = 'rgba(0, 0, 0, 0.8)';
 		rawLabel.style.color = '#fff';
 		rawLabel.style.padding = '2px 6px';
@@ -58,12 +111,12 @@ class MouseCoordinateWidget implements IOverlayWidget {
 		rawLabel.style.fontFamily = 'monospace';
 		rawLabel.style.whiteSpace = 'nowrap';
 
-		// Document-relative coordinates (below mouse)
+		// Document-relative coordinates (document label)
 		const docLabel = document.createElement('div');
 		docLabel.textContent = `Document: (${docX}, ${docY})`;
 		docLabel.style.position = 'absolute';
-		docLabel.style.left = `${x + 10}px`;
-		docLabel.style.top = `${y + 10}px`;
+		docLabel.style.left = `${docLeft}px`;
+		docLabel.style.top = `${docTop}px`;
 		docLabel.style.background = 'rgba(0, 120, 212, 0.8)';
 		docLabel.style.color = '#fff';
 		docLabel.style.padding = '2px 6px';
@@ -249,7 +302,9 @@ class VisualDiagnosticsOverlay extends Disposable {
 					Math.round(rawX),
 					Math.round(rawY),
 					Math.round(docX),
-					Math.round(docY)
+					Math.round(docY),
+					layoutInfo.width,
+					layoutInfo.height
 				);
 			}
 		}));
