@@ -44,9 +44,9 @@ class MouseCoordinateWidget implements IOverlayWidget {
 		// Create container for both labels
 		dom.clearNode(this._domNode);
 
-		// Approximate label dimensions
+		// Approximate label dimensions (be generous to avoid clipping)
 		const labelHeight = 20;
-		const labelWidth = 150; // Approximate width for labels
+		const labelWidth = 350; // Approximate width for longer labels
 		const offset = 10;
 		const spacing = 5; // Space between labels
 
@@ -59,9 +59,9 @@ class MouseCoordinateWidget implements IOverlayWidget {
 			viewportTop = y + offset;
 		}
 
-		// If too close to right edge, position to the left
+		// If too close to right edge, clamp to stay within bounds
 		if (viewportLeft + labelWidth > editorWidth) {
-			viewportLeft = x - labelWidth - offset;
+			viewportLeft = editorWidth - labelWidth - offset;
 		}
 
 		// If too close to left edge, clamp
@@ -87,9 +87,9 @@ class MouseCoordinateWidget implements IOverlayWidget {
 			}
 		}
 
-		// If too close to right edge, position to the left
+		// If too close to right edge, clamp to stay within bounds
 		if (docLeft + labelWidth > editorWidth) {
-			docLeft = x - labelWidth - offset;
+			docLeft = editorWidth - labelWidth - offset;
 		}
 
 		// If too close to left edge, clamp
@@ -229,29 +229,44 @@ class CursorCoordinateWidget implements IOverlayWidget {
 		}
 
 		const layoutInfo = this._editor.getLayoutInfo();
-		const visibleRanges = this._editor.getVisibleRanges();
-
-		// Check if cursor is in a visible range
-		if (visibleRanges.length === 0) {
-			this._domNode.style.display = 'none';
-			return;
-		}
 
 		const coords = this._editor.getScrolledVisiblePosition(position);
-		if (!coords) {
-			this._domNode.style.display = 'none';
-			return;
-		}
 
 		// Calculate viewport coordinates (relative to visible editor content area, not including gutter)
-		const viewportX = Math.round(coords.left);
-		const viewportY = Math.round(coords.top);
-
-		// Calculate document coordinates (accounting for scroll)
 		const scrollTop = this._editor.getScrollTop();
 		const scrollLeft = this._editor.getScrollLeft();
-		const docX = Math.round(coords.left + scrollLeft);
-		const docY = Math.round(coords.top + scrollTop);
+
+		let viewportX: number;
+		let viewportY: number;
+		let displayX: number;
+		let displayY: number;
+
+		if (coords) {
+			// Cursor is visible on screen
+			viewportX = Math.round(coords.left);
+			viewportY = Math.round(coords.top);
+			displayX = layoutInfo.contentLeft + coords.left;
+			displayY = coords.top;
+		} else {
+			// Cursor is off-screen, calculate where it would be
+			const lineTop = this._editor.getTopForLineNumber(position.lineNumber);
+			viewportX = 0; // Approximate, we don't have exact column position
+			viewportY = Math.round(lineTop - scrollTop);
+			displayX = layoutInfo.contentLeft + 10;
+
+			// Clamp display Y to visible area
+			if (viewportY < 0) {
+				displayY = 10; // Near top
+			} else if (viewportY > layoutInfo.height) {
+				displayY = layoutInfo.height - 60; // Near bottom
+			} else {
+				displayY = viewportY;
+			}
+		}
+
+		// Calculate document coordinates (accounting for scroll)
+		const docX = Math.round(viewportX + scrollLeft);
+		const docY = Math.round(viewportY + scrollTop);
 
 		dom.clearNode(this._domNode);
 		this._domNode.style.display = 'block';
@@ -282,8 +297,32 @@ class CursorCoordinateWidget implements IOverlayWidget {
 		this._domNode.appendChild(viewportLabel);
 		this._domNode.appendChild(docLabel);
 
-		this._domNode.style.left = `${layoutInfo.contentLeft + coords.left + 5}px`;
-		this._domNode.style.top = `${coords.top - 50}px`;
+		// Position the labels with bounds checking
+		const labelWidth = 350;
+		const labelHeight = 50; // Two labels stacked
+		const offset = 5;
+
+		let left = displayX + offset;
+		let top = displayY - labelHeight - offset;
+
+		// Keep within horizontal bounds
+		if (left + labelWidth > layoutInfo.width) {
+			left = displayX - labelWidth - offset;
+		}
+		if (left < layoutInfo.contentLeft) {
+			left = layoutInfo.contentLeft + offset;
+		}
+
+		// Keep within vertical bounds
+		if (top < 0) {
+			top = displayY + offset;
+		}
+		if (top + labelHeight > layoutInfo.height) {
+			top = layoutInfo.height - labelHeight - offset;
+		}
+
+		this._domNode.style.left = `${left}px`;
+		this._domNode.style.top = `${top}px`;
 	}
 }
 
