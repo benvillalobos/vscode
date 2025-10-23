@@ -238,34 +238,20 @@ class CursorCoordinateWidget implements IOverlayWidget {
 
 		let viewportX: number;
 		let viewportY: number;
-		let displayX: number;
-		let displayY: number;
 
 		if (coords) {
-			// Cursor is visible on screen
+			// Cursor is visible on screen - use its exact viewport position
 			viewportX = Math.round(coords.left);
 			viewportY = Math.round(coords.top);
-			displayX = layoutInfo.contentLeft + coords.left;
-			displayY = coords.top;
 		} else {
 			// Cursor is off-screen, calculate where it would be
 			const lineTop = this._editor.getTopForLineNumber(position.lineNumber);
 			viewportX = 0; // Approximate, we don't have exact column position
 			viewportY = Math.round(lineTop - scrollTop);
-			displayX = layoutInfo.contentLeft + 10;
-
-			// Clamp display Y to visible area
-			if (viewportY < 0) {
-				displayY = 10; // Near top
-			} else if (viewportY > layoutInfo.height) {
-				displayY = layoutInfo.height - 60; // Near bottom
-			} else {
-				displayY = viewportY;
-			}
 		}
 
-		// Calculate document coordinates (accounting for scroll)
-		const docX = Math.round(viewportX + scrollLeft);
+		// Calculate document coordinates (accounting for scroll, and excluding gutter)
+		const docX = Math.round(viewportX - layoutInfo.contentLeft + scrollLeft);
 		const docY = Math.round(viewportY + scrollTop);
 
 		dom.clearNode(this._domNode);
@@ -297,28 +283,43 @@ class CursorCoordinateWidget implements IOverlayWidget {
 		this._domNode.appendChild(viewportLabel);
 		this._domNode.appendChild(docLabel);
 
-		// Position the labels with bounds checking
+		// Position labels based on viewport coordinates, clamped to viewport bounds
 		const labelWidth = 350;
 		const labelHeight = 50; // Two labels stacked
 		const offset = 5;
 
+		// Calculate display position from viewport coordinates
+		const displayX = layoutInfo.contentLeft + viewportX;
+		const displayY = viewportY;
+
+		// Start with preferred position (right and above cursor)
 		let left = displayX + offset;
 		let top = displayY - labelHeight - offset;
 
-		// Keep within horizontal bounds
-		if (left + labelWidth > layoutInfo.width) {
-			left = displayX - labelWidth - offset;
+		// Clamp horizontally within viewport bounds
+		const minX = layoutInfo.contentLeft;
+		const maxX = layoutInfo.width;
+
+		if (left + labelWidth > maxX) {
+			// Would go off right edge, clamp to right edge
+			left = maxX - labelWidth - offset;
 		}
-		if (left < layoutInfo.contentLeft) {
-			left = layoutInfo.contentLeft + offset;
+		if (left < minX) {
+			// Would go off left edge, clamp to left edge
+			left = minX + offset;
 		}
 
-		// Keep within vertical bounds
-		if (top < 0) {
+		// Clamp vertically within viewport bounds
+		const minY = 0;
+		const maxY = layoutInfo.height;
+
+		if (top < minY) {
+			// Would go off top edge, position below cursor instead
 			top = displayY + offset;
 		}
-		if (top + labelHeight > layoutInfo.height) {
-			top = layoutInfo.height - labelHeight - offset;
+		if (top + labelHeight > maxY) {
+			// Would go off bottom edge, clamp to bottom edge
+			top = maxY - labelHeight - offset;
 		}
 
 		this._domNode.style.left = `${left}px`;
