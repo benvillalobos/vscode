@@ -79,23 +79,47 @@ class ConsolidatedDiagnosticsWidget implements IOverlayWidget {
 		container.style.whiteSpace = 'nowrap';
 		container.style.border = '1px solid rgba(255, 255, 255, 0.2)';
 
-		// Add all information lines
-		const lines = [
-			`Mouse (Viewport): (${info.mouseViewportX}, ${info.mouseViewportY})`,
-			`Mouse (Document): (${info.mouseDocX}, ${info.mouseDocY})`,
-			`Cursor (Viewport): (${info.cursorViewportX}, ${info.cursorViewportY})`,
-			`Cursor (Document): (${info.cursorDocX}, ${info.cursorDocY})`,
-			`Editor Size: (${info.editorWidth}, ${info.editorHeight})`
-		];
+		// Add section headers and information
+		const addSection = (title: string, items: string[]) => {
+			const sectionTitle = document.createElement('div');
+			sectionTitle.textContent = title;
+			sectionTitle.style.fontWeight = 'bold';
+			sectionTitle.style.marginBottom = '2px';
+			sectionTitle.style.color = '#88c0d0';
+			container.appendChild(sectionTitle);
 
-		lines.forEach((line, index) => {
-			const lineDiv = document.createElement('div');
-			lineDiv.textContent = line;
-			if (index < lines.length - 1) {
-				lineDiv.style.marginBottom = '2px';
-			}
-			container.appendChild(lineDiv);
-		});
+			items.forEach((item, index) => {
+				const itemDiv = document.createElement('div');
+				itemDiv.textContent = item;
+				itemDiv.style.paddingLeft = '8px';
+				if (index < items.length - 1) {
+					itemDiv.style.marginBottom = '2px';
+				}
+				container.appendChild(itemDiv);
+			});
+		};
+
+		addSection('Document Coordinates', [
+			`Mouse: (x: ${info.mouseDocX}, y: ${info.mouseDocY})`,
+			`Cursor: (x: ${info.cursorDocX}, y: ${info.cursorDocY})`
+		]);
+
+		const spacer1 = document.createElement('div');
+		spacer1.style.height = '6px';
+		container.appendChild(spacer1);
+
+		addSection('Viewport Coordinates', [
+			`Mouse: (x: ${info.mouseViewportX}, y: ${info.mouseViewportY})`,
+			`Cursor: (x: ${info.cursorViewportX}, y: ${info.cursorViewportY})`
+		]);
+
+		const spacer2 = document.createElement('div');
+		spacer2.style.height = '6px';
+		container.appendChild(spacer2);
+
+		addSection('Editor Size', [
+			`(w: ${info.editorWidth}, h: ${info.editorHeight})`
+		]);
 
 		this._domNode.appendChild(container);
 
