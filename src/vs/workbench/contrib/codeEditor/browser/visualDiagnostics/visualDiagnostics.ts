@@ -100,8 +100,11 @@ class ConsolidatedDiagnosticsWidget implements IOverlayWidget {
 		this._domNode.appendChild(container);
 
 		// Position at bottom-right corner
-		const left = info.editorWidth - 190;
-		const top = info.editorHeight - 100;
+		// Measure the actual width of the container after it's been populated
+		const containerWidth = container.offsetWidth;
+		const containerHeight = container.offsetHeight;
+		const left = info.editorWidth - containerWidth;
+		const top = info.editorHeight - containerHeight;
 
 		this._domNode.style.left = `${left}px`;
 		this._domNode.style.top = `${top}px`;
