@@ -10,6 +10,7 @@ import { ServicesAccessor } from '../../../../../platform/instantiation/common/i
 import { ICodeEditorService } from '../../../../../editor/browser/services/codeEditorService.js';
 import { Disposable, DisposableStore, IDisposable } from '../../../../../base/common/lifecycle.js';
 import { ICodeEditor, IOverlayWidget, IOverlayWidgetPosition, IEditorMouseEvent } from '../../../../../editor/browser/editorBrowser.js';
+import * as dom from '../../../../../base/browser/dom.js';
 
 let globalVisualDiagnosticsEnabled = false;
 const activeEditorDiagnostics = new Map<ICodeEditor, VisualDiagnosticsOverlay>();
@@ -41,7 +42,7 @@ class MouseCoordinateWidget implements IOverlayWidget {
 		this._domNode.style.display = 'block';
 
 		// Create container for both labels
-		this._domNode.innerHTML = '';
+		dom.clearNode(this._domNode);
 
 		// Raw coordinates (above mouse)
 		const rawLabel = document.createElement('div');
@@ -115,7 +116,7 @@ class CornerCoordinatesWidget implements IOverlayWidget {
 		const contentWidth = layoutInfo.contentWidth;
 		const contentHeight = layoutInfo.height;
 
-		this._domNode.innerHTML = '';
+		dom.clearNode(this._domNode);
 
 		// Top-left (0, 0)
 		const topLeft = this._createCornerLabel('(0, 0)');
