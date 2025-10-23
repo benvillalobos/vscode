@@ -243,8 +243,8 @@ class CursorCoordinateWidget implements IOverlayWidget {
 			return;
 		}
 
-		// Calculate viewport coordinates (relative to visible editor area)
-		const viewportX = Math.round(layoutInfo.contentLeft + coords.left);
+		// Calculate viewport coordinates (relative to visible editor content area, not including gutter)
+		const viewportX = Math.round(coords.left);
 		const viewportY = Math.round(coords.top);
 
 		// Calculate document coordinates (accounting for scroll)
