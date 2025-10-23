@@ -346,6 +346,11 @@ class VisualDiagnosticsOverlay extends Disposable {
 		this._editor.addOverlayWidget(this._cornerWidget);
 		this._editor.addOverlayWidget(this._cursorWidget);
 
+		// Set cursor to solid (no blink) - we don't store original as it's a complex enum
+		this._editor.updateOptions({
+			cursorBlinking: 'solid'
+		});
+
 		// Track mouse movement
 		this._disposables.add(this._editor.onMouseMove((e: IEditorMouseEvent) => {
 			if (e.event.browserEvent.type === 'mousemove') {
@@ -404,6 +409,11 @@ class VisualDiagnosticsOverlay extends Disposable {
 	}
 
 	override dispose(): void {
+		// Restore default cursor blinking
+		this._editor.updateOptions({
+			cursorBlinking: 'blink'
+		});
+
 		this._editor.removeOverlayWidget(this._mouseWidget);
 		this._editor.removeOverlayWidget(this._cornerWidget);
 		this._editor.removeOverlayWidget(this._cursorWidget);
