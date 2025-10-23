@@ -99,7 +99,7 @@ class MouseCoordinateWidget implements IOverlayWidget {
 
 		// Raw coordinates (viewport label)
 		const rawLabel = document.createElement('div');
-		rawLabel.textContent = `Viewport: (${rawX}, ${rawY})`;
+		rawLabel.textContent = `Mouse Coordinates (Viewport): (x: ${rawX}, y: ${rawY})`;
 		rawLabel.style.position = 'absolute';
 		rawLabel.style.left = `${viewportLeft}px`;
 		rawLabel.style.top = `${viewportTop}px`;
@@ -113,7 +113,7 @@ class MouseCoordinateWidget implements IOverlayWidget {
 
 		// Document-relative coordinates (document label)
 		const docLabel = document.createElement('div');
-		docLabel.textContent = `Document: (${docX}, ${docY})`;
+		docLabel.textContent = `Mouse Coordinates (Document): (x: ${docX}, y: ${docY})`;
 		docLabel.style.position = 'absolute';
 		docLabel.style.left = `${docLeft}px`;
 		docLabel.style.top = `${docTop}px`;
@@ -243,17 +243,47 @@ class CursorCoordinateWidget implements IOverlayWidget {
 			return;
 		}
 
+		// Calculate viewport coordinates (relative to visible editor area)
+		const viewportX = Math.round(layoutInfo.contentLeft + coords.left);
+		const viewportY = Math.round(coords.top);
+
+		// Calculate document coordinates (accounting for scroll)
+		const scrollTop = this._editor.getScrollTop();
+		const scrollLeft = this._editor.getScrollLeft();
+		const docX = Math.round(coords.left + scrollLeft);
+		const docY = Math.round(coords.top + scrollTop);
+
+		dom.clearNode(this._domNode);
 		this._domNode.style.display = 'block';
-		this._domNode.textContent = `Cursor (col, line): (${position.column}, ${position.lineNumber})`;
+
+		// Viewport coordinates label
+		const viewportLabel = document.createElement('div');
+		viewportLabel.textContent = `Cursor Coordinates (Viewport): (x: ${viewportX}, y: ${viewportY})`;
+		viewportLabel.style.background = 'rgba(0, 180, 0, 0.8)';
+		viewportLabel.style.color = '#fff';
+		viewportLabel.style.padding = '2px 6px';
+		viewportLabel.style.borderRadius = '3px';
+		viewportLabel.style.fontSize = '11px';
+		viewportLabel.style.fontFamily = 'monospace';
+		viewportLabel.style.whiteSpace = 'nowrap';
+		viewportLabel.style.marginBottom = '2px';
+
+		// Document coordinates label
+		const docLabel = document.createElement('div');
+		docLabel.textContent = `Cursor Coordinates (Document): (x: ${docX}, y: ${docY})`;
+		docLabel.style.background = 'rgba(0, 140, 0, 0.8)';
+		docLabel.style.color = '#fff';
+		docLabel.style.padding = '2px 6px';
+		docLabel.style.borderRadius = '3px';
+		docLabel.style.fontSize = '11px';
+		docLabel.style.fontFamily = 'monospace';
+		docLabel.style.whiteSpace = 'nowrap';
+
+		this._domNode.appendChild(viewportLabel);
+		this._domNode.appendChild(docLabel);
+
 		this._domNode.style.left = `${layoutInfo.contentLeft + coords.left + 5}px`;
-		this._domNode.style.top = `${coords.top - 20}px`;
-		this._domNode.style.background = 'rgba(0, 180, 0, 0.8)';
-		this._domNode.style.color = '#fff';
-		this._domNode.style.padding = '2px 6px';
-		this._domNode.style.borderRadius = '3px';
-		this._domNode.style.fontSize = '11px';
-		this._domNode.style.fontFamily = 'monospace';
-		this._domNode.style.whiteSpace = 'nowrap';
+		this._domNode.style.top = `${coords.top - 50}px`;
 	}
 }
 
