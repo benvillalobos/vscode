@@ -14,15 +14,12 @@ import { Event, Emitter } from '../../../../base/common/event.js';
 import { ILanguageConfigurationService } from '../../../common/languages/languageConfigurationRegistry.js';
 import { StickyModelProvider, IStickyModelProvider } from './stickyScrollModelProvider.js';
 import { StickyElement, StickyModel, StickyRange } from './stickyScrollElement.js';
-import { Position } from '../../../common/core/position.js';
 import { Range } from '../../../common/core/range.js';
 
 export class StickyLineCandidate {
 	constructor(
 		public readonly startLineNumber: number,
 		public readonly endLineNumber: number,
-		public readonly top: number,
-		public readonly height: number,
 	) { }
 }
 
@@ -166,7 +163,7 @@ export class StickyLineCandidateProvider extends Disposable implements IStickyLi
 			return [];
 		}
 		const stickyLineCandidates: StickyLineCandidate[] = [];
-		this.getCandidateStickyLinesIntersectingFromStickyModel(range, this._model.element, stickyLineCandidates, 0, 0, -1);
+		this.getCandidateStickyLinesIntersectingFromStickyModel(range, this._model.element, stickyLineCandidates, 0, -1);
 		return this.filterHiddenRanges(stickyLineCandidates);
 	}
 
@@ -178,7 +175,6 @@ export class StickyLineCandidateProvider extends Disposable implements IStickyLi
 		outlineModel: StickyElement,
 		result: StickyLineCandidate[],
 		depth: number,
-		top: number,
 		lastStartLineNumber: number
 	): void {
 		const textModel = this._editor.getModel();
@@ -214,9 +210,8 @@ export class StickyLineCandidateProvider extends Disposable implements IStickyLi
 				&& textModel.isValidRange(new Range(startLineNumber, 1, endLineNumber, 1))
 			) {
 				lastLine = startLineNumber;
-				const lineHeight = this._editor.getLineHeightForPosition(new Position(startLineNumber, 1));
-				result.push(new StickyLineCandidate(startLineNumber, endLineNumber - 1, top, lineHeight));
-				this.getCandidateStickyLinesIntersectingFromStickyModel(range, child, result, depth + 1, top + lineHeight, startLineNumber);
+				result.push(new StickyLineCandidate(startLineNumber, endLineNumber - 1));
+				this.getCandidateStickyLinesIntersectingFromStickyModel(range, child, result, depth + 1, startLineNumber);
 			}
 		}
 	}

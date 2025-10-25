@@ -602,20 +602,18 @@ export class StickyScrollController extends Disposable implements IEditorContrib
 			const fullVisibleRange = new StickyRange(arrayVisibleRanges[0].startLineNumber, arrayVisibleRanges[arrayVisibleRanges.length - 1].endLineNumber);
 			const candidateRanges = this._stickyLineCandidateProvider.getCandidateStickyLinesIntersecting(fullVisibleRange);
 			const innerScopes = this._editor.getOption(EditorOption.stickyScroll).scopePreference === 'innerScopes';
-			const lineHeight = this._editor.getOption(EditorOption.lineHeight);
 			for (let i = 0; i < candidateRanges.length; i++) {
 				const candidate = candidateRanges[i];
-				const start = candidate.startLineNumber;
-				const end = candidate.endLineNumber;
+				const lineHeight = this._editor.getLineHeightForPosition(new Position(candidate.startLineNumber, 1));
 				const topOfElement = i * lineHeight - lineHeight;
 				const bottomOfElement = topOfElement + lineHeight;
-				const topOfBeginningLine = this._editor.getTopForLineNumber(start) - scrollTop;
-				const bottomOfEndLine = this._editor.getBottomForLineNumber(end) - scrollTop;
+				const topOfBeginningLine = this._editor.getTopForLineNumber(candidate.startLineNumber) - scrollTop;
+				const bottomOfEndLine = this._editor.getBottomForLineNumber(candidate.endLineNumber) - scrollTop;
 				const stickyWidgetHeight = startLineNumbers.length * lineHeight;
 
 				if (topOfBeginningLine < stickyWidgetHeight && bottomOfEndLine >= stickyWidgetHeight) {
-					startLineNumbers.push(start);
-					endLineNumbers.push(end + 1);
+					startLineNumbers.push(candidate.startLineNumber);
+					endLineNumbers.push(candidate.endLineNumber + 1);
 					if (stickyWidgetHeight > bottomOfEndLine) {
 						lastLineRelativePosition = bottomOfEndLine - bottomOfElement;
 					}
