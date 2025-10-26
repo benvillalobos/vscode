@@ -240,6 +240,9 @@ import './contrib/searchEditor/browser/searchEditor.contribution.js';
 // Sash
 import './contrib/sash/browser/sash.contribution.js';
 
+// Snake Game
+import './contrib/snakeGame/browser/snakeGame.contribution.js';
+
 // SCM
 import './contrib/scm/browser/scm.contribution.js';
 

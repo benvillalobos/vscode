@@ -1,0 +1,50 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+.snake-head {
+	background-color: #00ff00 !important;
+	border: 2px solid #008000 !important;
+	z-index: 10;
+}
+
+.snake-body {
+	background-color: #90ee90 !important;
+	z-index: 9;
+}
+
+.snake-blink {
+	animation: snake-blink-animation 0.5s infinite;
+}
+
+@keyframes snake-blink-animation {
+	0%, 50% {
+		opacity: 1;
+	}
+	51%, 100% {
+		opacity: 0.3;
+	}
+}
+
+.snake-game-over-overlay {
+	position: absolute;
+	top: 50%;
+	left: 50%;
+	transform: translate(-50%, -50%);
+	background-color: rgba(0, 0, 0, 0.8);
+	color: white;
+	padding: 20px 40px;
+	border-radius: 8px;
+	text-align: center;
+	z-index: 1000;
+	font-family: monospace;
+	font-size: 24px;
+	pointer-events: none;
+}
+
+.snake-game-over-overlay .score {
+	margin-top: 10px;
+	font-size: 18px;
+	color: #00ff00;
+}
