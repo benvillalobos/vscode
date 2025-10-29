@@ -619,16 +619,14 @@ export class StickyScrollController extends Disposable implements IEditorContrib
 		const startLineNumbers: number[] = [];
 		const endLineNumbers: number[] = [];
 		const arrayVisibleRanges = this._editor.getVisibleRanges();
-		let stickyWidgetHeight = 0;
-		const innerScopes = this._editor.getOption(EditorOption.stickyScroll).scopePreference === 'innerScopes';
 		if (arrayVisibleRanges.length !== 0) {
+			const innerScopes = this._editor.getOption(EditorOption.stickyScroll).scopePreference === 'innerScopes';
 			const fullVisibleRange = new StickyRange(arrayVisibleRanges[0].startLineNumber, arrayVisibleRanges[arrayVisibleRanges.length - 1].endLineNumber);
 			const candidateRanges = this._stickyLineCandidateProvider.getCandidateStickyLinesIntersecting(fullVisibleRange);
+			let stickyWidgetHeight = 0;
 			for (const range of candidateRanges) {
 				const start = range.startLineNumber;
 				const end = range.endLineNumber + (innerScopes ? 1 : 0);
-				// const topOfBeginningLine = this._editor.getTopForLineNumber(start) - scrollTop;
-				// const bottomOfBeginningLine = this._editor.getBottomForLineNumber(start) - scrollTop;
 				const bottomOfEndLine = this._editor.getBottomForLineNumber(end) - scrollTop;
 				const shouldAppendNextStickyLine = this._shouldAppendStickyLine(range, startLineNumbers, endLineNumbers, innerScopes, maxNumberStickyLines, scrollTop, stickyWidgetHeight);
 
@@ -655,13 +653,13 @@ export class StickyScrollController extends Disposable implements IEditorContrib
 					break;
 				}
 			}
-		}
 
-		// Edge case for last line
-		if (endLineNumbers.length > 1) {
-			const bottomOfEndLine = this._editor.getBottomForLineNumber(endLineNumbers[endLineNumbers.length - 1]) - scrollTop;
-			if (innerScopes && stickyWidgetHeight > bottomOfEndLine) {
-				lastLineRelativePosition = bottomOfEndLine - stickyWidgetHeight;
+			// Edge case for last line
+			if (endLineNumbers.length > 0) {
+				const bottomOfEndLine = this._editor.getBottomForLineNumber(endLineNumbers[endLineNumbers.length - 1]) - scrollTop;
+				if (innerScopes && stickyWidgetHeight > bottomOfEndLine) {
+					lastLineRelativePosition = bottomOfEndLine - stickyWidgetHeight;
+				}
 			}
 		}
 
