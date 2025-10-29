@@ -605,16 +605,33 @@ export class StickyScrollController extends Disposable implements IEditorContrib
 			let stickyWidgetHeight = 0;
 			for (const range of candidateRanges) {
 				const start = range.startLineNumber;
-				const end = range.endLineNumber;
+				const end = range.endLineNumber + (innerScopes ? 1 : 0);
 				const topOfBeginningLine = this._editor.getTopForLineNumber(start) - scrollTop;
+				const bottomOfBeginningLine = this._editor.getBottomForLineNumber(start) - scrollTop;
 				const bottomOfEndLine = this._editor.getBottomForLineNumber(end) - scrollTop;
+				let shouldAppendNextStickyLine = false;
 
-				if (topOfBeginningLine < stickyWidgetHeight && bottomOfEndLine >= stickyWidgetHeight) {
+				if (innerScopes) {
+					if (startLineNumbers.length === maxNumberStickyLines) {
+						shouldAppendNextStickyLine = bottomOfBeginningLine < stickyWidgetHeight && bottomOfEndLine >= stickyWidgetHeight;
+					} else {
+						shouldAppendNextStickyLine = topOfBeginningLine < stickyWidgetHeight && bottomOfEndLine >= stickyWidgetHeight;
+					}
+				} else {
+					shouldAppendNextStickyLine = topOfBeginningLine < stickyWidgetHeight && bottomOfEndLine >= stickyWidgetHeight;
+				}
+
+				if (shouldAppendNextStickyLine) {
 					startLineNumbers.push(start);
 					endLineNumbers.push(end + 1);
 					stickyWidgetHeight += range.height;
 					if (stickyWidgetHeight > bottomOfEndLine) {
-						lastLineRelativePosition = bottomOfEndLine - stickyWidgetHeight;
+						if (innerScopes) {
+							lastLineRelativePosition = 0;
+						}
+						else {
+							lastLineRelativePosition = bottomOfEndLine - stickyWidgetHeight;
+						}
 					}
 
 					if (innerScopes && startLineNumbers.length > maxNumberStickyLines) {
