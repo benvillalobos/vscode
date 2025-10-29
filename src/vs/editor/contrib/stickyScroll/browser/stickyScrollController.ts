@@ -613,7 +613,7 @@ export class StickyScrollController extends Disposable implements IEditorContrib
 
 				if (innerScopes) {
 					if (startLineNumbers.length === maxNumberStickyLines) {
-						shouldAppendNextStickyLine = bottomOfBeginningLine < stickyWidgetHeight && bottomOfEndLine >= stickyWidgetHeight;
+						shouldAppendNextStickyLine = (bottomOfBeginningLine - (range.height / 3)) < stickyWidgetHeight && (bottomOfEndLine - (range.height / 3)) >= stickyWidgetHeight;
 					} else {
 						shouldAppendNextStickyLine = topOfBeginningLine < stickyWidgetHeight && bottomOfEndLine >= stickyWidgetHeight;
 					}
