@@ -634,7 +634,7 @@ export class StickyScrollController extends Disposable implements IEditorContrib
 
 				if (shouldAppendNextStickyLine) {
 					startLineNumbers.push(start);
-					endLineNumbers.push(end + 1);
+					endLineNumbers.push(end);
 					stickyWidgetHeight += range.height;
 					if (stickyWidgetHeight > bottomOfEndLine) {
 						if (innerScopes) {
@@ -650,12 +650,21 @@ export class StickyScrollController extends Disposable implements IEditorContrib
 						endLineNumbers.shift();
 						stickyWidgetHeight -= this._editor.getLineHeightForPosition(new Position(line, 1));
 					}
-				}
+				} // TODO: Elsif innerScopes break
 				if (startLineNumbers.length === maxNumberStickyLines && !innerScopes) {
 					break;
 				}
 			}
 		}
+
+		// Edge case for last line
+		if (endLineNumbers.length > 1) {
+			const bottomOfEndLine = this._editor.getBottomForLineNumber(endLineNumbers[endLineNumbers.length - 1]) - scrollTop;
+			if (innerScopes && stickyWidgetHeight > bottomOfEndLine) {
+				lastLineRelativePosition = bottomOfEndLine - stickyWidgetHeight;
+			}
+		}
+
 		this._endLineNumbers = endLineNumbers;
 		return new StickyScrollWidgetState(startLineNumbers, endLineNumbers, lastLineRelativePosition, this._showEndForLine);
 	}
