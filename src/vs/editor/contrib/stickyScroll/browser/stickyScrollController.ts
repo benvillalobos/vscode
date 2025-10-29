@@ -9,7 +9,7 @@ import { IEditorContribution, ScrollType } from '../../../common/editorCommon.js
 import { ILanguageFeaturesService } from '../../../common/services/languageFeatures.js';
 import { EditorOption, RenderLineNumbersType, ConfigurationChangedEvent } from '../../../common/config/editorOptions.js';
 import { StickyScrollWidget, StickyScrollWidgetState } from './stickyScrollWidget.js';
-import { IStickyLineCandidateProvider, StickyLineCandidateProvider } from './stickyScrollProvider.js';
+import { IStickyLineCandidateProvider, StickyLineCandidate, StickyLineCandidateProvider } from './stickyScrollProvider.js';
 import { IModelTokensChangedEvent } from '../../../common/textModelEvents.js';
 import { IInstantiationService } from '../../../../platform/instantiation/common/instantiation.js';
 import { IContextMenuService } from '../../../../platform/contextview/browser/contextView.js';
@@ -591,6 +591,27 @@ export class StickyScrollController extends Disposable implements IEditorContrib
 		this._stickyScrollWidget.setState(undefined, undefined);
 	}
 
+
+	private _shouldAppendStickyLine(line: StickyLineCandidate, startLineNumbers: number[], endLineNumbers: number[], innerScopes: boolean, maxNumberStickyLines: number, scrollTop: number, stickyWidgetHeight: number): boolean {
+		const start = line.startLineNumber;
+		const end = line.endLineNumber + (innerScopes ? 1 : 0);
+		const topOfBeginningLine = this._editor.getTopForLineNumber(start) - scrollTop;
+		const bottomOfBeginningLine = this._editor.getBottomForLineNumber(start) - scrollTop;
+		const bottomOfEndLine = this._editor.getBottomForLineNumber(end) - scrollTop;
+		let shouldAppendNextStickyLine = false;
+
+		if (innerScopes) {
+			if (startLineNumbers.length === maxNumberStickyLines) {
+				shouldAppendNextStickyLine = (bottomOfBeginningLine - (line.height / 3)) < stickyWidgetHeight && (bottomOfEndLine - (line.height / 3)) >= stickyWidgetHeight;
+			} else {
+				shouldAppendNextStickyLine = topOfBeginningLine < stickyWidgetHeight && bottomOfEndLine >= stickyWidgetHeight;
+			}
+		} else {
+			shouldAppendNextStickyLine = topOfBeginningLine < stickyWidgetHeight && bottomOfEndLine >= stickyWidgetHeight;
+		}
+		return shouldAppendNextStickyLine;
+	}
+
 	findScrollWidgetState(): StickyScrollWidgetState {
 		const maxNumberStickyLines = Math.min(this._maxStickyLines, this._editor.getOption(EditorOption.stickyScroll).maxLineCount);
 		const scrollTop: number = this._editor.getScrollTop();
@@ -598,28 +619,18 @@ export class StickyScrollController extends Disposable implements IEditorContrib
 		const startLineNumbers: number[] = [];
 		const endLineNumbers: number[] = [];
 		const arrayVisibleRanges = this._editor.getVisibleRanges();
+		let stickyWidgetHeight = 0;
+		const innerScopes = this._editor.getOption(EditorOption.stickyScroll).scopePreference === 'innerScopes';
 		if (arrayVisibleRanges.length !== 0) {
 			const fullVisibleRange = new StickyRange(arrayVisibleRanges[0].startLineNumber, arrayVisibleRanges[arrayVisibleRanges.length - 1].endLineNumber);
 			const candidateRanges = this._stickyLineCandidateProvider.getCandidateStickyLinesIntersecting(fullVisibleRange);
-			const innerScopes = this._editor.getOption(EditorOption.stickyScroll).scopePreference === 'innerScopes';
-			let stickyWidgetHeight = 0;
 			for (const range of candidateRanges) {
 				const start = range.startLineNumber;
 				const end = range.endLineNumber + (innerScopes ? 1 : 0);
-				const topOfBeginningLine = this._editor.getTopForLineNumber(start) - scrollTop;
-				const bottomOfBeginningLine = this._editor.getBottomForLineNumber(start) - scrollTop;
+				// const topOfBeginningLine = this._editor.getTopForLineNumber(start) - scrollTop;
+				// const bottomOfBeginningLine = this._editor.getBottomForLineNumber(start) - scrollTop;
 				const bottomOfEndLine = this._editor.getBottomForLineNumber(end) - scrollTop;
-				let shouldAppendNextStickyLine = false;
-
-				if (innerScopes) {
-					if (startLineNumbers.length === maxNumberStickyLines) {
-						shouldAppendNextStickyLine = (bottomOfBeginningLine - (range.height / 3)) < stickyWidgetHeight && (bottomOfEndLine - (range.height / 3)) >= stickyWidgetHeight;
-					} else {
-						shouldAppendNextStickyLine = topOfBeginningLine < stickyWidgetHeight && bottomOfEndLine >= stickyWidgetHeight;
-					}
-				} else {
-					shouldAppendNextStickyLine = topOfBeginningLine < stickyWidgetHeight && bottomOfEndLine >= stickyWidgetHeight;
-				}
+				const shouldAppendNextStickyLine = this._shouldAppendStickyLine(range, startLineNumbers, endLineNumbers, innerScopes, maxNumberStickyLines, scrollTop, stickyWidgetHeight);
 
 				if (shouldAppendNextStickyLine) {
 					startLineNumbers.push(start);
