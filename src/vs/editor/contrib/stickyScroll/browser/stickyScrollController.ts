@@ -592,24 +592,34 @@ export class StickyScrollController extends Disposable implements IEditorContrib
 	}
 
 
-	private _shouldAppendStickyLine(line: StickyLineCandidate, startLineNumbers: number[], endLineNumbers: number[], innerScopes: boolean, maxNumberStickyLines: number, scrollTop: number, stickyWidgetHeight: number): boolean {
+	private _shouldAppendStickyLine(
+		line: StickyLineCandidate,
+		startLineNumbers: number[],
+		endLineNumbers: number[],
+		innerScopes: boolean,
+		maxNumberStickyLines: number,
+		scrollTop: number,
+		stickyWidgetHeight: number
+	): boolean {
 		const start = line.startLineNumber;
 		const end = line.endLineNumber + (innerScopes ? 1 : 0);
 		const topOfBeginningLine = this._editor.getTopForLineNumber(start) - scrollTop;
 		const bottomOfBeginningLine = this._editor.getBottomForLineNumber(start) - scrollTop;
 		const bottomOfEndLine = this._editor.getBottomForLineNumber(end) - scrollTop;
-		let shouldAppendNextStickyLine = false;
 
-		if (innerScopes) {
-			if (startLineNumbers.length === maxNumberStickyLines) {
-				shouldAppendNextStickyLine = (bottomOfBeginningLine - (line.height / 3)) < stickyWidgetHeight && (bottomOfEndLine - (line.height / 3)) >= stickyWidgetHeight;
-			} else {
-				shouldAppendNextStickyLine = topOfBeginningLine < stickyWidgetHeight && bottomOfEndLine >= stickyWidgetHeight;
-			}
-		} else {
-			shouldAppendNextStickyLine = topOfBeginningLine < stickyWidgetHeight && bottomOfEndLine >= stickyWidgetHeight;
+		if (!innerScopes) {
+			return topOfBeginningLine < stickyWidgetHeight && bottomOfEndLine >= stickyWidgetHeight;
 		}
-		return shouldAppendNextStickyLine;
+
+		const isAtMaxLines = startLineNumbers.length === maxNumberStickyLines;
+		const heightThreshold = line.height / 3;
+
+		if (isAtMaxLines) {
+			return (bottomOfBeginningLine - heightThreshold) < stickyWidgetHeight
+				&& (bottomOfEndLine - heightThreshold) >= stickyWidgetHeight;
+		}
+
+		return topOfBeginningLine < stickyWidgetHeight && bottomOfEndLine >= stickyWidgetHeight;
 	}
 
 	findScrollWidgetState(): StickyScrollWidgetState {
