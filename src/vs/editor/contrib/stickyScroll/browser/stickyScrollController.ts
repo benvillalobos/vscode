@@ -612,11 +612,10 @@ export class StickyScrollController extends Disposable implements IEditorContrib
 		}
 
 		const isAtMaxLines = startLineNumbers.length === maxNumberStickyLines;
-		const heightThreshold = line.height / 3;
 
 		if (isAtMaxLines) {
-			return (bottomOfBeginningLine - heightThreshold) < stickyWidgetHeight
-				&& (bottomOfEndLine - heightThreshold) >= stickyWidgetHeight;
+			return (bottomOfBeginningLine) < stickyWidgetHeight
+				&& (bottomOfEndLine) >= stickyWidgetHeight;
 		}
 
 		return topOfBeginningLine < stickyWidgetHeight && bottomOfEndLine >= stickyWidgetHeight;
