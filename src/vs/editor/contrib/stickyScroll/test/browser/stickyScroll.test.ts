@@ -359,4 +359,76 @@ suite('Sticky Scroll Tests', () => {
 			});
 		});
 	});
+
+	test('issue #208406 : scopePreference outer shows outermost scopes first', () => {
+		return runWithFakedTimers({ useFakeTimers: true }, async () => {
+			const model = createTextModel(text);
+			await withAsyncTestCodeEditor(model, {
+				stickyScroll: {
+					enabled: true,
+					maxLineCount: 1,
+					defaultModel: 'outlineModel',
+					scopePreference: 'outer'
+				},
+				envConfig: {
+					outerHeight: 500
+				},
+				serviceCollection
+			}, async (editor, _viewModel, instantiationService) => {
+
+				const stickyScrollController: StickyScrollController = editor.registerAndInstantiateContribution(StickyScrollController.ID, StickyScrollController);
+				const lineHeight = editor.getOption(EditorOption.lineHeight);
+
+				const languageService = instantiationService.get(ILanguageFeaturesService);
+				disposables.add(languageService.documentSymbolProvider.register('*', documentSymbolProviderForTestModel()));
+				await stickyScrollController.stickyScrollCandidateProvider.update();
+
+				// With maxLineCount=1 and 2 nested scopes (TestClass > functionOfClass),
+				// scopePreference 'outer' should show the first 1 (outermost): TestClass (line 7)
+				editor.setScrollTop(8 * lineHeight + 1);
+				const state = stickyScrollController.findScrollWidgetState();
+				assert.deepStrictEqual(state.startLineNumbers, [7]);
+
+				stickyScrollController.dispose();
+				stickyScrollController.stickyScrollCandidateProvider.dispose();
+				model.dispose();
+			});
+		});
+	});
+
+	test('issue #208406 : scopePreference inner shows innermost scopes first', () => {
+		return runWithFakedTimers({ useFakeTimers: true }, async () => {
+			const model = createTextModel(text);
+			await withAsyncTestCodeEditor(model, {
+				stickyScroll: {
+					enabled: true,
+					maxLineCount: 1,
+					defaultModel: 'outlineModel',
+					scopePreference: 'inner'
+				},
+				envConfig: {
+					outerHeight: 500
+				},
+				serviceCollection
+			}, async (editor, _viewModel, instantiationService) => {
+
+				const stickyScrollController: StickyScrollController = editor.registerAndInstantiateContribution(StickyScrollController.ID, StickyScrollController);
+				const lineHeight = editor.getOption(EditorOption.lineHeight);
+
+				const languageService = instantiationService.get(ILanguageFeaturesService);
+				disposables.add(languageService.documentSymbolProvider.register('*', documentSymbolProviderForTestModel()));
+				await stickyScrollController.stickyScrollCandidateProvider.update();
+
+				// With maxLineCount=1 and 2 nested scopes (TestClass > functionOfClass),
+				// scopePreference 'inner' should show the last 1 (innermost): functionOfClass (line 9)
+				editor.setScrollTop(8 * lineHeight + 1);
+				const state = stickyScrollController.findScrollWidgetState();
+				assert.deepStrictEqual(state.startLineNumbers, [9]);
+
+				stickyScrollController.dispose();
+				stickyScrollController.stickyScrollCandidateProvider.dispose();
+				model.dispose();
+			});
+		});
+	});
 });
