@@ -177,8 +177,14 @@ export class StickyScrollWidget extends Disposable implements IOverlayWidget {
 		if (rebuildFromIndexCandidate !== undefined) {
 			return rebuildFromIndexCandidate;
 		}
-		const validIndex = newLineNumbers.findIndex(startLineNumber => !previousLineNumbers.includes(startLineNumber));
-		return validIndex === -1 ? 0 : validIndex;
+		// Find the first index where the line number at that position differs from the previous state.
+		// This correctly handles both 'outer' mode (lines added at end) and 'inner' mode (lines shifted from beginning).
+		for (let i = 0; i < newLineNumbers.length; i++) {
+			if (i >= previousLineNumbers.length || newLineNumbers[i] !== previousLineNumbers[i]) {
+				return i;
+			}
+		}
+		return newLineNumbers.length;
 	}
 
 	private _updateWidgetWidth(): void {
