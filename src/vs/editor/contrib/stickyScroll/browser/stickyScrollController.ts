@@ -642,78 +642,44 @@ export class StickyScrollController extends Disposable implements IEditorContrib
 			return new StickyScrollWidgetState(startLineNumbers, endLineNumbers, lastLineRelativePosition, this._showEndForLine);
 		}
 
-		// Inner mode: collect candidates with adjusted trigger positions
-		// In inner mode, scopes beyond maxNumberStickyLines should trigger at the current widget bottom
+		// Inner mode: collect candidates, then show innermost N scopes
 		const allCandidates: { start: number; end: number; height: number }[] = [];
-		let currentTop = 0;
+		let widgetHeight = 0;
 		for (const range of candidateRanges) {
 			const start = range.startLineNumber;
 			const end = range.endLineNumber;
 			const height = range.height;
 
-			// For inner mode, determine the effective trigger position:
-			// - First N scopes use their normal cumulative positions (top of where they render)
-			// - All scopes beyond N should trigger at the current widget bottom
-			let effectiveTop: number;
-			if (allCandidates.length < maxNumberStickyLines) {
-				effectiveTop = currentTop;
-			} else {
-				// Calculate the current widget bottom (sum of heights of currently displayed scopes)
-				let widgetBottom = 0;
-				for (let i = allCandidates.length - maxNumberStickyLines; i < allCandidates.length; i++) {
-					widgetBottom += allCandidates[i].height;
-				}
-				effectiveTop = widgetBottom;
-			}
+			// Effective trigger position: use cumulative height for first N scopes,
+			// then use current widget bottom (sliding window) for scopes beyond N
+			const effectiveTop = allCandidates.length < maxNumberStickyLines
+				? widgetHeight
+				: widgetHeight - allCandidates[allCandidates.length - maxNumberStickyLines].height;
 
 			const topOfBeginningLine = this._editor.getTopForLineNumber(start) - scrollTop;
 			const bottomOfEndLine = this._editor.getBottomForLineNumber(end) - scrollTop;
 			if (effectiveTop > topOfBeginningLine && effectiveTop <= bottomOfEndLine) {
 				allCandidates.push({ start, end, height });
-				currentTop += height;
+				widgetHeight += height;
 			}
 		}
 
-		// If we have more candidates than maxNumberStickyLines, show the innermost ones
-		if (allCandidates.length > maxNumberStickyLines) {
-			// Take the last N candidates (innermost scopes)
-			const finalCandidates = allCandidates.slice(-maxNumberStickyLines);
-			const startLineNumbers = finalCandidates.map(c => c.start);
-			const endLineNumbers = finalCandidates.map(c => c.end + 1);
+		// Take the last N candidates (innermost scopes) if exceeding maxNumberStickyLines
+		const finalCandidates = allCandidates.length > maxNumberStickyLines
+			? allCandidates.slice(-maxNumberStickyLines)
+			: allCandidates;
+		const startLineNumbers = finalCandidates.map(c => c.start);
+		const endLineNumbers = finalCandidates.map(c => c.end + 1);
 
-			// Calculate lastLineRelativePosition for the last (innermost) visible scope
-			// This controls the "push up" animation when that scope is about to end
-			if (finalCandidates.length > 0) {
-				const lastCandidate = finalCandidates[finalCandidates.length - 1];
-				// Calculate where the last line renders in the inner mode widget
-				let lastLineTop = 0;
-				for (let i = 0; i < finalCandidates.length - 1; i++) {
-					lastLineTop += finalCandidates[i].height;
-				}
-				const bottomOfElement = lastLineTop + lastCandidate.height;
-				const bottomOfEndLine = this._editor.getBottomForLineNumber(lastCandidate.end) - scrollTop;
-				if (bottomOfElement > bottomOfEndLine) {
-					lastLineRelativePosition = bottomOfEndLine - bottomOfElement;
-				}
-			}
-
-			this._endLineNumbers = endLineNumbers;
-			return new StickyScrollWidgetState(startLineNumbers, endLineNumbers, lastLineRelativePosition, this._showEndForLine);
-		}
-
-		// Not exceeding maxNumberStickyLines, use all candidates as-is
-		const startLineNumbers = allCandidates.map(c => c.start);
-		const endLineNumbers = allCandidates.map(c => c.end + 1);
-
-		if (allCandidates.length > 0) {
-			const lastCandidate = allCandidates[allCandidates.length - 1];
-			// Calculate where the last line renders
+		// Calculate lastLineRelativePosition for the "push up" animation
+		if (finalCandidates.length > 0) {
+			const lastCandidate = finalCandidates[finalCandidates.length - 1];
 			let lastLineTop = 0;
-			for (let i = 0; i < allCandidates.length - 1; i++) {
-				lastLineTop += allCandidates[i].height;
+			for (let i = 0; i < finalCandidates.length - 1; i++) {
+				lastLineTop += finalCandidates[i].height;
 			}
-			const bottomOfElement = lastLineTop + lastCandidate.height;
 			const bottomOfEndLine = this._editor.getBottomForLineNumber(lastCandidate.end) - scrollTop;
+			const bottomOfElement = lastLineTop + lastCandidate.height;
 			if (bottomOfElement > bottomOfEndLine) {
 				lastLineRelativePosition = bottomOfEndLine - bottomOfElement;
 			}
