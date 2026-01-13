@@ -644,7 +644,6 @@ export class StickyScrollController extends Disposable implements IEditorContrib
 
 		// Inner mode: collect candidates, then show innermost N scopes
 		const allCandidates: { start: number; end: number; height: number }[] = [];
-		let widgetHeight = 0;
 		for (const range of candidateRanges) {
 			const start = range.startLineNumber;
 			const end = range.endLineNumber;
@@ -652,15 +651,25 @@ export class StickyScrollController extends Disposable implements IEditorContrib
 
 			// Effective trigger position: use cumulative height for first N scopes,
 			// then use current widget bottom (sliding window) for scopes beyond N
-			const effectiveTop = allCandidates.length < maxNumberStickyLines
-				? widgetHeight
-				: widgetHeight - allCandidates[allCandidates.length - maxNumberStickyLines].height;
+			let effectiveTop: number;
+			if (allCandidates.length < maxNumberStickyLines) {
+				// Sum all heights - all candidates are displayed
+				effectiveTop = 0;
+				for (const candidate of allCandidates) {
+					effectiveTop += candidate.height;
+				}
+			} else {
+				// Sum heights of currently displayed scopes (last N)
+				effectiveTop = 0;
+				for (let i = allCandidates.length - maxNumberStickyLines; i < allCandidates.length; i++) {
+					effectiveTop += allCandidates[i].height;
+				}
+			}
 
 			const topOfBeginningLine = this._editor.getTopForLineNumber(start) - scrollTop;
 			const bottomOfEndLine = this._editor.getBottomForLineNumber(end) - scrollTop;
 			if (effectiveTop > topOfBeginningLine && effectiveTop <= bottomOfEndLine) {
 				allCandidates.push({ start, end, height });
-				widgetHeight += height;
 			}
 		}
 
