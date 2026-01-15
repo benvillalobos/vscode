@@ -616,7 +616,7 @@ export class StickyScrollController extends Disposable implements IEditorContrib
 		const fullVisibleRange = new StickyRange(arrayVisibleRanges[0].startLineNumber, arrayVisibleRanges[arrayVisibleRanges.length - 1].endLineNumber);
 		const candidateRanges = this._stickyLineCandidateProvider.getCandidateStickyLinesIntersecting(fullVisibleRange);
 
-		if (scopePreference === 'outer') {
+		if (scopePreference === 'outerScopes') {
 			// Outer mode: keep collecting until we hit maxNumberStickyLines (original behavior)
 			const startLineNumbers: number[] = [];
 			const endLineNumbers: number[] = [];

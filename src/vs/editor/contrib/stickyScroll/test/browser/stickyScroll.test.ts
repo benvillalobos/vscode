@@ -360,7 +360,7 @@ suite('Sticky Scroll Tests', () => {
 		});
 	});
 
-	test('issue #208406 : scopePreference outer shows outermost scopes first', () => {
+	test('issue #208406 : scopePreference outerScopes shows outermost scopes first', () => {
 		return runWithFakedTimers({ useFakeTimers: true }, async () => {
 			const model = createTextModel(text);
 			await withAsyncTestCodeEditor(model, {
@@ -368,7 +368,7 @@ suite('Sticky Scroll Tests', () => {
 					enabled: true,
 					maxLineCount: 1,
 					defaultModel: 'outlineModel',
-					scopePreference: 'outer'
+					scopePreference: 'outerScopes'
 				},
 				envConfig: {
 					outerHeight: 500
@@ -384,7 +384,7 @@ suite('Sticky Scroll Tests', () => {
 				await stickyScrollController.stickyScrollCandidateProvider.update();
 
 				// With maxLineCount=1 and 2 nested scopes (TestClass > functionOfClass),
-				// scopePreference 'outer' should show the first 1 (outermost): TestClass (line 7)
+				// scopePreference 'outerScopes' should show the first 1 (outermost): TestClass (line 7)
 				editor.setScrollTop(8 * lineHeight + 1);
 				const state = stickyScrollController.findScrollWidgetState();
 				assert.deepStrictEqual(state.startLineNumbers, [7]);
@@ -396,7 +396,7 @@ suite('Sticky Scroll Tests', () => {
 		});
 	});
 
-	test('issue #208406 : scopePreference inner shows innermost scopes first', () => {
+	test('issue #208406 : scopePreference innerScopes shows innermost scopes first', () => {
 		return runWithFakedTimers({ useFakeTimers: true }, async () => {
 			const model = createTextModel(text);
 			await withAsyncTestCodeEditor(model, {
@@ -404,7 +404,7 @@ suite('Sticky Scroll Tests', () => {
 					enabled: true,
 					maxLineCount: 1,
 					defaultModel: 'outlineModel',
-					scopePreference: 'inner'
+					scopePreference: 'innerScopes'
 				},
 				envConfig: {
 					outerHeight: 500
@@ -420,7 +420,7 @@ suite('Sticky Scroll Tests', () => {
 				await stickyScrollController.stickyScrollCandidateProvider.update();
 
 				// With maxLineCount=1 and 2 nested scopes (TestClass > functionOfClass),
-				// scopePreference 'inner' should show the last 1 (innermost): functionOfClass (line 9)
+				// scopePreference 'innerScopes' should show the last 1 (innermost): functionOfClass (line 9)
 				editor.setScrollTop(8 * lineHeight + 1);
 				const state = stickyScrollController.findScrollWidgetState();
 				assert.deepStrictEqual(state.startLineNumbers, [9]);

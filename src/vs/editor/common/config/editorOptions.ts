@@ -3111,7 +3111,7 @@ export interface IEditorStickyScrollOptions {
 	/**
 	 * Define whether to show outer scopes or inner scopes when maxLineCount is reached
 	 */
-	scopePreference?: 'outer' | 'inner';
+	scopePreference?: 'outerScopes' | 'innerScopes';
 }
 
 /**
@@ -3122,7 +3122,7 @@ export type EditorStickyScrollOptions = Readonly<Required<IEditorStickyScrollOpt
 class EditorStickyScroll extends BaseEditorOption<EditorOption.stickyScroll, IEditorStickyScrollOptions, EditorStickyScrollOptions> {
 
 	constructor() {
-		const defaults: EditorStickyScrollOptions = { enabled: true, maxLineCount: 5, defaultModel: 'outlineModel', scrollWithEditor: true, scopePreference: 'outer' };
+		const defaults: EditorStickyScrollOptions = { enabled: true, maxLineCount: 5, defaultModel: 'outlineModel', scrollWithEditor: true, scopePreference: 'outerScopes' };
 		super(
 			EditorOption.stickyScroll, 'stickyScroll', defaults,
 			{
@@ -3151,11 +3151,11 @@ class EditorStickyScroll extends BaseEditorOption<EditorOption.stickyScroll, IEd
 				},
 				'editor.stickyScroll.scopePreference': {
 					type: 'string',
-					enum: ['outer', 'inner'],
+					enum: ['outerScopes', 'innerScopes'],
 					default: defaults.scopePreference,
 					enumDescriptions: [
-						nls.localize('editor.stickyScroll.scopePreference.outer', "Show outermost scopes first (default behavior)."),
-						nls.localize('editor.stickyScroll.scopePreference.inner', "Show innermost/nearest scopes first, making room for inner code blocks.")
+						nls.localize('editor.stickyScroll.scopePreference.outerScopes', "Show outermost scopes first (default behavior)."),
+						nls.localize('editor.stickyScroll.scopePreference.innerScopes', "Show innermost/nearest scopes first, making room for inner code blocks.")
 					],
 					description: nls.localize('editor.stickyScroll.scopePreference', "Defines whether to prioritize showing outer (parent) scopes or inner (nearest) scopes when the maximum sticky line count is reached.")
 				},
@@ -3173,7 +3173,7 @@ class EditorStickyScroll extends BaseEditorOption<EditorOption.stickyScroll, IEd
 			maxLineCount: EditorIntOption.clampedInt(input.maxLineCount, this.defaultValue.maxLineCount, 1, 20),
 			defaultModel: stringSet<'outlineModel' | 'foldingProviderModel' | 'indentationModel'>(input.defaultModel, this.defaultValue.defaultModel, ['outlineModel', 'foldingProviderModel', 'indentationModel']),
 			scrollWithEditor: boolean(input.scrollWithEditor, this.defaultValue.scrollWithEditor),
-			scopePreference: stringSet<'outer' | 'inner'>(input.scopePreference, this.defaultValue.scopePreference, ['outer', 'inner'])
+			scopePreference: stringSet<'outerScopes' | 'innerScopes'>(input.scopePreference, this.defaultValue.scopePreference, ['outerScopes', 'innerScopes'])
 		};
 	}
 }
