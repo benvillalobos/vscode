@@ -601,7 +601,9 @@ export class StickyScrollController extends Disposable implements IEditorContrib
 	}
 
 	findScrollWidgetState(): StickyScrollWidgetState {
-		const maxNumberStickyLines = Math.min(this._maxStickyLines, this._editor.getOption(EditorOption.stickyScroll).maxLineCount);
+		const stickyScrollOptions = this._editor.getOption(EditorOption.stickyScroll);
+		const maxNumberStickyLines = Math.min(this._maxStickyLines, stickyScrollOptions.maxLineCount);
+		const preferInnerScopes = stickyScrollOptions.preferInnerScopes;
 		const scrollTop: number = this._editor.getScrollTop();
 		let lastLineRelativePosition: number = 0;
 		const startLineNumbers: number[] = [];
@@ -624,9 +626,16 @@ export class StickyScrollController extends Disposable implements IEditorContrib
 						lastLineRelativePosition = bottomOfEndLine - bottomOfElement;
 					}
 				}
-				if (startLineNumbers.length === maxNumberStickyLines) {
+				// Only break early when NOT preferring inner scopes (original behavior)
+				if (!preferInnerScopes && startLineNumbers.length === maxNumberStickyLines) {
 					break;
 				}
+			}
+			// Apply preferInnerScopes: trim from beginning if needed
+			if (preferInnerScopes && startLineNumbers.length > maxNumberStickyLines) {
+				const excess = startLineNumbers.length - maxNumberStickyLines;
+				startLineNumbers.splice(0, excess);
+				endLineNumbers.splice(0, excess);
 			}
 		}
 		this._endLineNumbers = endLineNumbers;
