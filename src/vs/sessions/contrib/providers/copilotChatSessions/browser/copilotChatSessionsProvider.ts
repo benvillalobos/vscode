@@ -1820,6 +1820,27 @@ export class CopilotChatSessionsProvider extends Disposable implements ISessions
 		this.logService.warn(`[CopilotChatSessionsProvider] setPermissionLevel: session '${sessionId}' is not a new session; level '${level}' will not be applied`);
 	}
 
+	setIsolationMode(sessionId: string, mode: string): void {
+		if (mode !== 'worktree' && mode !== 'workspace') {
+			return;
+		}
+		const newSession = this._newSessions.get(sessionId);
+		if (newSession) {
+			newSession.setIsolationMode(mode);
+			return;
+		}
+		this.logService.warn(`[CopilotChatSessionsProvider] setIsolationMode: session '${sessionId}' is not a new session; mode '${mode}' will not be applied`);
+	}
+
+	setBranch(sessionId: string, branch: string): void {
+		const newSession = this._newSessions.get(sessionId);
+		if (newSession) {
+			newSession.setBranch(branch);
+			return;
+		}
+		this.logService.warn(`[CopilotChatSessionsProvider] setBranch: session '${sessionId}' is not a new session; branch '${branch}' will not be applied`);
+	}
+
 	// -- Session Actions --
 
 	async archiveSession(sessionId: string): Promise<void> {

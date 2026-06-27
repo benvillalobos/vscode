@@ -93,17 +93,19 @@ export class SessionsAutomationRunner implements IAutomationRunner {
 				background: true,
 			};
 
-			const createOptions: ICreateNewSessionOptions | undefined = automation.providerId || automation.sessionTypeId || automation.modelId || automation.mode || automation.permissionLevel
+			const createOptions: ICreateNewSessionOptions | undefined = automation.providerId || automation.sessionTypeId || automation.modelId || automation.mode || automation.permissionLevel || automation.isolationMode
 				? {
 					providerId: automation.providerId,
 					sessionTypeId: automation.sessionTypeId,
 					modelId: automation.modelId,
 					modeId: automation.mode,
 					permissionLevel: automation.permissionLevel,
+					isolationMode: automation.isolationMode,
+					branch: automation.branch,
 				}
 				: undefined;
 
-			this.logService.trace(`[SessionsAutomationRunner] running ${automation.id}: provider=${createOptions?.providerId ?? '(default)'}, sessionType=${createOptions?.sessionTypeId ?? '(default)'}, model=${createOptions?.modelId ?? '(default)'}, mode=${createOptions?.modeId ?? '(default)'}, permissionLevel=${createOptions?.permissionLevel ?? '(default)'}`);
+			this.logService.trace(`[SessionsAutomationRunner] running ${automation.id}: provider=${createOptions?.providerId ?? '(default)'}, sessionType=${createOptions?.sessionTypeId ?? '(default)'}, model=${createOptions?.modelId ?? '(default)'}, mode=${createOptions?.modeId ?? '(default)'}, permissionLevel=${createOptions?.permissionLevel ?? '(default)'}, isolationMode=${createOptions?.isolationMode ?? '(default)'}, branch=${createOptions?.branch ?? '(default)'}`);
 
 			const session = await this.sessionsManagementService.createAndSendNewChatRequest(automation.folderUri, options, createOptions);
 

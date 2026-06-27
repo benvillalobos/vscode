@@ -100,6 +100,8 @@ export async function showAutomationDialog(
 		folderUri: initial?.folderUri,
 		providerId: initial?.providerId,
 		sessionTypeId: initial?.sessionTypeId,
+		isolationMode: initial?.isolationMode,
+		branch: initial?.branch,
 		enabled: initial?.enabled ?? true,
 	};
 
@@ -202,6 +204,8 @@ export async function showAutomationDialog(
 				modelId: modelId ?? null,
 				mode: mode ?? null,
 				permissionLevel: permissionLevel ?? null,
+				isolationMode: state.isolationMode ?? null,
+				branch: state.branch ?? null,
 				enabled: state.enabled,
 			};
 			return { kind: 'update', id: initial.id, value: patch };
@@ -217,6 +221,8 @@ export async function showAutomationDialog(
 			modelId,
 			mode,
 			permissionLevel,
+			isolationMode: state.isolationMode,
+			branch: state.branch,
 			enabled: state.enabled,
 		};
 		return { kind: 'create', value: create };
@@ -234,6 +240,8 @@ interface IFormState {
 	folderUri: URI | undefined;
 	providerId: string | undefined;
 	sessionTypeId: string | undefined;
+	isolationMode: string | undefined;
+	branch: string | undefined;
 	enabled: boolean;
 }
 
@@ -364,7 +372,7 @@ function renderForm(
 
 	// Interval picker
 	const intervalGroup = DOM.append(scheduleRow, $('.automation-form-schedule-group'));
-	DOM.append(intervalGroup, $('label.automation-form-label', undefined, localize('automation.form.interval', "Schedule")));
+	DOM.append(intervalGroup, $('span.automation-form-label', undefined, localize('automation.form.interval', "Schedule")));
 	const intervalOptions: ISelectOptionItem[] = INTERVALS.map(item => ({ text: item.label }));
 	const intervalIndex = Math.max(0, INTERVALS.findIndex(item => item.value === state.interval));
 	const intervalSelect = disposables.add(new SelectBox(
@@ -451,12 +459,22 @@ function renderForm(
 
 	// --- Isolation + branch (read-only preview) ---
 	const isolationGroup = $('span.automation-form-isolation-group');
-	const folderChip = DOM.append(isolationGroup, $('span.automation-form-isolation-chip.automation-form-isolation-chip-disabled')) as HTMLSpanElement;
-	folderChip.setAttribute('role', 'img');
-	folderChip.setAttribute('aria-label', localize('automation.form.isolation.folderAria', "Isolation: Folder (Worktree not supported for scheduled automations)"));
-	folderChip.title = localize('automation.form.isolation.folderTitle', "Scheduled automations run in the workspace folder. Worktree isolation is not yet supported.");
+	const folderChip = DOM.append(isolationGroup, $('span.automation-form-isolation-chip')) as HTMLSpanElement;
+	folderChip.setAttribute('role', 'button');
+	folderChip.tabIndex = 0;
+	folderChip.setAttribute('aria-label', localize('automation.form.isolation.folderAria', "Select workspace folder"));
+	folderChip.title = localize('automation.form.isolation.folderTitle', "Select workspace folder");
 	DOM.append(folderChip, renderIcon(Codicon.folder));
 	DOM.append(folderChip, $('span.automation-form-isolation-label', undefined, localize('automation.form.isolation.folder', "Folder")));
+	disposables.add(DOM.addDisposableListener(folderChip, 'click', () => {
+		workspacePicker.showPicker(false, folderChip);
+	}));
+	disposables.add(DOM.addDisposableListener(folderChip, 'keydown', (e: KeyboardEvent) => {
+		if (e.key === 'Enter' || e.key === ' ') {
+			DOM.EventHelper.stop(e, true);
+			workspacePicker.showPicker(false, folderChip);
+		}
+	}));
 
 	const branchSlot = DOM.append(isolationGroup, $('span.automation-form-branch-slot')) as HTMLSpanElement;
 	branchSlot.setAttribute('aria-live', 'polite');
@@ -509,7 +527,7 @@ function renderForm(
 
 	// --- Prompt ---
 	const promptRow = DOM.append(form, $('.automation-form-row'));
-	DOM.append(promptRow, $('label.automation-form-label', undefined, localize('automation.form.prompt', "Prompt")));
+	DOM.append(promptRow, $('span.automation-form-label', undefined, localize('automation.form.prompt', "Prompt")));
 	const promptHost = DOM.append(promptRow, $('.automation-form-prompt-host.interactive-session'));
 
 	const chatInputStyles: IChatInputStyles = {
@@ -556,6 +574,7 @@ function renderForm(
 	ChatContextKeys.location.bindTo(scopedContextKeyService).set(ChatAgentLocation.Chat);
 	ChatContextKeys.inChatSession.bindTo(scopedContextKeyService).set(true);
 	ChatContextKeys.inAutomationsDialog.bindTo(scopedContextKeyService).set(true);
+	ChatContextKeys.chatSessionIsEmpty.bindTo(scopedContextKeyService).set(true);
 	const scopedInstantiationService = disposables.add(
 		instantiationService.createChild(new ServiceCollection([IContextKeyService, scopedContextKeyService]))
 	);

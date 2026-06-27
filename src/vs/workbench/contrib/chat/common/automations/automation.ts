@@ -88,6 +88,18 @@ export interface IAutomation {
 	 */
 	readonly permissionLevel?: string;
 
+	/**
+	 * Optional isolation mode for the scheduled session — `worktree` or
+	 * `workspace`. When omitted the provider's default applies.
+	 */
+	readonly isolationMode?: string;
+
+	/**
+	 * Optional branch name for worktree isolation. Ignored when
+	 * {@link isolationMode} is not `worktree`.
+	 */
+	readonly branch?: string;
+
 	readonly enabled: boolean;
 
 	/** ISO-8601 UTC timestamp. */

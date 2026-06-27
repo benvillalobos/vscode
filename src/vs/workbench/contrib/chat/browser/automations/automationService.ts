@@ -44,6 +44,8 @@ interface ISerializedAutomation {
 	readonly modelId?: string;
 	readonly mode?: string;
 	readonly permissionLevel?: string;
+	readonly isolationMode?: string;
+	readonly branch?: string;
 	readonly enabled: boolean;
 	readonly createdAt: string;
 	readonly updatedAt: string;
@@ -391,6 +393,8 @@ function serializeAutomation(a: IAutomation): ISerializedAutomation {
 		modelId: a.modelId,
 		mode: a.mode,
 		permissionLevel: a.permissionLevel,
+		isolationMode: a.isolationMode,
+		branch: a.branch,
 		enabled: a.enabled,
 		createdAt: a.createdAt,
 		updatedAt: a.updatedAt,
@@ -419,6 +423,8 @@ function deserializeAutomation(s: ISerializedAutomation): IAutomation {
 		modelId: s.modelId,
 		mode: s.mode,
 		permissionLevel,
+		isolationMode: s.isolationMode,
+		branch: s.branch,
 		enabled: s.enabled,
 		createdAt: s.createdAt,
 		updatedAt: s.updatedAt,
@@ -439,6 +445,8 @@ function mergeAutomation(current: IAutomation, patch: IUpdateAutomationOptions):
 		modelId: patch.modelId === null ? undefined : (patch.modelId ?? current.modelId),
 		mode: patch.mode === null ? undefined : (patch.mode ?? current.mode),
 		permissionLevel: patch.permissionLevel === null ? undefined : (patch.permissionLevel ?? current.permissionLevel),
+		isolationMode: patch.isolationMode === null ? undefined : (patch.isolationMode ?? current.isolationMode),
+		branch: patch.branch === null ? undefined : (patch.branch ?? current.branch),
 		enabled: patch.enabled ?? current.enabled,
 	};
 }

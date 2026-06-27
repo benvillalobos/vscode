@@ -230,6 +230,26 @@ export interface ISessionsProvider {
 	setPermissionLevel?(sessionId: string, level: string): void;
 
 	/**
+	 * Set the isolation mode for a session — e.g. `worktree` or `workspace`.
+	 * Optional: providers that do not implement worktree isolation can omit
+	 * this. Callers must tolerate the method being absent.
+	 *
+	 * @param sessionId The ID of the session.
+	 * @param mode The isolation mode identifier to apply.
+	 */
+	setIsolationMode?(sessionId: string, mode: string): void;
+
+	/**
+	 * Set the branch for a session when running in worktree isolation mode.
+	 * Optional: providers that do not implement worktree isolation can omit
+	 * this. Callers must tolerate the method being absent.
+	 *
+	 * @param sessionId The ID of the session.
+	 * @param branch The branch name to apply.
+	 */
+	setBranch?(sessionId: string, branch: string): void;
+
+	/**
 	 * Archive a session.
 	 * @param sessionId The ID of the session to archive.
 	 */

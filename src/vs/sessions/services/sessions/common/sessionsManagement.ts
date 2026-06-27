@@ -74,6 +74,16 @@ export interface ICreateNewSessionOptions {
 	 * value.
 	 */
 	readonly permissionLevel?: string;
+	/**
+	 * Optional isolation mode ('worktree' or 'workspace'). Ignored if the
+	 * chosen provider does not support isolation.
+	 */
+	readonly isolationMode?: string;
+	/**
+	 * Optional branch name for worktree isolation. Ignored when
+	 * isolationMode is not 'worktree'.
+	 */
+	readonly branch?: string;
 }
 
 export const ActiveSessionSupportsMultiChatContext = new RawContextKey<boolean>('activeSessionSupportsMultiChat', false, localize('activeSessionSupportsMultiChat', "Whether the active session supports multiple chats"));
