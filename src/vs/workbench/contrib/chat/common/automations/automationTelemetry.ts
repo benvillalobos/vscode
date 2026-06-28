@@ -135,13 +135,11 @@ export function publishAutomationRun(telemetryService: ITelemetryService, args: 
 type AutomationRunErrorEvent = {
 	trigger: AutomationRunTrigger;
 	intervalKind: AutomationInterval;
-	errorMessage: string;
 };
 
 type AutomationRunErrorClassification = {
 	trigger: { classification: 'SystemMetaData'; purpose: 'PerformanceAndHealth'; comment: 'What kicked off the failed run (schedule/catch_up/manual).' };
 	intervalKind: { classification: 'SystemMetaData'; purpose: 'PerformanceAndHealth'; comment: 'Cadence of the automation that failed.' };
-	errorMessage: { classification: 'CallstackOrException'; purpose: 'PerformanceAndHealth'; comment: 'Underlying error message from the failed automation run.' };
 	owner: 'benvillalobos';
 	comment: 'Tracks Automations run failures for reliability.';
 };
@@ -151,10 +149,11 @@ export function publishAutomationRunError(telemetryService: ITelemetryService, a
 	automation: IAutomation;
 	errorMessage: string;
 }): void {
+	// TODO: classify the type of error (timeout, workspace-not-found, session-creation, unknown)
+	// rather than sending the raw message, which may contain user content.
 	telemetryService.publicLogError2<AutomationRunErrorEvent, AutomationRunErrorClassification>('automation.runError', {
 		trigger: args.trigger,
 		intervalKind: args.automation.schedule.interval,
-		errorMessage: args.errorMessage,
 	});
 }
 
