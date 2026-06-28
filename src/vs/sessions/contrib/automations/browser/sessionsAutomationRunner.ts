@@ -6,6 +6,7 @@
 import { CancellationToken } from '../../../../base/common/cancellation.js';
 import { localize } from '../../../../nls.js';
 import { ILogService } from '../../../../platform/log/common/log.js';
+import { INotificationService } from '../../../../platform/notification/common/notification.js';
 import { ITelemetryService } from '../../../../platform/telemetry/common/telemetry.js';
 import { AutomationRunTrigger, IAutomation } from '../../../../workbench/contrib/chat/common/automations/automation.js';
 import { IAutomationRunner } from '../../../../workbench/contrib/chat/common/automations/automationRunner.js';
@@ -45,6 +46,7 @@ export class SessionsAutomationRunner implements IAutomationRunner {
 		@IAutomationService private readonly automationService: IAutomationService,
 		@ISessionsManagementService private readonly sessionsManagementService: ISessionsManagementService,
 		@ILogService private readonly logService: ILogService,
+		@INotificationService private readonly notificationService: INotificationService,
 		@ITelemetryService private readonly telemetryService: ITelemetryService,
 	) { }
 
@@ -145,11 +147,9 @@ export class SessionsAutomationRunner implements IAutomationRunner {
 			publishAutomationRun(this.telemetryService, { trigger, automation, success: true, durationMs: Date.now() - startTimeMs });
 		} catch (err) {
 			this.logService.error(`[SessionsAutomationRunner] run for ${automation.id} failed`, err);
-			// Defensive nested try/catch: the error path itself awaits
-			// `updateRun` and emits telemetry, and must not propagate a
-			// secondary failure to the outer caller.
+			const errorMessage = err instanceof Error ? err.message : String(err);
+			this.notificationService.error(localize('automationRunFailed', "Automation '{0}' failed: {1}", automation.name, errorMessage));
 			try {
-				const errorMessage = err instanceof Error ? err.message : String(err);
 				if (runId) {
 					await this.automationService.updateRun(runId, {
 						status: 'failed',
