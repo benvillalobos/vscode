@@ -462,17 +462,46 @@ function renderForm(
 	const folderChip = DOM.append(isolationGroup, $('span.automation-form-isolation-chip')) as HTMLSpanElement;
 	folderChip.setAttribute('role', 'button');
 	folderChip.tabIndex = 0;
-	folderChip.setAttribute('aria-label', localize('automation.form.isolation.folderAria', "Select workspace folder"));
-	folderChip.title = localize('automation.form.isolation.folderTitle', "Select workspace folder");
-	DOM.append(folderChip, renderIcon(Codicon.folder));
-	DOM.append(folderChip, $('span.automation-form-isolation-label', undefined, localize('automation.form.isolation.folder', "Folder")));
-	disposables.add(DOM.addDisposableListener(folderChip, 'click', () => {
-		workspacePicker.showPicker(false, folderChip);
-	}));
+
+	if (!state.isolationMode) {
+		state.isolationMode = 'worktree';
+	}
+
+	const isolationChipIcon = DOM.append(folderChip, renderIcon(state.isolationMode === 'worktree' ? Codicon.gitBranch : Codicon.folder));
+	const isolationChipLabel = DOM.append(folderChip, $('span.automation-form-isolation-label', undefined,
+		state.isolationMode === 'worktree'
+			? localize('automation.form.isolation.worktree', "Worktree")
+			: localize('automation.form.isolation.folder', "Folder")
+	));
+
+	const updateIsolationChip = () => {
+		const isWorktree = state.isolationMode === 'worktree';
+		const icon = isWorktree ? Codicon.gitBranch : Codicon.folder;
+		const label = isWorktree
+			? localize('automation.form.isolation.worktree', "Worktree")
+			: localize('automation.form.isolation.folder', "Folder");
+		const ariaLabel = isWorktree
+			? localize('automation.form.isolation.worktreeAria', "Isolation mode: Worktree. Click to switch to Folder.")
+			: localize('automation.form.isolation.folderAria', "Isolation mode: Folder. Click to switch to Worktree.");
+
+		isolationChipIcon.className = renderIcon(icon).className;
+		isolationChipLabel.textContent = label;
+		folderChip.setAttribute('aria-label', ariaLabel);
+		folderChip.title = ariaLabel;
+	};
+	updateIsolationChip();
+
+	const toggleIsolationMode = () => {
+		state.isolationMode = state.isolationMode === 'worktree' ? 'workspace' : 'worktree';
+		updateIsolationChip();
+		revalidate();
+	};
+
+	disposables.add(DOM.addDisposableListener(folderChip, 'click', toggleIsolationMode));
 	disposables.add(DOM.addDisposableListener(folderChip, 'keydown', (e: KeyboardEvent) => {
 		if (e.key === 'Enter' || e.key === ' ') {
 			DOM.EventHelper.stop(e, true);
-			workspacePicker.showPicker(false, folderChip);
+			toggleIsolationMode();
 		}
 	}));
 
