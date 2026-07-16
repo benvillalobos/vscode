@@ -69,7 +69,6 @@ import { WorkbenchList } from '../../../../../../platform/list/browser/listServi
 import { canLog, ILogService, LogLevel } from '../../../../../../platform/log/common/log.js';
 import { ObservableMemento, observableMemento } from '../../../../../../platform/observable/common/observableMemento.js';
 import { bindContextKey } from '../../../../../../platform/observable/common/platformObservableUtils.js';
-import { IProductService } from '../../../../../../platform/product/common/productService.js';
 import { IStorageService, StorageScope, StorageTarget } from '../../../../../../platform/storage/common/storage.js';
 import { IThemeService } from '../../../../../../platform/theme/common/themeService.js';
 import { ISharedWebContentExtractorService } from '../../../../../../platform/webContentExtractor/common/webContentExtractor.js';
@@ -139,7 +138,7 @@ import { IChatInputPickerOptions } from './chatInputPickerActionItem.js';
 import { ChatSelectedTools } from './chatSelectedTools.js';
 import { DelegationSessionPickerActionItem } from './delegationSessionPickerActionItem.js';
 import { ModelPickerActionItem, IModelPickerDelegate } from './modelPickerActionItem.js';
-import { IModePickerDelegate, isModeConsideredBuiltIn, ModePickerActionItem } from './modePickerActionItem.js';
+import { IModePickerDelegate, ModePickerActionItem } from './modePickerActionItem.js';
 import { IPermissionPickerDelegate, PermissionPickerActionItem } from './permissionPickerActionItem.js';
 import { SessionTypePickerActionItem } from './sessionTargetPickerActionItem.js';
 import { WorkspacePickerActionItem } from './workspacePickerActionItem.js';
@@ -200,15 +199,6 @@ export interface IChatInputPartOptions {
 	 * chat input part while still using menu-driven rendering.
 	 */
 	secondaryToolbarActionViewItemProvider?: (action: IAction, options?: IActionViewItemOptions) => IActionViewItem | undefined;
-	/**
-	 * When true, the mode picker hides custom agents and only offers the
-	 * built-in modes (Agent / Ask / Edit / Plan, gated by their normal
-	 * visibility rules). Custom-agent discovery is workspace-scoped and
-	 * doesn't follow the dialog's folder selection, so surfacing custom
-	 * agents tied to the workbench's open folders would mislead the user
-	 * when scheduling against a different folder.
-	 */
-	hideCustomChatModes?: boolean;
 	/**
 	 * When true, suppress the autorun that switches the current language
 	 * model to a mode's declared preferred model (`IChatMode.model`).
@@ -721,7 +711,6 @@ export class ChatInputPart extends Disposable implements IHistoryNavigationWidge
 		@IChatAttachmentWidgetRegistry private readonly _chatAttachmentWidgetRegistry: IChatAttachmentWidgetRegistry,
 		@IChatInputNotificationService private readonly chatInputNotificationService: IChatInputNotificationService,
 		@IChatPhoneInputPresenter private readonly chatPhoneInputPresenter: IChatPhoneInputPresenter,
-		@IProductService private readonly productService: IProductService,
 	) {
 		super();
 
@@ -1286,35 +1275,9 @@ export class ChatInputPart extends Disposable implements IHistoryNavigationWidge
 	}
 
 	private _createModePickerDelegate(): IModePickerDelegate {
-		// When `hideCustomChatModes` is set (e.g. the automations dialog),
-		// strip genuinely user-defined custom agents from the picker
-		// while preserving extension-contributed modes (Plan / new-Ask /
-		// new-Edit) that the picker categorises as built-in via
-		// `isModeConsideredBuiltIn`. Those live in `IChatModes.custom` but
-		// are part of the built-in product surface, not the
-		// folder-scoped agent files we want to hide. The underlying
-		// observable is untouched so mode validation, model picking and
-		// persistence continue to see the real list.
-		const productService = this.productService;
-		const currentChatModes: IObservable<IChatModes> = this.options.hideCustomChatModes
-			? derived(reader => {
-				const inner = this._currentChatModesObservable.read(reader);
-				const filteredCustom = inner.custom.filter(m => isModeConsideredBuiltIn(m, productService));
-				const wrapped: IChatModes = {
-					onDidChange: inner.onDidChange,
-					builtin: inner.builtin,
-					custom: filteredCustom,
-					findModeById: (id: string) => inner.builtin.find(m => m.id === id) ?? filteredCustom.find(m => m.id === id),
-					findModeByName: (name: string) => inner.builtin.find(m => m.name.read(undefined) === name) ?? filteredCustom.find(m => m.name.read(undefined) === name),
-					waitForPendingUpdates: () => inner.waitForPendingUpdates(),
-				};
-				return wrapped;
-			})
-			: this._currentChatModesObservable;
-
 		return {
 			currentMode: this._currentModeObservable,
-			currentChatModes,
+			currentChatModes: this._currentChatModesObservable,
 			sessionResource: () => this._widget?.viewModel?.sessionResource,
 			// Direct setter for hosts that embed `ChatInputPart` without
 			// registering an `IChatWidget` (e.g. the automations dialog).
