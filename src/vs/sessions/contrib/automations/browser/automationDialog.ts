@@ -16,7 +16,7 @@ import { CancellationTokenSource } from '../../../../base/common/cancellation.js
 import { Codicon } from '../../../../base/common/codicons.js';
 import { Emitter, Event } from '../../../../base/common/event.js';
 import { KeyCode } from '../../../../base/common/keyCodes.js';
-import { DisposableStore, IDisposable, MutableDisposable } from '../../../../base/common/lifecycle.js';
+import { DisposableStore, IDisposable, MutableDisposable, toDisposable } from '../../../../base/common/lifecycle.js';
 import { autorun, constObservable, observableValue } from '../../../../base/common/observable.js';
 import { URI } from '../../../../base/common/uri.js';
 import { ICodeEditorService } from '../../../../editor/browser/services/codeEditorService.js';
@@ -52,6 +52,8 @@ import { IChatWidget, ISessionTypePickerDelegate } from '../../../../workbench/c
 import { ChatInputPart, IChatInputPartOptions, IChatInputStyles } from '../../../../workbench/contrib/chat/browser/widget/input/chatInputPart.js';
 import { AutomationIsolationModel, normalizeAutomationBranchNames } from '../common/isolationGroupModel.js';
 import { ISessionsManagementService } from '../../../services/sessions/common/sessionsManagement.js';
+import { IWorkspaceEditingService } from '../../../../workbench/services/workspaces/common/workspaceEditing.js';
+import { IWorkspaceContextService } from '../../../../platform/workspace/common/workspace.js';
 
 const $ = DOM.$;
 
@@ -836,9 +838,38 @@ export function renderForm(
 	}));
 
 	const workspacePicker = disposables.add(instantiationService.createInstance(AutomationsWorkspacePicker));
+	const workspaceEditingService = instantiationService.invokeFunction(accessor => accessor.get(IWorkspaceEditingService));
+	const workspaceContextService = instantiationService.invokeFunction(accessor => accessor.get(IWorkspaceContextService));
+
+	// Save the current workspace folder so we can restore it when the dialog closes.
+	// This prevents the automation dialog's folder selection from leaking into the
+	// main new-chat widget's mode picker.
+	const originalFolder = workspaceContextService.getWorkspace().folders[0]?.uri;
+	disposables.add(toDisposable(() => {
+		if (originalFolder) {
+			workspaceEditingService.updateFolders(0, 1, [{ uri: originalFolder }]);
+		} else {
+			const current = workspaceContextService.getWorkspace().folders[0]?.uri;
+			if (current) {
+				workspaceEditingService.removeFolders([current]);
+			}
+		}
+	}));
+
+	const syncWorkspaceFolderForAgents = (uri: URI) => {
+		const currentFolder = workspaceContextService.getWorkspace().folders[0]?.uri;
+		if (currentFolder) {
+			workspaceEditingService.updateFolders(0, 1, [{ uri }]);
+		} else {
+			workspaceEditingService.addFolders([{ uri }]);
+		}
+	};
 
 	if (state.folderUri) {
 		workspacePicker.setSelectedWorkspace(state.folderUri, { fireEvent: false });
+		// Ensure workspace folders reflect the initial selection so mode picker
+		// discovers the correct custom agents on first render.
+		syncWorkspaceFolderForAgents(state.folderUri);
 	}
 
 	disposables.add(workspacePicker.onDidSelectWorkspace(uri => {
@@ -847,6 +878,9 @@ export function renderForm(
 		// mirrors any resulting pick change into state. revalidate() still runs here
 		// because folder validity can change even when the pick does not.
 		folderObs.set(uri, undefined);
+		// Update the global workspace folders so the PromptFilesLocator re-scans
+		// and custom agents in the mode picker refresh for the new folder.
+		syncWorkspaceFolderForAgents(uri);
 		revalidate();
 	}));
 
