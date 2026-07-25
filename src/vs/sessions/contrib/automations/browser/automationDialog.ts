@@ -31,6 +31,7 @@ import { ServiceCollection } from '../../../../platform/instantiation/common/ser
 import { KeybindingsRegistry, KeybindingWeight } from '../../../../platform/keybinding/common/keybindingsRegistry.js';
 import { ILogService } from '../../../../platform/log/common/log.js';
 import { IProductService } from '../../../../platform/product/common/productService.js';
+import { IWorkspaceTrustRequestService } from '../../../../platform/workspace/common/workspaceTrust.js';
 import { defaultCheckboxStyles, defaultInputBoxStyles, defaultSelectBoxStyles } from '../../../../platform/theme/browser/defaultStyles.js';
 import { hasNativeContextMenu } from '../../../../platform/window/common/window.js';
 import { IWorkspacePickerItem, WorkspacePicker } from '../../chat/browser/sessionWorkspacePicker.js';
@@ -51,6 +52,7 @@ import { isModeConsideredBuiltIn } from '../../../../workbench/contrib/chat/brow
 import { IWorkbenchLayoutService } from '../../../../workbench/services/layout/browser/layoutService.js';
 import { AutomationIsolationModel, normalizeAutomationBranchNames } from '../common/isolationGroupModel.js';
 import { ISessionsManagementService } from '../../../services/sessions/common/sessionsManagement.js';
+import { requestSessionWorkspaceTrust } from '../../../services/sessions/browser/sessionWorkspaceTrust.js';
 import { showMobileWorkspacePickerSheet, shouldUseMobileWorkspacePickerSheet } from '../../chat/browser/mobile/mobileWorkspacePickerSheet.js';
 
 const $ = DOM.$;
@@ -664,6 +666,8 @@ export function renderForm(
 	layoutService: IWorkbenchLayoutService,
 	logService: ILogService,
 	productService: IProductService,
+	sessionsManagementService: ISessionsManagementService,
+	workspaceTrustRequestService: IWorkspaceTrustRequestService,
 	initialPrompt: string,
 	initialMode: string | undefined,
 	initialPermissionLevel: string | undefined,
@@ -792,6 +796,8 @@ export function renderForm(
 	const workspacePicker = disposables.add(instantiationService.createInstance(MobileAutomationsWorkspacePicker));
 	workspacePicker.setTargetModel(isolationModel);
 	workspacePicker.setLayoutService(layoutService);
+	workspacePicker.setWorkspaceTrustRequest((folderUri, preferredProviderId) =>
+		requestSessionWorkspaceTrust(folderUri, preferredProviderId, sessionsManagementService, workspaceTrustRequestService));
 
 	if (state.folderUri) {
 		workspacePicker.setSelectedWorkspace(state.folderUri, { fireEvent: false, persist: false });
@@ -1094,6 +1100,7 @@ export function updateSaveButtonState(
 export class AutomationsWorkspacePicker extends WorkspacePicker {
 	private readonly targetModelWatch = this._register(new MutableDisposable<IDisposable>());
 	private targetModel: AutomationIsolationModel | undefined;
+	private workspaceTrustRequest: ((folderUri: URI, preferredProviderId: string | undefined) => Promise<boolean>) | undefined;
 
 	setTargetModel(model: AutomationIsolationModel): void {
 		this.targetModel = model;
@@ -1101,6 +1108,12 @@ export class AutomationsWorkspacePicker extends WorkspacePicker {
 			model.isQuickChatObs.read(reader);
 			this._updateTriggerLabel();
 		});
+	}
+
+	// TODO: Do we really need to go through these hoops? If so not a big deal,
+	// just seems like a code smell at first glance.
+	setWorkspaceTrustRequest(request: (folderUri: URI, preferredProviderId: string | undefined) => Promise<boolean>): void {
+		this.workspaceTrustRequest = request;
 	}
 
 	protected override _showTabs(): boolean {
@@ -1137,8 +1150,9 @@ export class AutomationsWorkspacePicker extends WorkspacePicker {
 		return applied;
 	}
 
-	protected override async _executeBrowseAction(actionIndex: number): Promise<URI | undefined> {
-		return super._executeBrowseAction(actionIndex);
+	protected override async _validateWorkspaceSelection(folderUri: URI, providerId: string | undefined): Promise<boolean> {
+		return !this.workspaceTrustRequest
+			|| await this.workspaceTrustRequest(folderUri, providerId);
 	}
 
 	protected override _isSelectedFolder(folderUri: URI | undefined): boolean {

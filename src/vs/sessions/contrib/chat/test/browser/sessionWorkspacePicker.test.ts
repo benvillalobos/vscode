@@ -889,6 +889,94 @@ suite('AutomationsWorkspacePicker', () => {
 		});
 	});
 
+	test('keeps the previous workspace when trust is declined', async () => {
+		const providersService = disposables.add(new MockSessionsProvidersService());
+		const provider = createMockProvider('local-1');
+		const selectedFolder = URI.file('/local/selected');
+		const candidateFolder = URI.file('/local/candidate');
+		const storage = disposables.add(new TestStorageService());
+		seedStorage(storage, [
+			{ uri: selectedFolder, providerId: provider.id, checked: true },
+			{ uri: candidateFolder, providerId: provider.id, checked: false },
+		]);
+		providersService.setProviders([provider]);
+		const picker = createTestPicker(
+			disposables,
+			providersService,
+			storage,
+			new TestNotificationService(),
+			TestAutomationsWorkspacePicker,
+		) as TestAutomationsWorkspacePicker;
+		const model = new AutomationIsolationModel({
+			isQuickChat: false,
+			folderUri: selectedFolder,
+			isolationMode: 'workspace',
+			branch: undefined,
+		});
+		picker.setTargetModel(model);
+		const trustRequests: Array<{ folderUri: string; providerId: string | undefined }> = [];
+		picker.setWorkspaceTrustRequest(async (folderUri, providerId) => {
+			trustRequests.push({ folderUri: folderUri.toString(), providerId });
+			return false;
+		});
+
+		await picker.select('local/candidate');
+
+		assert.deepStrictEqual({
+			trustRequests,
+			modelFolderUri: model.folderUri?.toString(),
+			pickerFolderUri: picker.selectedFolderUri?.toString(),
+		}, {
+			trustRequests: [{ folderUri: candidateFolder.toString(), providerId: provider.id }],
+			modelFolderUri: selectedFolder.toString(),
+			pickerFolderUri: selectedFolder.toString(),
+		});
+	});
+
+	test('a stale trust grant cannot override a newer No workspace choice', async () => {
+		const providersService = disposables.add(new MockSessionsProvidersService());
+		const provider = createMockProvider('local-1');
+		const selectedFolder = URI.file('/local/selected');
+		const candidateFolder = URI.file('/local/candidate');
+		const storage = disposables.add(new TestStorageService());
+		seedStorage(storage, [
+			{ uri: selectedFolder, providerId: provider.id, checked: true },
+			{ uri: candidateFolder, providerId: provider.id, checked: false },
+		]);
+		providersService.setProviders([provider]);
+		const picker = createTestPicker(
+			disposables,
+			providersService,
+			storage,
+			new TestNotificationService(),
+			TestAutomationsWorkspacePicker,
+		) as TestAutomationsWorkspacePicker;
+		const model = new AutomationIsolationModel({
+			isQuickChat: false,
+			folderUri: selectedFolder,
+			isolationMode: 'workspace',
+			branch: undefined,
+		});
+		picker.setTargetModel(model);
+		const trustResult = new DeferredPromise<boolean>();
+		picker.setWorkspaceTrustRequest(() => trustResult.p);
+
+		const staleSelection = picker.select('local/candidate');
+		await picker.select('No workspace');
+		await trustResult.complete(true);
+		await staleSelection;
+
+		assert.deepStrictEqual({
+			isQuickChat: model.isQuickChat,
+			folderUri: model.folderUri,
+			pickerFolderUri: picker.selectedFolderUri?.toString(),
+		}, {
+			isQuickChat: true,
+			folderUri: undefined,
+			pickerFolderUri: selectedFolder.toString(),
+		});
+	});
+
 	test('a stale remote selection cannot override a newer No workspace choice', async () => {
 		const providersService = disposables.add(new MockSessionsProvidersService());
 		const localProvider = createMockProvider('local-1');
@@ -965,6 +1053,11 @@ suite('AutomationsWorkspacePicker', () => {
 			branch: undefined,
 		});
 		picker.setTargetModel(model);
+		const trustRequests: string[] = [];
+		picker.setWorkspaceTrustRequest(async folderUri => {
+			trustRequests.push(folderUri.toString());
+			return true;
+		});
 
 		await picker.select('Select...');
 
@@ -972,10 +1065,93 @@ suite('AutomationsWorkspacePicker', () => {
 			isQuickChat: model.isQuickChat,
 			folderUri: model.folderUri?.toString(),
 			pickerFolderUri: picker.selectedFolderUri?.toString(),
+			trustRequests,
 		}, {
 			isQuickChat: false,
 			folderUri: browsedFolder.toString(),
 			pickerFolderUri: browsedFolder.toString(),
+			trustRequests: [browsedFolder.toString()],
+		});
+	});
+
+	test('stays in No workspace mode when trust is declined for a browsed folder', async () => {
+		const providersService = disposables.add(new MockSessionsProvidersService());
+		const provider = { ...createMockProvider('local-1'), supportsLocalWorkspaces: true };
+		const browsedFolder = URI.file('/local/browsed');
+		providersService.setProviders([provider]);
+		const picker = createTestPicker(
+			disposables,
+			providersService,
+			undefined,
+			new TestNotificationService(),
+			TestAutomationsWorkspacePicker,
+			{ showOpenDialog: async () => [browsedFolder] },
+		) as TestAutomationsWorkspacePicker;
+		const model = new AutomationIsolationModel({
+			isQuickChat: true,
+			folderUri: undefined,
+			isolationMode: undefined,
+			branch: undefined,
+		});
+		picker.setTargetModel(model);
+		picker.setWorkspaceTrustRequest(async () => false);
+
+		await picker.select('Select...');
+
+		assert.deepStrictEqual({
+			isQuickChat: model.isQuickChat,
+			folderUri: model.folderUri,
+			pickerFolderUri: picker.selectedFolderUri,
+		}, {
+			isQuickChat: true,
+			folderUri: undefined,
+			pickerFolderUri: undefined,
+		});
+	});
+
+	// TODO: Understand what scenario this covers. the description does not make sense to me
+	test('a stale browse result does not request trust after a newer choice', async () => {
+		const providersService = disposables.add(new MockSessionsProvidersService());
+		const provider = { ...createMockProvider('local-1'), supportsLocalWorkspaces: true };
+		const browsedFolder = URI.file('/local/browsed');
+		const browseResult = new DeferredPromise<URI[] | undefined>();
+		providersService.setProviders([provider]);
+		const picker = createTestPicker(
+			disposables,
+			providersService,
+			undefined,
+			new TestNotificationService(),
+			TestAutomationsWorkspacePicker,
+			{ showOpenDialog: () => browseResult.p },
+		) as TestAutomationsWorkspacePicker;
+		const model = new AutomationIsolationModel({
+			isQuickChat: true,
+			folderUri: undefined,
+			isolationMode: undefined,
+			branch: undefined,
+		});
+		picker.setTargetModel(model);
+		let trustRequestCount = 0;
+		picker.setWorkspaceTrustRequest(async () => {
+			trustRequestCount++;
+			return true;
+		});
+
+		const staleSelection = picker.select('Select...');
+		await picker.select('No workspace');
+		await browseResult.complete([browsedFolder]);
+		await staleSelection;
+
+		assert.deepStrictEqual({
+			isQuickChat: model.isQuickChat,
+			folderUri: model.folderUri,
+			pickerFolderUri: picker.selectedFolderUri,
+			trustRequestCount,
+		}, {
+			isQuickChat: true,
+			folderUri: undefined,
+			pickerFolderUri: undefined,
+			trustRequestCount: 0,
 		});
 	});
 

@@ -86,6 +86,11 @@ export interface IWorkspacePickerItem {
 	readonly run?: () => void;
 }
 
+interface IBrowsedWorkspaceSelection {
+	readonly folderUri: URI;
+	readonly providerId: string;
+}
+
 type IWorkspacePickerAction = IAction & { icon?: ThemeIcon; hoverContent?: string; onRemove?: () => void };
 
 /**
@@ -501,14 +506,30 @@ export class WorkspacePicker extends Disposable {
 			return false;
 		}
 		if (item.browseActionIndex !== undefined) {
-			const folderUri = await this._executeBrowseAction(item.browseActionIndex);
-			if (!folderUri || generation !== this._selectionGeneration) {
+			// TODO: Understand this generation !== this._selectionGeneration logic.
+			// Why is it needed? Why do we check before and after?
+			const selection = await this._executeBrowseAction(item.browseActionIndex);
+			if (!selection || generation !== this._selectionGeneration) {
 				return false;
 			}
-			this._selectFolder(folderUri);
+			if (!await this._validateWorkspaceSelection(selection.folderUri, selection.providerId)) {
+				return false;
+			}
+			if (generation !== this._selectionGeneration) {
+				return false;
+			}
+			this._selectFolder(selection.folderUri);
 			return true;
 		} else if (item.folderUri) {
 			if (item.providerId && !await this._connectProviderOnDemand(item.providerId)) {
+				return false;
+			}
+			// TODO: Understand this generation !== this._selectionGeneration logic.
+			// Why is it needed? Why do we check before and after?
+			if (generation !== this._selectionGeneration) {
+				return false;
+			}
+			if (!await this._validateWorkspaceSelection(item.folderUri, item.providerId)) {
 				return false;
 			}
 			if (generation !== this._selectionGeneration) {
@@ -658,7 +679,7 @@ export class WorkspacePicker extends Disposable {
 	/**
 	 * Executes a browse action from a provider, identified by index.
 	 */
-	protected async _executeBrowseAction(actionIndex: number): Promise<URI | undefined> {
+	private async _executeBrowseAction(actionIndex: number): Promise<IBrowsedWorkspaceSelection | undefined> {
 		const allActions = this._getAllBrowseActions();
 		const action = allActions[actionIndex];
 		if (!action) {
@@ -670,13 +691,17 @@ export class WorkspacePicker extends Disposable {
 			if (workspace) {
 				const folderUri = workspace.folders[0]?.root;
 				if (folderUri) {
-					return folderUri;
+					return { folderUri, providerId: action.providerId };
 				}
 			}
 		} catch {
 			// browse action was cancelled or failed
 		}
 		return undefined;
+	}
+
+	protected async _validateWorkspaceSelection(_folderUri: URI, _providerId: string | undefined): Promise<boolean> {
+		return true;
 	}
 
 	/**

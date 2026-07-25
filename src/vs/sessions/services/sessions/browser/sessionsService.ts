@@ -16,7 +16,6 @@ import { ILogService } from '../../../../platform/log/common/log.js';
 import { IStorageService, StorageScope, StorageTarget } from '../../../../platform/storage/common/storage.js';
 import { IUriIdentityService } from '../../../../platform/uriIdentity/common/uriIdentity.js';
 import { IWorkspaceTrustRequestService } from '../../../../platform/workspace/common/workspaceTrust.js';
-import { localize } from '../../../../nls.js';
 import { ChatInteractivity, ChatOriginKind, IChat, ISession, SessionStatus } from '../common/session.js';
 import { IActiveSession, ICreateNewChatInSessionOptions, ICreateNewSessionOptions, inheritableSessionTarget, IRecentlyOpenedSessions, ISessionsChangeEvent, ISessionsManagementService, IToggleSessionStickinessEvent } from '../common/sessionsManagement.js';
 import { ISessionsProvidersService } from './sessionsProvidersService.js';
@@ -27,6 +26,7 @@ import { IContextKey, IContextKeyService } from '../../../../platform/contextkey
 import { ISessionsPartService } from './sessionsPartService.js';
 import { IsNewChatSessionContext } from '../../../common/contextkeys.js';
 import { setActiveSessionContextKeys } from '../common/sessionContextKeys.js';
+import { requestSessionWorkspaceTrust } from './sessionWorkspaceTrust.js';
 
 const ACTIVE_SESSION_STATES_KEY = 'agentSessions.activeSessionStates';
 
@@ -714,22 +714,12 @@ export class SessionsService extends Disposable implements ISessionsService {
 	async openNewSession(options?: IOpenNewSessionOptions): Promise<IOpenNewSessionResult> {
 		const folderUri = options?.folderUri;
 		if (folderUri) {
-			// Single trust gate for every path that creates a concrete session for
-			// a folder (the workspace picker dropdown, the folder Quick Pick, etc.):
-			// resolve the workspace and, if it requires trust, prompt before
-			// creating the session. A no-op if the folder is already trusted.
-			// Resolved with the same provider `createNewSession` below will use
-			// (honoring `options.providerId`), so the trust decision always
-			// reflects the workspace that is actually about to be created.
-			const resolved = this.sessionsManagementService.resolveWorkspace(folderUri, options?.providerId);
-			if (resolved?.workspace.requiresWorkspaceTrust) {
-				const trusted = await this.workspaceTrustRequestService.requestResourcesTrust({
-					uri: folderUri,
-					message: localize('sessionsService.trustFolderMessage', "An agent session will be able to read files, run commands, and make changes in this folder."),
-				});
-				if (!trusted) {
-					return { session: undefined, trustDeclined: true };
-				}
+			// TODO: Don't delete the comment that used to be here. It should
+			// be reworded such that it mentions that this is the trust gate for
+			// interactive sessions (non-automation sessions). The comment should also not lose meaningful context.
+			const trusted = await requestSessionWorkspaceTrust(folderUri, options?.providerId, this.sessionsManagementService, this.workspaceTrustRequestService);
+			if (!trusted) {
+				return { session: undefined, trustDeclined: true };
 			}
 
 			this._startOpenSession();

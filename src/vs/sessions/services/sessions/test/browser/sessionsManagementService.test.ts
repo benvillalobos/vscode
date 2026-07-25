@@ -20,7 +20,7 @@ import { ILogService, NullLogService } from '../../../../../platform/log/common/
 import { IProgress, IProgressService, IProgressStep } from '../../../../../platform/progress/common/progress.js';
 import { InMemoryStorageService, IStorageService } from '../../../../../platform/storage/common/storage.js';
 import { IUriIdentityService } from '../../../../../platform/uriIdentity/common/uriIdentity.js';
-import { IWorkspaceTrustRequestService } from '../../../../../platform/workspace/common/workspaceTrust.js';
+import { IWorkspaceTrustManagementService, IWorkspaceTrustRequestService, ResourceTrustRequestOptions } from '../../../../../platform/workspace/common/workspaceTrust.js';
 import { ChatViewPaneTarget, IChatWidget, IChatWidgetService } from '../../../../../workbench/contrib/chat/browser/chat.js';
 import { IChatService } from '../../../../../workbench/contrib/chat/common/chatService/chatService.js';
 import { IChatEditorOptions } from '../../../../../workbench/contrib/chat/browser/widgetHosts/editor/chatEditor.js';
@@ -31,7 +31,7 @@ import { ChatInteractivity, ChatOriginKind, IChat, ISession, ISessionType, ISess
 import { ILanguageModelChatMetadataAndIdentifier } from '../../../../../workbench/contrib/chat/common/languageModels.js';
 import { ISessionChangeEvent, ISendRequestOptions, ISessionModelsSnapshot, ISessionModelPickerOptions, ISessionsProvider } from '../../common/sessionsProvider.js';
 import { SessionsManagementService } from '../../browser/sessionsManagementService.js';
-import { ISessionsManagementService, ICreateNewSessionOptions, inheritableSessionTarget } from '../../common/sessionsManagement.js';
+import { ISessionsManagementService, ICreateNewSessionOptions, inheritableSessionTarget, WorkspaceNotTrustedError } from '../../common/sessionsManagement.js';
 import { SessionsService } from '../../browser/sessionsService.js';
 import { ISessionsPartService } from '../../browser/sessionsPartService.js';
 import { ISessionsProvidersService } from '../../browser/sessionsProvidersService.js';
@@ -121,6 +121,26 @@ class TestProgressService extends mock<IProgressService>() {
 	}
 }
 
+class TestWorkspaceTrustManagementService extends mock<IWorkspaceTrustManagementService>() {
+	trusted = true;
+	readonly requestedUris: URI[] = [];
+
+	override async getUriTrustInfo(uri: URI) {
+		this.requestedUris.push(uri);
+		return { uri, trusted: this.trusted };
+	}
+}
+
+class TestWorkspaceTrustRequestService extends mock<IWorkspaceTrustRequestService>() {
+	result: boolean | undefined = true;
+	readonly requests: ResourceTrustRequestOptions[] = [];
+
+	override async requestResourcesTrust(options: ResourceTrustRequestOptions): Promise<boolean | undefined> {
+		this.requests.push(options);
+		return this.result;
+	}
+}
+
 class TestSessionsProvidersService extends mock<ISessionsProvidersService>() {
 	override readonly onDidChangeProviders = Event.None;
 
@@ -176,7 +196,14 @@ class TestSessionsProvider extends mock<ISessionsProvider>() {
 	override async createSideChat(_sessionId: string, _sourceChat: URI, _turnId: string, _selection?: ISideChatSelection): Promise<IChat> { throw new Error('not implemented'); }
 }
 
-function createSessionsManagementService(session: ISession, disposables: ReturnType<typeof ensureNoDisposablesAreLeakedInTestSuite>, provider: ISessionsProvider = new TestSessionsProvider(session)): { service: ISessionsManagementService; view: SessionsService; chatWidgetService: TestChatWidgetService; chatService: TestChatService } {
+function createSessionsManagementService(
+	session: ISession,
+	disposables: ReturnType<typeof ensureNoDisposablesAreLeakedInTestSuite>,
+	provider: ISessionsProvider = new TestSessionsProvider(session),
+	workspaceTrustManagementService = new TestWorkspaceTrustManagementService(),
+	workspaceTrustRequestService = new TestWorkspaceTrustRequestService(),
+	additionalProviders: readonly ISessionsProvider[] = [],
+): { service: ISessionsManagementService; view: SessionsService; chatWidgetService: TestChatWidgetService; chatService: TestChatService } {
 	const instantiationService = disposables.add(new TestInstantiationService());
 	const chatWidgetService = new TestChatWidgetService();
 	const chatService = new TestChatService();
@@ -184,7 +211,7 @@ function createSessionsManagementService(session: ISession, disposables: ReturnT
 	instantiationService.stub(IStorageService, disposables.add(new InMemoryStorageService()));
 	instantiationService.stub(ILogService, new NullLogService());
 	instantiationService.stub(IContextKeyService, disposables.add(new MockContextKeyService()));
-	instantiationService.stub(ISessionsProvidersService, new TestSessionsProvidersService([provider]));
+	instantiationService.stub(ISessionsProvidersService, new TestSessionsProvidersService([provider, ...additionalProviders]));
 	instantiationService.stub(IUriIdentityService, { extUri: extUriBiasedIgnorePathCase });
 	instantiationService.stub(IChatWidgetService, chatWidgetService);
 	instantiationService.stub(IProgressService, new TestProgressService());
@@ -192,6 +219,8 @@ function createSessionsManagementService(session: ISession, disposables: ReturnT
 	instantiationService.stub(IChatWidgetHistoryService, new class extends mock<IChatWidgetHistoryService>() {
 		override moveHistory(): void { }
 	});
+	instantiationService.stub(IWorkspaceTrustManagementService, workspaceTrustManagementService);
+	instantiationService.stub(IWorkspaceTrustRequestService, workspaceTrustRequestService);
 
 	const service = disposables.add(instantiationService.createInstance(SessionsManagementService));
 	const view = createView(instantiationService, service, disposables);
@@ -597,6 +626,154 @@ suite('SessionsManagementService', () => {
 		});
 	});
 
+	test('openNewSession requests trust from and creates with the preferred provider', async () => {
+		const folderUri = URI.parse('file:///workspace');
+		const preferredSession = stubSession({ sessionId: 'preferred', providerId: 'preferred' });
+		const makeWorkspace = (requiresWorkspaceTrust: boolean): ISessionWorkspace => ({
+			uri: folderUri,
+			label: 'Workspace',
+			icon: Codicon.folder,
+			folders: [{ root: folderUri, workingDirectory: folderUri, name: 'Workspace', description: undefined }],
+			requiresWorkspaceTrust,
+			isVirtualWorkspace: false,
+		});
+		let defaultCreateCount = 0;
+		const defaultProvider = new class extends TestSessionsProvider {
+			override readonly id = 'default';
+			override resolveWorkspace(): ISessionWorkspace { return makeWorkspace(false); }
+			override createNewSession(): ISession {
+				defaultCreateCount++;
+				return preferredSession;
+			}
+		}(preferredSession);
+		let preferredCreateCount = 0;
+		const preferredProvider = new class extends TestSessionsProvider {
+			override readonly id = 'preferred';
+			override readonly order = 1;
+			override resolveWorkspace(): ISessionWorkspace { return makeWorkspace(true); }
+			override createNewSession(): ISession {
+				preferredCreateCount++;
+				return preferredSession;
+			}
+		}(preferredSession);
+		const trustRequestService = new TestWorkspaceTrustRequestService();
+		const { view } = createSessionsManagementService(
+			preferredSession,
+			disposables,
+			defaultProvider,
+			new TestWorkspaceTrustManagementService(),
+			trustRequestService,
+			[preferredProvider],
+		);
+
+		const result = await view.openNewSession({ folderUri, providerId: 'preferred' });
+
+		assert.deepStrictEqual({
+			sessionId: result.session?.sessionId,
+			trustDeclined: result.trustDeclined,
+			activeSessionId: view.activeSession.get()?.sessionId,
+			defaultCreateCount,
+			preferredCreateCount,
+			trustRequests: trustRequestService.requests.map(request => ({
+				uri: request.uri.toString(),
+				message: request.message,
+			})),
+		}, {
+			sessionId: 'preferred',
+			trustDeclined: false,
+			activeSessionId: 'preferred',
+			defaultCreateCount: 0,
+			preferredCreateCount: 1,
+			trustRequests: [{
+				uri: folderUri.toString(),
+				message: 'An agent session will be able to read files, run commands, and make changes in this folder.',
+			}],
+		});
+	});
+
+	for (const trustResult of [false, undefined]) {
+		test(`openNewSession does not create when workspace trust is ${trustResult === false ? 'declined' : 'cancelled'}`, async () => {
+			const folderUri = URI.parse('file:///workspace');
+			const session = stubSession({ sessionId: 'new', providerId: 'test' });
+			let createCount = 0;
+			const provider = new class extends TestSessionsProvider {
+				override resolveWorkspace(): ISessionWorkspace {
+					return {
+						uri: folderUri,
+						label: 'Workspace',
+						icon: Codicon.folder,
+						folders: [{ root: folderUri, workingDirectory: folderUri, name: 'Workspace', description: undefined }],
+						requiresWorkspaceTrust: true,
+						isVirtualWorkspace: false,
+					};
+				}
+				override createNewSession(): ISession {
+					createCount++;
+					return session;
+				}
+			}(session);
+			const trustRequestService = new TestWorkspaceTrustRequestService();
+			trustRequestService.result = trustResult;
+			const { view } = createSessionsManagementService(
+				session,
+				disposables,
+				provider,
+				new TestWorkspaceTrustManagementService(),
+				trustRequestService,
+			);
+
+			const result = await view.openNewSession({ folderUri });
+
+			assert.deepStrictEqual({
+				session: result.session,
+				trustDeclined: result.trustDeclined,
+				activeSession: view.activeSession.get(),
+				createCount,
+			}, {
+				session: undefined,
+				trustDeclined: true,
+				activeSession: undefined,
+				createCount: 0,
+			});
+		});
+	}
+
+	test('openNewSession does not create or report a trust decline when the workspace is unresolved', async () => {
+		const folderUri = URI.parse('unknown:///workspace');
+		const session = stubSession({ sessionId: 'new', providerId: 'test' });
+		let createCount = 0;
+		const provider = new class extends TestSessionsProvider {
+			override createNewSession(): ISession {
+				createCount++;
+				return session;
+			}
+		}(session);
+		const trustRequestService = new TestWorkspaceTrustRequestService();
+		const { view } = createSessionsManagementService(
+			session,
+			disposables,
+			provider,
+			new TestWorkspaceTrustManagementService(),
+			trustRequestService,
+		);
+
+		const result = await view.openNewSession({ folderUri });
+
+		assert.deepStrictEqual({
+			session: result.session,
+			trustDeclined: result.trustDeclined,
+			activeSession: view.activeSession.get(),
+			createCount,
+			trustRequestCount: trustRequestService.requests.length,
+		}, {
+			session: undefined,
+			trustDeclined: false,
+			activeSession: undefined,
+			createCount: 0,
+			trustRequestCount: 0,
+		});
+	});
+
 	test.skip('openNewSession recreates a draft for the active session workspace when inheriting', async () => {
 		const makeWorkspace = (uri: URI): ISessionWorkspace => ({
 			uri,
@@ -915,6 +1092,63 @@ suite('SessionsManagementService', () => {
 		// The request was sent, but the user's view was not navigated into the session.
 		assert.strictEqual(sendRequestStarted, true);
 		assert.strictEqual(view.activeSession.get(), undefined);
+	});
+
+	test('createAndSendNewChatRequest refuses an untrusted required workspace before creating a session', async () => {
+		const chat: IChat = { ...stubChat, resource: URI.parse('test:///chat') };
+		const session = stubSession({
+			sessionId: 's1',
+			providerId: 'test',
+			chats: constObservable([chat]),
+			mainChat: constObservable(chat),
+		});
+		const folderUri = URI.parse('test:///folder');
+		let resolveCount = 0;
+		let createCount = 0;
+		let sendCount = 0;
+		const provider = new class extends TestSessionsProvider {
+			override resolveWorkspace(uri: URI): ISessionWorkspace {
+				resolveCount++;
+				return {
+					uri,
+					label: 'Test',
+					icon: Codicon.folder,
+					folders: [],
+					requiresWorkspaceTrust: true,
+					isVirtualWorkspace: false,
+				};
+			}
+			override createNewSession(): ISession {
+				createCount++;
+				return session;
+			}
+			override async sendRequest(_sessionId: string, _chatResource: URI, _options: ISendRequestOptions): Promise<ISession> {
+				sendCount++;
+				return session;
+			}
+		}(session);
+		const workspaceTrustManagementService = new TestWorkspaceTrustManagementService();
+		workspaceTrustManagementService.trusted = false;
+		const { service } = createSessionsManagementService(session, disposables, provider, workspaceTrustManagementService);
+
+		await assert.rejects(
+			service.createAndSendNewChatRequest(folderUri, { query: 'hi' }),
+			WorkspaceNotTrustedError,
+		);
+		workspaceTrustManagementService.trusted = true;
+		await service.createAndSendNewChatRequest(folderUri, { query: 'hi' });
+
+		assert.deepStrictEqual({
+			requestedUris: workspaceTrustManagementService.requestedUris.map(uri => uri.toString()),
+			resolveCount,
+			createCount,
+			sendCount,
+		}, {
+			requestedUris: [folderUri.toString(), folderUri.toString()],
+			resolveCount: 2,
+			createCount: 1,
+			sendCount: 1,
+		});
 	});
 
 	test('target availability requires the requested provider and session type to be advertised', () => {

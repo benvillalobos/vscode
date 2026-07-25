@@ -16,7 +16,7 @@ import { NullTelemetryService } from '../../../../../platform/telemetry/common/t
 import { createAutomationService } from './automationTestUtils.js';
 import { AutomationTarget, AutomationWorkspaceIsolation, IAutomationSchedule } from '../../../../../workbench/contrib/chat/common/automations/automation.js';
 import { ISession, SessionStatus } from '../../../../services/sessions/common/session.js';
-import { ICreateNewSessionOptions, ISendRequestOptions, ISessionsManagementService } from '../../../../services/sessions/common/sessionsManagement.js';
+import { ICreateNewSessionOptions, ISendRequestOptions, ISessionsManagementService, WorkspaceNotTrustedError } from '../../../../services/sessions/common/sessionsManagement.js';
 import { AutomationRunner } from '../../browser/automationRunner.js';
 
 function hourly(): IAutomationSchedule {
@@ -98,10 +98,16 @@ class FakeSessionsManagementService extends mock<ISessionsManagementService>() {
 
 class RecordingNotificationService extends TestNotificationService {
 	readonly infos: string[] = [];
+	readonly errors: Array<string | Error> = [];
 
 	override info(message: string) {
 		this.infos.push(message);
 		return super.info(message);
+	}
+
+	override error(error: string | Error) {
+		this.errors.push(error);
+		return super.error(error);
 	}
 }
 
@@ -282,6 +288,27 @@ suite('AutomationRunner', () => {
 		assert.strictEqual(runs.length, 1);
 		assert.strictEqual(runs[0].status, 'failed');
 		assert.strictEqual(runs[0].errorMessage, 'provider offline');
+	});
+
+	test('reports and marks the run failed when the workspace is not trusted', async () => {
+		const { service, sessionsMgmt, runner, notifications } = setup();
+		sessionsMgmt.nextError = new WorkspaceNotTrustedError();
+
+		const automation = await service.createAutomation({ name: 'A', prompt: 'p', schedule: hourly(), target: workspaceTarget() });
+		await runner.runOnce(automation, 'schedule', 1).whenCompleted;
+
+		const run = service.runs.get()[0];
+		assert.deepStrictEqual({
+			status: run.status,
+			errorMessage: run.errorMessage,
+			hasCompletedAt: run.completedAt !== undefined,
+			notifications: notifications.errors,
+		}, {
+			status: 'failed',
+			errorMessage: 'Workspace not trusted',
+			hasCompletedAt: true,
+			notifications: ['Automation \'A\' failed: Workspace not trusted'],
+		});
 	});
 
 	test('defers a scheduled run without advancing its schedule when the target is unavailable', async () => {
