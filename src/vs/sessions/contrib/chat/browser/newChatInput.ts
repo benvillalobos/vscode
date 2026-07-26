@@ -319,7 +319,7 @@ export class NewChatInputWidget extends Disposable implements IHistoryNavigation
 	private _agentHostInputCompletionHandler: AgentHostInputCompletionHandler | undefined;
 	private readonly _scopedInstantiationService: IInstantiationService;
 	private readonly _newChatModelPickerService = new NewChatModelPickerService();
-	private readonly _sessionModelSelectionModel: SessionModelSelectionModel;
+	private readonly _sessionModelSelectionModel: ISessionModelSelectionModel;
 	private readonly _canSendRequest: IObservable<boolean>;
 	private readonly _compactModelPicker = observableValue(this, false);
 
@@ -344,8 +344,11 @@ export class NewChatInputWidget extends Disposable implements IHistoryNavigation
 			historyKey?: IObservable<string | undefined>;
 			minEditorHeight?: number;
 			placeholder?: string;
+			persistDraftState?: boolean;
 			renderSessionTypePickerInControls?: boolean;
+			submitOnEnter?: boolean;
 			supportsBackground?: boolean;
+			externalModelSelection?: ISessionModelSelectionModel;
 			/**
 			 * Keep this composer a valid voice target even while a created session
 			 * is active. Used by the in-session "new chat" composer so dictation
@@ -373,7 +376,8 @@ export class NewChatInputWidget extends Disposable implements IHistoryNavigation
 		@IVoiceInputModeService private readonly voiceInputModeService: IVoiceInputModeService,
 	) {
 		super();
-		this._sessionModelSelectionModel = this._register(this.instantiationService.createInstance(SessionModelSelectionModel, this.options.session));
+		this._sessionModelSelectionModel = this.options.externalModelSelection
+			?? this._register(this.instantiationService.createInstance(SessionModelSelectionModel, this.options.session));
 		this._canSendRequest = derived(this, reader => {
 			const modelSelection = this._sessionModelSelectionModel.state.read(reader);
 			return this.options.canSendRequest.read(reader) && modelSelection.hasSelectableModel && !modelSelection.pendingSelection;
@@ -495,7 +499,9 @@ export class NewChatInputWidget extends Disposable implements IHistoryNavigation
 		}));
 
 		// Restore draft input state from storage
-		this._restoreState();
+		if (this.options.persistDraftState !== false) {
+			this._restoreState();
+		}
 
 		// Layout editor after the input slot fade-in animation completes
 		this._register(dom.addDisposableListener(chatInputContainer, 'animationend', () => {
@@ -637,7 +643,8 @@ export class NewChatInputWidget extends Disposable implements IHistoryNavigation
 		}));
 
 		this._register(this._editor.onKeyDown(e => {
-			if (e.keyCode === KeyCode.Enter && !e.shiftKey && !e.ctrlKey && !e.altKey) {
+			const submitOnEnter = this.options.submitOnEnter !== false;
+			if (submitOnEnter && e.keyCode === KeyCode.Enter && !e.shiftKey && !e.ctrlKey && !e.altKey) {
 				// Don't send if the suggest widget is visible (let it accept the completion)
 				if (this._editor.contextKeyService.getContextKeyValue<boolean>('suggestWidgetVisible')) {
 					return;
@@ -647,7 +654,7 @@ export class NewChatInputWidget extends Disposable implements IHistoryNavigation
 				this._send();
 			}
 			// Alt+Enter — send in the background without navigating into the session
-			if (this.options.supportsBackground && e.keyCode === KeyCode.Enter && !e.shiftKey && !e.ctrlKey && e.altKey) {
+			if (submitOnEnter && this.options.supportsBackground && e.keyCode === KeyCode.Enter && !e.shiftKey && !e.ctrlKey && e.altKey) {
 				e.preventDefault();
 				e.stopPropagation();
 				this._send(true);
@@ -1134,10 +1141,15 @@ export class NewChatInputWidget extends Disposable implements IHistoryNavigation
 
 	private _clearDraftState(): void {
 		this._draftState = { inputText: '', attachments: [] };
-		this.storageService.store(STORAGE_KEY_DRAFT_STATE, JSON.stringify(this._draftState), StorageScope.WORKSPACE, StorageTarget.MACHINE);
+		if (this.options.persistDraftState !== false) {
+			this.storageService.store(STORAGE_KEY_DRAFT_STATE, JSON.stringify(this._draftState), StorageScope.WORKSPACE, StorageTarget.MACHINE);
+		}
 	}
 
 	saveState(): void {
+		if (this.options.persistDraftState === false) {
+			return;
+		}
 		if (this._draftState) {
 			const state = {
 				...this._draftState,

@@ -2643,6 +2643,33 @@ pane is first mounted. View switches inside the modal are not animated. */
 	align-self: stretch;
 }
 
+.automation-form-prompt-host .sessions-chat-widget,
+.automation-form-prompt-host .new-chat-widget-container,
+.automation-form-prompt-host .new-chat-widget-content,
+.automation-form-prompt-host .new-chat-input-container,
+.automation-form-prompt-host .new-chat-input-area {
+	width: 100%;
+	max-width: 100%;
+}
+
+.automation-form-prompt-host .new-chat-widget-container {
+	padding: 0;
+	height: auto;
+	overflow: visible;
+	align-items: stretch;
+}
+
+.automation-form-prompt-host .new-chat-input-container {
+	display: block;
+	margin-top: 0;
+	animation: none;
+}
+
+.automation-form-prompt-host .new-chat-bottom-container {
+	max-width: 100%;
+	padding: 0;
+}
+
 .automation-form-prompt-host .interactive-input-part {
 	/*
 	 * `.interactive-input-part` in chat.css has `margin: 0 12px`, which
@@ -2696,9 +2723,9 @@ pane is first mounted. View switches inside the modal are not animated. */
  *
  * Known limitation: the hidden chips remain in the toolbar's arrow-key focus
  * rotation (the action bar skips only disabled/separator items, not
- * `display:none` ones). This is an accepted temporary trade-off — the dialog
- * will migrate to `newChatInput.ts`, which builds its own toolbars and never
- * renders these `MenuId.ChatInput` chips at all.
+ * `display:none` ones). This is acceptable in the automation dialog because
+ * the embedded widget hides the toolbar affordances and the surrounding form
+ * provides the visible controls.
  */
 .automation-form-prompt-host .chat-input-toolbar .action-label.codicon-settings,
 .automation-form-prompt-host .chat-input-toolbar .action-label.codicon-add,
@@ -3101,6 +3128,17 @@ pane is first mounted. View switches inside the modal are not animated. */
 
 .automation-form-prompt-host .automation-form-branch-slot.branch-picker-missing .automation-form-branch-name {
 	font-style: italic;
+}
+
+.automation-form-prompt-host .chat-mode-picker-item,
+.automation-form-prompt-host .chat-agent-picker-item,
+.automation-form-prompt-host .sessions-chat-send-button,
+.automation-form-prompt-host .sessions-chat-attach-button,
+.automation-form-prompt-host .sessions-chat-stt-button,
+.automation-form-prompt-host .sessions-chat-voice-toolbar,
+.automation-form-prompt-host .sessions-chat-voice-input-mode,
+.automation-form-prompt-host .sessions-chat-loading-spinner {
+	display: none !important;
 }
 
 .hc-black .automation-form-prompt-host .automation-form-branch-slot:focus-visible,
