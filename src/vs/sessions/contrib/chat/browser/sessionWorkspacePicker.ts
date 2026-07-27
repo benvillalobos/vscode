@@ -86,6 +86,10 @@ export interface IWorkspacePickerItem {
 	readonly run?: () => void;
 }
 
+export interface IWorkspacePickerOptions {
+	readonly validateWorkspaceSelection?: (folderUri: URI, providerId: string | undefined) => Promise<boolean>;
+}
+
 interface IBrowsedWorkspaceSelection {
 	readonly folderUri: URI;
 	readonly providerId: string;
@@ -167,6 +171,7 @@ export class WorkspacePicker extends Disposable {
 	}
 
 	constructor(
+		private readonly options: IWorkspacePickerOptions | undefined,
 		@IActionWidgetService protected readonly actionWidgetService: IActionWidgetService,
 		@IUriIdentityService private readonly uriIdentityService: IUriIdentityService,
 		@ISessionsProvidersService protected readonly sessionsProvidersService: ISessionsProvidersService,
@@ -506,13 +511,11 @@ export class WorkspacePicker extends Disposable {
 			return false;
 		}
 		if (item.browseActionIndex !== undefined) {
-			// TODO: Understand this generation !== this._selectionGeneration logic.
-			// Why is it needed? Why do we check before and after?
 			const selection = await this._executeBrowseAction(item.browseActionIndex);
 			if (!selection || generation !== this._selectionGeneration) {
 				return false;
 			}
-			if (!await this._validateWorkspaceSelection(selection.folderUri, selection.providerId)) {
+			if (!await this._validateSelection(selection.folderUri, selection.providerId)) {
 				return false;
 			}
 			if (generation !== this._selectionGeneration) {
@@ -524,12 +527,10 @@ export class WorkspacePicker extends Disposable {
 			if (item.providerId && !await this._connectProviderOnDemand(item.providerId)) {
 				return false;
 			}
-			// TODO: Understand this generation !== this._selectionGeneration logic.
-			// Why is it needed? Why do we check before and after?
 			if (generation !== this._selectionGeneration) {
 				return false;
 			}
-			if (!await this._validateWorkspaceSelection(item.folderUri, item.providerId)) {
+			if (!await this._validateSelection(item.folderUri, item.providerId)) {
 				return false;
 			}
 			if (generation !== this._selectionGeneration) {
@@ -700,8 +701,9 @@ export class WorkspacePicker extends Disposable {
 		return undefined;
 	}
 
-	protected async _validateWorkspaceSelection(_folderUri: URI, _providerId: string | undefined): Promise<boolean> {
-		return true;
+	private async _validateSelection(folderUri: URI, providerId: string | undefined): Promise<boolean> {
+		return !this.options?.validateWorkspaceSelection
+			|| await this.options.validateWorkspaceSelection(folderUri, providerId);
 	}
 
 	/**

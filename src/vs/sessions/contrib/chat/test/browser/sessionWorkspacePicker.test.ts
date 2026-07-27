@@ -31,7 +31,7 @@ import { ISessionsProvidersChangeEvent, ISessionsProvidersService } from '../../
 import { ISendRequestOptions, ISessionsProvider } from '../../../../services/sessions/common/sessionsProvider.js';
 import { IAgentHostSessionsProvider } from '../../../../common/agentHostSessionsProvider.js';
 import { ISessionWorkspace, ISessionWorkspaceBrowseAction, SESSION_WORKSPACE_GROUP_LOCAL, SESSION_WORKSPACE_GROUP_REMOTE } from '../../../../services/sessions/common/session.js';
-import { IWorkspacePickerItem, WorkspacePicker } from '../../browser/sessionWorkspacePicker.js';
+import { IWorkspacePickerItem, IWorkspacePickerOptions, WorkspacePicker } from '../../browser/sessionWorkspacePicker.js';
 import { ISessionsRecentWorkspacesService, SessionsRecentWorkspacesService } from '../../../../services/sessions/browser/sessionsRecentWorkspacesService.js';
 import { AutomationsWorkspacePicker } from '../../../automations/browser/automationDialog.js';
 import { AutomationIsolationModel } from '../../../automations/common/isolationGroupModel.js';
@@ -272,6 +272,7 @@ function createTestPicker(
 	fileDialogService: Partial<IFileDialogService> = {},
 	workspacesService: IWorkspacesService = { getRecentlyOpened: async () => ({ workspaces: [], files: [] }), onDidChangeRecentlyOpened: Event.None } as unknown as IWorkspacesService,
 	recentWorkspacesService?: ISessionsRecentWorkspacesService,
+	options?: IWorkspacePickerOptions,
 ): WorkspacePicker {
 	const instantiationService = disposables.add(new TestInstantiationService());
 	const storage = storageService ?? disposables.add(new TestStorageService());
@@ -299,7 +300,7 @@ function createTestPicker(
 	instantiationService.stub(ISessionsRecentWorkspacesService, recentWorkspacesService ?? disposables.add(instantiationService.createInstance(SessionsRecentWorkspacesService)));
 	instantiationService.stub(ITelemetryService, NullTelemetryService);
 
-	return disposables.add(instantiationService.createInstance(pickerCtor));
+	return disposables.add(instantiationService.createInstance(pickerCtor, options));
 }
 
 /**
@@ -900,12 +901,22 @@ suite('AutomationsWorkspacePicker', () => {
 			{ uri: candidateFolder, providerId: provider.id, checked: false },
 		]);
 		providersService.setProviders([provider]);
+		const trustRequests: Array<{ folderUri: string; providerId: string | undefined }> = [];
 		const picker = createTestPicker(
 			disposables,
 			providersService,
 			storage,
 			new TestNotificationService(),
 			TestAutomationsWorkspacePicker,
+			{},
+			undefined,
+			undefined,
+			{
+				validateWorkspaceSelection: async (folderUri, providerId) => {
+					trustRequests.push({ folderUri: folderUri.toString(), providerId });
+					return false;
+				},
+			},
 		) as TestAutomationsWorkspacePicker;
 		const model = new AutomationIsolationModel({
 			isQuickChat: false,
@@ -914,11 +925,6 @@ suite('AutomationsWorkspacePicker', () => {
 			branch: undefined,
 		});
 		picker.setTargetModel(model);
-		const trustRequests: Array<{ folderUri: string; providerId: string | undefined }> = [];
-		picker.setWorkspaceTrustRequest(async (folderUri, providerId) => {
-			trustRequests.push({ folderUri: folderUri.toString(), providerId });
-			return false;
-		});
 
 		await picker.select('local/candidate');
 
@@ -944,12 +950,17 @@ suite('AutomationsWorkspacePicker', () => {
 			{ uri: candidateFolder, providerId: provider.id, checked: false },
 		]);
 		providersService.setProviders([provider]);
+		const trustResult = new DeferredPromise<boolean>();
 		const picker = createTestPicker(
 			disposables,
 			providersService,
 			storage,
 			new TestNotificationService(),
 			TestAutomationsWorkspacePicker,
+			{},
+			undefined,
+			undefined,
+			{ validateWorkspaceSelection: () => trustResult.p },
 		) as TestAutomationsWorkspacePicker;
 		const model = new AutomationIsolationModel({
 			isQuickChat: false,
@@ -958,8 +969,6 @@ suite('AutomationsWorkspacePicker', () => {
 			branch: undefined,
 		});
 		picker.setTargetModel(model);
-		const trustResult = new DeferredPromise<boolean>();
-		picker.setWorkspaceTrustRequest(() => trustResult.p);
 
 		const staleSelection = picker.select('local/candidate');
 		await picker.select('No workspace');
@@ -1038,6 +1047,7 @@ suite('AutomationsWorkspacePicker', () => {
 		const provider = { ...createMockProvider('local-1'), supportsLocalWorkspaces: true };
 		const browsedFolder = URI.file('/local/browsed');
 		providersService.setProviders([provider]);
+		const trustRequests: string[] = [];
 		const picker = createTestPicker(
 			disposables,
 			providersService,
@@ -1045,6 +1055,14 @@ suite('AutomationsWorkspacePicker', () => {
 			new TestNotificationService(),
 			TestAutomationsWorkspacePicker,
 			{ showOpenDialog: async () => [browsedFolder] },
+			undefined,
+			undefined,
+			{
+				validateWorkspaceSelection: async folderUri => {
+					trustRequests.push(folderUri.toString());
+					return true;
+				},
+			},
 		) as TestAutomationsWorkspacePicker;
 		const model = new AutomationIsolationModel({
 			isQuickChat: true,
@@ -1053,11 +1071,6 @@ suite('AutomationsWorkspacePicker', () => {
 			branch: undefined,
 		});
 		picker.setTargetModel(model);
-		const trustRequests: string[] = [];
-		picker.setWorkspaceTrustRequest(async folderUri => {
-			trustRequests.push(folderUri.toString());
-			return true;
-		});
 
 		await picker.select('Select...');
 
@@ -1086,6 +1099,9 @@ suite('AutomationsWorkspacePicker', () => {
 			new TestNotificationService(),
 			TestAutomationsWorkspacePicker,
 			{ showOpenDialog: async () => [browsedFolder] },
+			undefined,
+			undefined,
+			{ validateWorkspaceSelection: async () => false },
 		) as TestAutomationsWorkspacePicker;
 		const model = new AutomationIsolationModel({
 			isQuickChat: true,
@@ -1094,7 +1110,6 @@ suite('AutomationsWorkspacePicker', () => {
 			branch: undefined,
 		});
 		picker.setTargetModel(model);
-		picker.setWorkspaceTrustRequest(async () => false);
 
 		await picker.select('Select...');
 
@@ -1116,6 +1131,7 @@ suite('AutomationsWorkspacePicker', () => {
 		const browsedFolder = URI.file('/local/browsed');
 		const browseResult = new DeferredPromise<URI[] | undefined>();
 		providersService.setProviders([provider]);
+		let trustRequestCount = 0;
 		const picker = createTestPicker(
 			disposables,
 			providersService,
@@ -1123,6 +1139,14 @@ suite('AutomationsWorkspacePicker', () => {
 			new TestNotificationService(),
 			TestAutomationsWorkspacePicker,
 			{ showOpenDialog: () => browseResult.p },
+			undefined,
+			undefined,
+			{
+				validateWorkspaceSelection: async () => {
+					trustRequestCount++;
+					return true;
+				},
+			},
 		) as TestAutomationsWorkspacePicker;
 		const model = new AutomationIsolationModel({
 			isQuickChat: true,
@@ -1131,11 +1155,6 @@ suite('AutomationsWorkspacePicker', () => {
 			branch: undefined,
 		});
 		picker.setTargetModel(model);
-		let trustRequestCount = 0;
-		picker.setWorkspaceTrustRequest(async () => {
-			trustRequestCount++;
-			return true;
-		});
 
 		const staleSelection = picker.select('Select...');
 		await picker.select('No workspace');
@@ -1264,7 +1283,7 @@ function createTestablePicker(disposables: DisposableStore, providersService: Mo
 	});
 	instantiationService.stub(ISessionsRecentWorkspacesService, disposables.add(instantiationService.createInstance(SessionsRecentWorkspacesService)));
 	instantiationService.stub(ITelemetryService, NullTelemetryService);
-	return disposables.add(instantiationService.createInstance(TestablePicker));
+	return disposables.add(instantiationService.createInstance(TestablePicker, undefined));
 }
 
 suite('WorkspacePicker - Tab discovery', () => {
@@ -1378,7 +1397,7 @@ suite('WorkspacePicker - Tab discovery', () => {
 		});
 		instantiationService.stub(ISessionsRecentWorkspacesService, disposables.add(instantiationService.createInstance(SessionsRecentWorkspacesService)));
 		instantiationService.stub(ITelemetryService, NullTelemetryService);
-		const picker = disposables.add(instantiationService.createInstance(TestablePicker));
+		const picker = disposables.add(instantiationService.createInstance(TestablePicker, undefined));
 		// Recent workspace group ('Cloud') is not added as a tab — only
 		// browse actions and the always-present Remote group contribute tabs.
 		assert.deepStrictEqual(picker.getAvailableTabs(), [SESSION_WORKSPACE_GROUP_REMOTE]);

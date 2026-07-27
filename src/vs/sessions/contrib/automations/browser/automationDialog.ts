@@ -793,11 +793,12 @@ export function renderForm(
 		revalidate();
 	}));
 
-	const workspacePicker = disposables.add(instantiationService.createInstance(MobileAutomationsWorkspacePicker));
+	const workspacePicker = disposables.add(instantiationService.createInstance(MobileAutomationsWorkspacePicker, {
+		validateWorkspaceSelection: (folderUri, preferredProviderId) =>
+			requestSessionWorkspaceTrust(folderUri, preferredProviderId, sessionsManagementService, workspaceTrustRequestService),
+	}));
 	workspacePicker.setTargetModel(isolationModel);
 	workspacePicker.setLayoutService(layoutService);
-	workspacePicker.setWorkspaceTrustRequest((folderUri, preferredProviderId) =>
-		requestSessionWorkspaceTrust(folderUri, preferredProviderId, sessionsManagementService, workspaceTrustRequestService));
 
 	if (state.folderUri) {
 		workspacePicker.setSelectedWorkspace(state.folderUri, { fireEvent: false, persist: false });
@@ -1100,7 +1101,6 @@ export function updateSaveButtonState(
 export class AutomationsWorkspacePicker extends WorkspacePicker {
 	private readonly targetModelWatch = this._register(new MutableDisposable<IDisposable>());
 	private targetModel: AutomationIsolationModel | undefined;
-	private workspaceTrustRequest: ((folderUri: URI, preferredProviderId: string | undefined) => Promise<boolean>) | undefined;
 
 	setTargetModel(model: AutomationIsolationModel): void {
 		this.targetModel = model;
@@ -1108,12 +1108,6 @@ export class AutomationsWorkspacePicker extends WorkspacePicker {
 			model.isQuickChatObs.read(reader);
 			this._updateTriggerLabel();
 		});
-	}
-
-	// TODO: Do we really need to go through these hoops? If so not a big deal,
-	// just seems like a code smell at first glance.
-	setWorkspaceTrustRequest(request: (folderUri: URI, preferredProviderId: string | undefined) => Promise<boolean>): void {
-		this.workspaceTrustRequest = request;
 	}
 
 	protected override _showTabs(): boolean {
@@ -1148,11 +1142,6 @@ export class AutomationsWorkspacePicker extends WorkspacePicker {
 			this.targetModel?.setQuickChat(false, selectedFolder);
 		}
 		return applied;
-	}
-
-	protected override async _validateWorkspaceSelection(folderUri: URI, providerId: string | undefined): Promise<boolean> {
-		return !this.workspaceTrustRequest
-			|| await this.workspaceTrustRequest(folderUri, providerId);
 	}
 
 	protected override _isSelectedFolder(folderUri: URI | undefined): boolean {
