@@ -794,7 +794,7 @@ export function renderForm(
 	}));
 
 	const workspacePicker = disposables.add(instantiationService.createInstance(MobileAutomationsWorkspacePicker, {
-		validateWorkspaceSelection: (folderUri, preferredProviderId) =>
+		canSelectWorkspace: (folderUri, preferredProviderId) =>
 			requestSessionWorkspaceTrust(folderUri, preferredProviderId, sessionsManagementService, workspaceTrustRequestService),
 	}));
 	workspacePicker.setTargetModel(isolationModel);

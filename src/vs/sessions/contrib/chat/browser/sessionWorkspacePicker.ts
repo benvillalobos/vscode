@@ -87,7 +87,7 @@ export interface IWorkspacePickerItem {
 }
 
 export interface IWorkspacePickerOptions {
-	readonly validateWorkspaceSelection?: (folderUri: URI, providerId: string | undefined) => Promise<boolean>;
+	readonly canSelectWorkspace?: (folderUri: URI, providerId: string | undefined) => Promise<boolean>;
 }
 
 interface IBrowsedWorkspaceSelection {
@@ -515,7 +515,7 @@ export class WorkspacePicker extends Disposable {
 			if (!selection || generation !== this._selectionGeneration) {
 				return false;
 			}
-			if (!await this._validateSelection(selection.folderUri, selection.providerId)) {
+			if (!await this._canSelectWorkspace(selection.folderUri, selection.providerId)) {
 				return false;
 			}
 			if (generation !== this._selectionGeneration) {
@@ -530,7 +530,7 @@ export class WorkspacePicker extends Disposable {
 			if (generation !== this._selectionGeneration) {
 				return false;
 			}
-			if (!await this._validateSelection(item.folderUri, item.providerId)) {
+			if (!await this._canSelectWorkspace(item.folderUri, item.providerId)) {
 				return false;
 			}
 			if (generation !== this._selectionGeneration) {
@@ -701,9 +701,9 @@ export class WorkspacePicker extends Disposable {
 		return undefined;
 	}
 
-	private async _validateSelection(folderUri: URI, providerId: string | undefined): Promise<boolean> {
-		return !this.options?.validateWorkspaceSelection
-			|| await this.options.validateWorkspaceSelection(folderUri, providerId);
+	private async _canSelectWorkspace(folderUri: URI, providerId: string | undefined): Promise<boolean> {
+		return !this.options?.canSelectWorkspace
+			|| await this.options.canSelectWorkspace(folderUri, providerId);
 	}
 
 	/**

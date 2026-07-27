@@ -912,7 +912,7 @@ suite('AutomationsWorkspacePicker', () => {
 			undefined,
 			undefined,
 			{
-				validateWorkspaceSelection: async (folderUri, providerId) => {
+				canSelectWorkspace: async (folderUri, providerId) => {
 					trustRequests.push({ folderUri: folderUri.toString(), providerId });
 					return false;
 				},
@@ -960,7 +960,7 @@ suite('AutomationsWorkspacePicker', () => {
 			{},
 			undefined,
 			undefined,
-			{ validateWorkspaceSelection: () => trustResult.p },
+			{ canSelectWorkspace: () => trustResult.p },
 		) as TestAutomationsWorkspacePicker;
 		const model = new AutomationIsolationModel({
 			isQuickChat: false,
@@ -1058,7 +1058,7 @@ suite('AutomationsWorkspacePicker', () => {
 			undefined,
 			undefined,
 			{
-				validateWorkspaceSelection: async folderUri => {
+				canSelectWorkspace: async folderUri => {
 					trustRequests.push(folderUri.toString());
 					return true;
 				},
@@ -1101,7 +1101,7 @@ suite('AutomationsWorkspacePicker', () => {
 			{ showOpenDialog: async () => [browsedFolder] },
 			undefined,
 			undefined,
-			{ validateWorkspaceSelection: async () => false },
+			{ canSelectWorkspace: async () => false },
 		) as TestAutomationsWorkspacePicker;
 		const model = new AutomationIsolationModel({
 			isQuickChat: true,
@@ -1142,7 +1142,7 @@ suite('AutomationsWorkspacePicker', () => {
 			undefined,
 			undefined,
 			{
-				validateWorkspaceSelection: async () => {
+				canSelectWorkspace: async () => {
 					trustRequestCount++;
 					return true;
 				},
