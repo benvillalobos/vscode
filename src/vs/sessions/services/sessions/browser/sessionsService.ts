@@ -714,9 +714,7 @@ export class SessionsService extends Disposable implements ISessionsService {
 	async openNewSession(options?: IOpenNewSessionOptions): Promise<IOpenNewSessionResult> {
 		const folderUri = options?.folderUri;
 		if (folderUri) {
-			// TODO: Don't delete the comment that used to be here. It should
-			// be reworded such that it mentions that this is the trust gate for
-			// interactive sessions (non-automation sessions). The comment should also not lose meaningful context.
+			// Trust gate for every interactive folder-session creation path: resolve with the selected provider and prompt before creation when required.
 			const trusted = await requestSessionWorkspaceTrust(folderUri, options?.providerId, this.sessionsManagementService, this.workspaceTrustRequestService);
 			if (!trusted) {
 				return { session: undefined, trustDeclined: true };
