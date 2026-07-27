@@ -52,7 +52,6 @@ import { isModeConsideredBuiltIn } from '../../../../workbench/contrib/chat/brow
 import { IWorkbenchLayoutService } from '../../../../workbench/services/layout/browser/layoutService.js';
 import { AutomationIsolationModel, normalizeAutomationBranchNames } from '../common/isolationGroupModel.js';
 import { ISessionsManagementService } from '../../../services/sessions/common/sessionsManagement.js';
-import { requestSessionWorkspaceTrust } from '../../../services/sessions/browser/sessionWorkspaceTrust.js';
 import { showMobileWorkspacePickerSheet, shouldUseMobileWorkspacePickerSheet } from '../../chat/browser/mobile/mobileWorkspacePickerSheet.js';
 
 const $ = DOM.$;
@@ -794,8 +793,19 @@ export function renderForm(
 	}));
 
 	const workspacePicker = disposables.add(instantiationService.createInstance(MobileAutomationsWorkspacePicker, {
-		canSelectWorkspace: (folderUri, preferredProviderId) =>
-			requestSessionWorkspaceTrust(folderUri, preferredProviderId, sessionsManagementService, workspaceTrustRequestService),
+		canSelectWorkspace: async (folderUri, preferredProviderId) => {
+			const resolved = sessionsManagementService.resolveWorkspace(folderUri, preferredProviderId);
+			if (!resolved) {
+				return false;
+			}
+			if (!resolved.workspace.requiresWorkspaceTrust) {
+				return true;
+			}
+			return !!await workspaceTrustRequestService.requestResourcesTrust({
+				uri: folderUri,
+				message: localize('automation.form.trustFolderMessage', "An agent session will be able to read files, run commands, and make changes in this folder."),
+			});
+		},
 	}));
 	workspacePicker.setTargetModel(isolationModel);
 	workspacePicker.setLayoutService(layoutService);
