@@ -364,6 +364,7 @@ export class NewChatInputWidget extends Disposable implements IHistoryNavigation
 			hasAdditionalSendContent?: IObservable<boolean>;
 			loading: IObservable<boolean>;
 			historyKey?: IObservable<string | undefined>;
+			usePersistedDraftState?: boolean;
 			minEditorHeight?: number;
 			placeholder?: string;
 			renderSessionTypePickerInControls?: boolean;
@@ -547,8 +548,9 @@ export class NewChatInputWidget extends Disposable implements IHistoryNavigation
 			},
 		}));
 
-		// Restore draft input state from storage
-		this._restoreState();
+		if (this.options.usePersistedDraftState !== false) {
+			this._restoreState();
+		}
 
 		// Layout editor after the input slot fade-in animation completes
 		this._register(dom.addDisposableListener(chatInputContainer, 'animationend', () => {
@@ -1239,7 +1241,7 @@ export class NewChatInputWidget extends Disposable implements IHistoryNavigation
 	}
 
 	saveState(): void {
-		if (this._draftState) {
+		if (this.options.usePersistedDraftState !== false && this._draftState) {
 			const state = {
 				...this._draftState,
 				attachments: this._draftState.attachments.map(IChatRequestVariableEntry.toExport),
