@@ -2218,6 +2218,14 @@ export class SessionsList extends Disposable implements ISessionsList {
 			}
 		}));
 
+		// Re-render when the set of automation-owned session resources changes.
+		this._register(autorun(reader => {
+			this.automationService.sessionResources.read(reader);
+			if (this.visible) {
+				this.update();
+			}
+		}));
+
 		// Resolve the per-group session limit from the experiment service and
 		// keep it current when treatments are refetched. The async fetch is
 		// confined to `updateSessionGroupLimit`; the rest of the list reads the
@@ -2278,6 +2286,10 @@ export class SessionsList extends Disposable implements ISessionsList {
 		}
 		if (this._excludeRead) {
 			filtered = filtered.filter(s => !s.isRead.get());
+		}
+		const automationResources = this.automationService.sessionResources.get();
+		if (automationResources.size > 0) {
+			filtered = filtered.filter(s => !automationResources.has(s.resource.toString()));
 		}
 
 		// Always include the active session even if it was filtered out,

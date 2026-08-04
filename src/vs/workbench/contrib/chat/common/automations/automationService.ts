@@ -120,6 +120,13 @@ export interface IAutomationService {
 	/** All recorded runs across all automations, newest first. */
 	readonly runs: IObservable<readonly IAutomationRun[]>;
 
+	/**
+	 * Session resources (stringified URIs) of all sessions created by automation
+	 * runs. Only changes when the set of resources actually changes, so observers
+	 * are not woken by unrelated run mutations (status transitions, etc.).
+	 */
+	readonly sessionResources: IObservable<ReadonlySet<string>>;
+
 	/** Snapshot accessor (no observable dependency). */
 	getAutomation(id: string): IAutomation | undefined;
 

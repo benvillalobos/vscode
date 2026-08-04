@@ -4,7 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { Disposable } from '../../../../base/common/lifecycle.js';
-import { derived, IObservable, ISettableObservable, observableValue, transaction } from '../../../../base/common/observable.js';
+import { derived, derivedOpts, IObservable, ISettableObservable, observableValue, transaction } from '../../../../base/common/observable.js';
 import { URI, UriComponents } from '../../../../base/common/uri.js';
 import { generateUuid } from '../../../../base/common/uuid.js';
 import { ILogService } from '../../../../platform/log/common/log.js';
@@ -122,6 +122,7 @@ export class AutomationService extends Disposable implements IAutomationService 
 
 	readonly automations: IObservable<readonly IAutomation[]>;
 	readonly runs: IObservable<readonly IAutomationRun[]>;
+	readonly sessionResources: IObservable<ReadonlySet<string>>;
 
 	constructor(
 		@IStorageService private readonly storageService: IStorageService,
@@ -142,6 +143,21 @@ export class AutomationService extends Disposable implements IAutomationService 
 		this._runs = observableValue<readonly IAutomationRun[]>(this, initial.runs);
 		this.automations = this._automations;
 		this.runs = this._runs;
+		this.sessionResources = derivedOpts({
+			owner: this,
+			// Only emit when the set of session resources changes, not on every
+			// run mutation (e.g. a run's status transitioning after its session
+			// resource was already recorded).
+			equalsFn: (a, b) => a.size === b.size && [...a].every(r => b.has(r)),
+		}, reader => {
+			const resources = new Set<string>();
+			for (const run of this._runs.read(reader)) {
+				if (run.sessionResource !== undefined) {
+					resources.add(run.sessionResource);
+				}
+			}
+			return resources;
+		});
 
 		this._register(this.storageService.onDidChangeValue(StorageScope.APPLICATION, AUTOMATION_STORAGE_KEY, this._store)(() => {
 			this.refreshFromStorage();
