@@ -84,6 +84,7 @@ import { buildSessionHoverContent } from '../sessionHoverContent.js';
 import { SessionStatusIcon } from '../../../../browser/sessionStatusIcon.js';
 import { ChatAutomationsEnabledContext } from '../../../../../workbench/contrib/chat/common/automations/automationsEnabled.js';
 import { IAutomationService } from '../../../../../workbench/contrib/chat/common/automations/automationService.js';
+import { IAutomationRun } from '../../../../../workbench/contrib/chat/common/automations/automation.js';
 import { ICustomViewService } from '../../../../services/customView/browser/customViewService.js';
 import { AUTOMATIONS_CUSTOM_VIEW_ID } from './automationsView.js';
 
@@ -184,6 +185,14 @@ function isSessionPlaceholder(item: SessionListItem): item is ISessionPlaceholde
 
 function isSessionItem(item: SessionListItem): item is ISession {
 	return !isSessionGroupItem(item) && !isSessionSection(item) && !isSessionShowMore(item) && !isSessionPlaceholder(item);
+}
+
+/**
+ * Whether an automation run is still awaiting its session: it is `pending` or
+ * `running` but has not yet recorded a `sessionResource`.
+ */
+function isUnboundAutomationRun(run: IAutomationRun): boolean {
+	return (run.status === 'pending' || run.status === 'running') && run.sessionResource === undefined;
 }
 
 const SHOW_MORE_FOLDERS_LABEL = '__more_folders__';
@@ -1804,6 +1813,16 @@ export class SessionsList extends Disposable implements ISessionsList {
 	private workspaceGroupCapped: boolean;
 
 	/**
+	 * Transient quarantine of session resources (stringified URIs) for automation
+	 * sessions caught at `onWillSendRequest` time — i.e. *before* the provider
+	 * commits the draft and the list would otherwise render it. Entries are
+	 * pruned once the durable automation ledger ({@link IAutomationService.sessionResources})
+	 * covers them, or once no automation run is still awaiting its session. This
+	 * closes the one-frame flash that the durable (post-send) filter alone cannot.
+	 */
+	private readonly _pendingAutomationResources = new Set<string>();
+
+	/**
 	 * Maximum number of sessions shown per workspace section or user group.
 	 */
 	private readonly sessionGroupLimit = observableValue<number>(this, SessionsList.DEFAULT_SESSION_GROUP_LIMIT);
@@ -2226,6 +2245,41 @@ export class SessionsList extends Disposable implements ISessionsList {
 			}
 		}));
 
+		// Quarantine an automation session the instant its send starts — this
+		// fires synchronously *before* the provider commits the draft and emits
+		// `onDidChangeSessions({ added })`, so the very first render already
+		// excludes it (no one-frame flash). `onWillSendRequest` carries no caller
+		// identity, so we only quarantine while an automation run is still
+		// awaiting its session; a coincidentally-timed user send may be caught
+		// for a moment and is released by the pruning autorun below.
+		this._register(this._sessionsManagementService.onWillSendRequest(session => {
+			if (this.hasUnboundAutomationRun()) {
+				this._pendingAutomationResources.add(session.resource.toString());
+			}
+		}));
+
+		// Prune the transient quarantine: drop entries once the durable ledger
+		// covers them, or once no automation run is still awaiting a session
+		// (which bounds an accidental quarantine of a user-initiated send).
+		this._register(autorun(reader => {
+			const durable = this.automationService.sessionResources.read(reader);
+			const runs = this.automationService.runs.read(reader);
+			if (this._pendingAutomationResources.size === 0) {
+				return;
+			}
+			const hasUnboundRun = runs.some(r => isUnboundAutomationRun(r));
+			let changed = false;
+			for (const resource of [...this._pendingAutomationResources]) {
+				if (durable.has(resource) || !hasUnboundRun) {
+					this._pendingAutomationResources.delete(resource);
+					changed = true;
+				}
+			}
+			if (changed && this.visible) {
+				this.update();
+			}
+		}));
+
 		// Resolve the per-group session limit from the experiment service and
 		// keep it current when treatments are refetched. The async fetch is
 		// confined to `updateSessionGroupLimit`; the rest of the list reads the
@@ -2266,6 +2320,16 @@ export class SessionsList extends Disposable implements ISessionsList {
 		this.update();
 	}
 
+	/**
+	 * Whether any automation run is still awaiting its session, i.e. it is
+	 * `pending`/`running` but has not yet recorded a `sessionResource`. Used to
+	 * decide whether a starting send should be quarantined (see the
+	 * `onWillSendRequest` handler).
+	 */
+	private hasUnboundAutomationRun(): boolean {
+		return this.automationService.runs.get().some(r => isUnboundAutomationRun(r));
+	}
+
 	update(expandAll?: boolean): void {
 		const activeSession = this._sessionsService.activeSession.get();
 
@@ -2288,8 +2352,11 @@ export class SessionsList extends Disposable implements ISessionsList {
 			filtered = filtered.filter(s => !s.isRead.get());
 		}
 		const automationResources = this.automationService.sessionResources.get();
-		if (automationResources.size > 0) {
-			filtered = filtered.filter(s => !automationResources.has(s.resource.toString()));
+		if (automationResources.size > 0 || this._pendingAutomationResources.size > 0) {
+			filtered = filtered.filter(s => {
+				const key = s.resource.toString();
+				return !automationResources.has(key) && !this._pendingAutomationResources.has(key);
+			});
 		}
 
 		// Always include the active session even if it was filtered out,
