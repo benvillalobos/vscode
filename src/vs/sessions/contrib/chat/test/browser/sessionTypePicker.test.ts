@@ -336,35 +336,6 @@ suite('SessionTypePicker', () => {
 		assert.deepStrictEqual(shared.getUserPickedSessionType(), { providerId: 'copilot', sessionTypeId: 'copilot-cli' });
 	});
 
-	test('programmatic selection synchronizes state without user-selection side effects', () => {
-		management.setSessionTypes([
-			sessionType('local-1', 'local', 'Local'),
-			sessionType('agent-host', 'copilotcli', 'Copilot CLI', 'agent-host-copilotcli'),
-		]);
-		const picker = createPicker(disposables, session, management, storage);
-		picker.setFolderSource(observableValue<URI | undefined>('folder', folder));
-		const changed: (IPreferredSessionType | undefined)[] = [];
-		const selected: (IPickedSessionType | undefined)[] = [];
-		disposables.add(picker.onDidChangeSelectedPick(pick => changed.push(pick)));
-		disposables.add(picker.onDidSelectSessionType(pick => selected.push(pick)));
-
-		picker.setSelectedPick({ providerId: 'agent-host', sessionTypeId: 'copilotcli' });
-
-		assert.deepStrictEqual({
-			selectedPick: picker.selectedPick,
-			modelTarget: picker.modelTargetChatSessionType.get(),
-			storedPick: picker.getUserPickedSessionType(),
-			changed,
-			selected,
-		}, {
-			selectedPick: { providerId: 'agent-host', sessionTypeId: 'copilotcli' },
-			modelTarget: 'agent-host-copilotcli',
-			storedPick: undefined,
-			changed: [{ providerId: 'agent-host', sessionTypeId: 'copilotcli' }],
-			selected: [],
-		});
-	});
-
 	test('onDidChangeSelectedPick fires when session types are advertised after the picker is created', () => {
 		// No types advertised yet (e.g. the agent host has not connected).
 		management.setSessionTypes([]);

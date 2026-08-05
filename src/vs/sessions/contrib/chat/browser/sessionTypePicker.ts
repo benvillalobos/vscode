@@ -318,23 +318,6 @@ export class SessionTypePicker extends Disposable {
 	}
 
 	/**
-	 * Synchronizes the displayed pick without treating the change as a user
-	 * selection. Used when another picker owns the selection during a UI
-	 * transition; does not persist preferences or emit picker telemetry.
-	 */
-	setSelectedPick(pick: IPreferredSessionType | undefined): void {
-		this._pendingInitialPick = undefined;
-		const next = this._offeredPick(pick);
-		if (pickEquals(this._picked, next)) {
-			return;
-		}
-		this._picked = next;
-		this._updateModelTargetChatSessionType();
-		this._updateTriggerLabel();
-		this._onDidChangeSelectedPick.fire(this._picked);
-	}
-
-	/**
 	 * The session types to offer for a session: all quick-chat types when the
 	 * session is a workspace-less quick chat, otherwise the folder's types.
 	 */
