@@ -39,6 +39,7 @@ import { IWorkspacePickerItem, WorkspacePicker } from '../../chat/browser/sessio
 import { BranchPicker, IBranchPickerBranch } from '../../chat/browser/branchPicker.js';
 import { MobileSessionTypePicker } from '../../chat/browser/mobile/mobileSessionTypePicker.js';
 import { NewChatInputWidget } from '../../chat/browser/newChatInput.js';
+import { SessionTypePicker } from '../../chat/browser/sessionTypePicker.js';
 import { isMobilePickerSheetTarget } from '../../../browser/parts/mobile/mobilePickerSheet.js';
 import { ISession, ISessionWorkspaceBrowseAction, SESSION_WORKSPACE_GROUP_LOCAL } from '../../../services/sessions/common/session.js';
 import { VisibleSession } from '../../../services/sessions/browser/visibleSessions.js';
@@ -738,6 +739,7 @@ export function renderForm(
 	const isolationModel = new AutomationIsolationModel(state);
 	const workspaceControlsVisible = derived(reader => !isolationModel.isQuickChatObs.read(reader));
 	const sessionTypePicker = disposables.add(instantiationService.createInstance(MobileSessionTypePicker, constObservable<ISession | undefined>(undefined), { persistSelection: false, telemetrySource: 'AutomationSessionTypePicker', showChevron: false }));
+	let authoritativeSessionTypePicker: SessionTypePicker = sessionTypePicker;
 	sessionTypePicker.setQuickChatSource(isolationModel.isQuickChatObs);
 	sessionTypePicker.setFolderSource(isolationModel.folderUriObs, {
 		initialPick: state.sessionTypeId
@@ -749,30 +751,17 @@ export function renderForm(
 	const onDidChangeSessionType = disposables.add(new Emitter<AgentSessionTarget>());
 	const onDidChangeSessionTarget = disposables.add(new Emitter<void>());
 	const sessionTypeDelegate: ISessionTypePickerDelegate = {
-		getActiveSessionProvider: () => sessionTypePicker.modelTargetChatSessionType.get(),
+		getActiveSessionProvider: () => authoritativeSessionTypePicker.modelTargetChatSessionType.get(),
 		onDidChangeActiveSessionProvider: onDidChangeSessionType.event,
 	};
 	const syncStateFromPicker = () => {
-		const pick = sessionTypePicker.selectedPick;
+		const pick = authoritativeSessionTypePicker.selectedPick;
 		state.providerId = pick?.providerId;
 		state.sessionTypeId = pick?.sessionTypeId;
 		onDidChangeSessionTarget.fire();
 	};
-	disposables.add(autorun(reader => {
-		const modelTarget = sessionTypePicker.modelTargetChatSessionType.read(reader);
-		if (modelTarget) {
-			onDidChangeSessionType.fire(modelTarget);
-		}
-	}));
 	// Seed state from the picker's initial default (edit: saved type; create: folder default).
 	syncStateFromPicker();
-	// Covers both explicit user picks and recomputes (e.g. an agent host
-	// advertising its session types after the dialog opened), so the saved
-	// automation always matches the chip the picker displays.
-	disposables.add(sessionTypePicker.onDidChangeSelectedPick(() => {
-		syncStateFromPicker();
-		revalidate();
-	}));
 
 	const workspacePicker = disposables.add(instantiationService.createInstance(MobileAutomationsWorkspacePicker, {
 		canSelectWorkspace: (folderUri, preferredProviderId) =>
@@ -788,7 +777,7 @@ export function renderForm(
 	const syncAutomationSession = async () => {
 		const generation = ++automationSessionSyncGeneration;
 		const folderUri = isolationModel.folderUriObs.get();
-		const pick = sessionTypePicker.selectedPick;
+		const pick = authoritativeSessionTypePicker.selectedPick;
 		if (!folderUri || !pick || isolationModel.isQuickChatObs.get()) {
 			sessionsManagementService.discardAutomationSession(dialogAutomationSession);
 			dialogAutomationSession = undefined;
@@ -837,8 +826,6 @@ export function renderForm(
 			sessionsManagementService.discardAutomationSession(dialogAutomationSession);
 		},
 	});
-	disposables.add(sessionTypePicker.onDidChangeSelectedPick(scheduleAutomationSessionSync));
-
 	if (state.folderUri) {
 		workspacePicker.setSelectedWorkspace(state.folderUri, { fireEvent: false, persist: false });
 	}
@@ -946,6 +933,31 @@ export function renderForm(
 		sessionTypePickerOptions: { persistSelection: false, telemetrySource: 'AutomationSessionTypePicker', showChevron: false },
 		usePersistedDraftState: false,
 	}));
+	const newSessionTypePicker = newChatInput.sessionTypePicker;
+	newSessionTypePicker.setQuickChatSource(isolationModel.isQuickChatObs);
+	newSessionTypePicker.setFolderSource(isolationModel.folderUriObs, {
+		initialPick: state.sessionTypeId
+			? { providerId: state.providerId, sessionTypeId: state.sessionTypeId }
+			: undefined,
+		preserveUnavailableInitialPick: true,
+	});
+	authoritativeSessionTypePicker = newSessionTypePicker;
+	sessionTypePicker.setSelectedPick(newSessionTypePicker.selectedPick);
+	disposables.add(autorun(reader => {
+		const modelTarget = newSessionTypePicker.modelTargetChatSessionType.read(reader);
+		if (modelTarget) {
+			onDidChangeSessionType.fire(modelTarget);
+		}
+	}));
+	disposables.add(newSessionTypePicker.onDidChangeSelectedPick(pick => {
+		sessionTypePicker.setSelectedPick(pick);
+		syncStateFromPicker();
+		scheduleAutomationSessionSync();
+		revalidate();
+	}));
+	disposables.add(sessionTypePicker.onDidChangeSelectedPick(pick => {
+		newSessionTypePicker.setSelectedPick(pick);
+	}));
 	const newChatInputHost = DOM.append(promptHost, $('.automation-form-new-chat-input'));
 	newChatInput.render(newChatInputHost, promptHost);
 	const newChatInputEditor = newChatInput.inputEditor;
@@ -954,7 +966,7 @@ export function renderForm(
 	}
 	newChatInputEditor.getModel()?.setValue(initialPrompt);
 	const newChatPickersHost = DOM.append(newChatInputHost, $('.automation-form-new-chat-pickers.chat-secondary-toolbar'));
-	newChatInput.sessionTypePicker.render(newChatPickersHost, { className: 'sessions-chat-session-type-picker chat-input-picker-item' });
+	newSessionTypePicker.render(newChatPickersHost, { className: 'sessions-chat-session-type-picker chat-input-picker-item' });
 	workspacePicker.render(newChatPickersHost).classList.add('chat-input-picker-item');
 	newChatInput.renderSessionControls(newChatPickersHost);
 	const isolationGroupAction = disposables.add(new Action('automationIsolationGroup', ''));
