@@ -1493,6 +1493,8 @@ class NewSession extends Disposable {
 	private readonly _loading: ISettableObservable<boolean>;
 	private readonly _mainChat: ISettableObservable<IChat>;
 	private _selectedModelId: string | undefined;
+	private _selectedModelConfiguration: Record<string, unknown> | undefined;
+	private _selectedModelConfigurationBaseline: Record<string, unknown> | undefined;
 	private _selectedAgent: ISessionAgentRef | undefined;
 
 	observeClientCustomAgents(customAgents: IObservable<readonly AgentCustomization[]>, onDidChange: () => void): void {
@@ -1658,12 +1660,27 @@ class NewSession extends Disposable {
 	// -- Picker mutations ----------------------------------------------------
 
 	setSelectedModelId(modelId: string): void {
+		if (this._selectedModelId !== modelId) {
+			this._selectedModelConfiguration = undefined;
+			this._selectedModelConfigurationBaseline = undefined;
+		}
 		this._selectedModelId = modelId;
 		this._modelId.set(modelId, undefined);
 	}
 
 	getSelectedModelId(): string | undefined { return this._selectedModelId; }
-	clearSelectedModelId(): void { this._selectedModelId = undefined; }
+	setSelectedModelConfiguration(configuration: Record<string, unknown> | undefined, baseline: Record<string, unknown> | undefined): void {
+		this._selectedModelConfiguration = configuration;
+		this._selectedModelConfigurationBaseline = baseline;
+	}
+	getSelectedModelConfiguration(current: Record<string, unknown> | undefined): Record<string, unknown> | undefined {
+		return equals(current, this._selectedModelConfigurationBaseline) ? this._selectedModelConfiguration : current;
+	}
+	clearSelectedModelId(): void {
+		this._selectedModelId = undefined;
+		this._selectedModelConfiguration = undefined;
+		this._selectedModelConfigurationBaseline = undefined;
+	}
 	/** Untitled skeleton title used until the first request commits the session. */
 	get untitledTitle(): string { return this._kind.untitledTitle; }
 	setSelectedAgent(agent: ISessionAgentRef | undefined): void {
@@ -3067,9 +3084,15 @@ export abstract class BaseAgentHostSessionsProvider extends Disposable implement
 		}
 		const value: { [key: string]: ISessionAutomationConfigurationValue } = {};
 		const modelId = session.getSelectedModelId();
+		const modelConfiguration = modelId
+			? session.getSelectedModelConfiguration(this._languageModelsService.getModelConfiguration(modelId))
+			: undefined;
 		const sessionConfig = session.getConfigValues();
 		if (modelId) {
 			value.modelId = modelId;
+		}
+		if (modelConfiguration) {
+			value.modelConfiguration = toAutomationConfigurationValue(modelConfiguration);
 		}
 		if (sessionConfig) {
 			value.sessionConfig = toAutomationConfigurationValue(sessionConfig);
@@ -3082,9 +3105,13 @@ export abstract class BaseAgentHostSessionsProvider extends Disposable implement
 			throw new Error(`Unsupported automation configuration for definition '${definitionId}'.`);
 		}
 		const modelId = configuration.value.modelId;
+		const modelConfiguration = configuration.value.modelConfiguration;
 		let sessionConfig = configuration.value.sessionConfig;
 		if (modelId !== undefined && typeof modelId !== 'string') {
 			throw new Error('Automation configuration property \'modelId\' must be a string.');
+		}
+		if (modelConfiguration !== undefined && !isAutomationConfigurationObject(modelConfiguration)) {
+			throw new Error('Automation configuration property \'modelConfiguration\' must be an object.');
 		}
 		if (sessionConfig !== undefined && !isAutomationConfigurationObject(sessionConfig)) {
 			throw new Error('Automation configuration property \'sessionConfig\' must be an object.');
@@ -3108,6 +3135,7 @@ export abstract class BaseAgentHostSessionsProvider extends Disposable implement
 			version: 1,
 			value: {
 				...(typeof modelId === 'string' ? { modelId } : {}),
+				...(isAutomationConfigurationObject(modelConfiguration) ? { modelConfiguration } : {}),
 				...(sessionConfig ? { sessionConfig } : {}),
 			},
 		};
@@ -3125,6 +3153,11 @@ export abstract class BaseAgentHostSessionsProvider extends Disposable implement
 		const modelId = resolved.value.modelId;
 		if (typeof modelId === 'string') {
 			this.setModel(sessionId, modelId);
+			const modelConfiguration = resolved.value.modelConfiguration;
+			session.setSelectedModelConfiguration(
+				isAutomationConfigurationObject(modelConfiguration) ? modelConfiguration : undefined,
+				this._languageModelsService.getModelConfiguration(modelId),
+			);
 		}
 		const sessionConfig = resolved.value.sessionConfig;
 		if (sessionConfig !== undefined) {
@@ -3943,6 +3976,9 @@ export abstract class BaseAgentHostSessionsProvider extends Disposable implement
 
 		newSession.setStatus(SessionStatus.InProgress);
 		const selectedModelId = this._resolveSendModelId(chatId, newSession.getSelectedModelId());
+		const selectedModelConfiguration = selectedModelId
+			? newSession.getSelectedModelConfiguration(this._languageModelsService.getModelConfiguration(selectedModelId))
+			: undefined;
 		const selectedAgent = newSession.getSelectedAgent();
 
 		const { query, attachedContext } = options;
@@ -3953,6 +3989,7 @@ export abstract class BaseAgentHostSessionsProvider extends Disposable implement
 		const sendOptions: IChatSendRequestOptions = {
 			location: ChatAgentLocation.Chat,
 			userSelectedModelId: selectedModelId,
+			userSelectedModelConfiguration: selectedModelConfiguration,
 			modeInfo: selectedAgent ? {
 				kind: ChatModeKind.Agent,
 				isBuiltin: false,
@@ -3986,7 +4023,10 @@ export abstract class BaseAgentHostSessionsProvider extends Disposable implement
 			if (selectedModelId) {
 				const languageModel = this._languageModelsService.lookupLanguageModel(selectedModelId);
 				if (languageModel) {
-					modelRef.object.inputModel.setState({ selectedModel: { identifier: selectedModelId, metadata: languageModel } });
+					modelRef.object.inputModel.setState({
+						selectedModel: { identifier: selectedModelId, metadata: languageModel },
+						modelConfiguration: selectedModelConfiguration,
+					});
 				}
 			}
 			if (selectedAgent) {
