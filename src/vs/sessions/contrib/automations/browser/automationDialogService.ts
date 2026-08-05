@@ -15,14 +15,12 @@ import { IContextViewService } from '../../../../platform/contextview/browser/co
 import { IInstantiationService } from '../../../../platform/instantiation/common/instantiation.js';
 import { IKeybindingService } from '../../../../platform/keybinding/common/keybinding.js';
 import { ILogService } from '../../../../platform/log/common/log.js';
-import { IProductService } from '../../../../platform/product/common/productService.js';
 import { IWorkspaceTrustRequestService } from '../../../../platform/workspace/common/workspaceTrust.js';
 import { defaultDialogStyles } from '../../../../platform/theme/browser/defaultStyles.js';
 import { createWorkbenchDialogOptions } from '../../../../workbench/browser/parts/dialogs/dialog.js';
 import { AutomationTarget, IAutomationConfiguration, IAutomationSchedule } from '../../../../workbench/contrib/chat/common/automations/automation.js';
 import { IAutomationDialogResult, IAutomationDialogService, IShowAutomationDialogOptions } from '../../../../workbench/contrib/chat/common/automations/automationDialogService.js';
 import { ICreateAutomationOptions, IUpdateAutomationOptions } from '../../../../workbench/contrib/chat/common/automations/automationService.js';
-import { ILanguageModelsService } from '../../../../workbench/contrib/chat/common/languageModels.js';
 import { IHostService } from '../../../../workbench/services/host/browser/host.js';
 import { IWorkbenchLayoutService } from '../../../../workbench/services/layout/browser/layoutService.js';
 import { ISessionsManagementService } from '../../../services/sessions/common/sessionsManagement.js';
@@ -69,11 +67,9 @@ export class AutomationDialogService implements IAutomationDialogService {
 		@IContextKeyService private readonly contextKeyService: IContextKeyService,
 		@IContextViewService private readonly contextViewService: IContextViewService,
 		@IConfigurationService private readonly configurationService: IConfigurationService,
-		@ILanguageModelsService private readonly languageModelsService: ILanguageModelsService,
 		@IKeybindingService private readonly keybindingService: IKeybindingService,
 		@IWorkbenchLayoutService private readonly layoutService: IWorkbenchLayoutService,
 		@ILogService private readonly logService: ILogService,
-		@IProductService private readonly productService: IProductService,
 		@IHostService private readonly hostService: IHostService,
 		@ISessionsManagementService private readonly sessionsManagementService: ISessionsManagementService,
 		@IWorkspaceTrustRequestService private readonly workspaceTrustRequestService: IWorkspaceTrustRequestService,
@@ -110,12 +106,10 @@ export class AutomationDialogService implements IAutomationDialogService {
 		let cancelButton: IButton | undefined;
 		let revalidate: () => void = () => { };
 		let getPrompt: () => string = () => initial?.prompt ?? '';
-		let getMode: () => string | undefined = () => initial?.mode;
-		let getPermissionLevel: () => string | undefined = () => initial?.permissionLevel;
-		let getModelId: () => string | undefined = () => initial?.modelId;
+		let getDefinitionId: () => string | undefined = () => initial?.definitionId;
 		let getConfiguration: () => Promise<IAutomationConfiguration | undefined> = async () => initial?.configuration;
 		let getBranch: () => string | undefined = () => initialWorkspaceTarget?.isolation.kind === 'worktree' ? initialWorkspaceTarget.isolation.branch : undefined;
-		let waitForAutomationSessionSync: () => Promise<void> = async () => { };
+		let isLoading: () => boolean = () => false;
 		let getFocusableElements: () => readonly HTMLElement[] = () => [];
 		let focusFirst: () => void = () => { };
 
@@ -167,14 +161,12 @@ export class AutomationDialogService implements IAutomationDialogService {
 
 					const formPane = DOM.append(container, $('.automation-form-pane'));
 					const form = DOM.append(formPane, $('.automation-form'));
-					const handle = renderForm(form, state, disposables, validation, () => revalidate(), this.instantiationService, this.contextKeyService, this.contextViewService, this.configurationService, this.languageModelsService, this.layoutService, this.logService, this.productService, this.sessionsManagementService, this.workspaceTrustRequestService, initial?.prompt ?? '', initial?.mode, initial?.permissionLevel, initial?.modelId, initial?.configuration);
+					const handle = renderForm(form, state, disposables, validation, () => revalidate(), this.instantiationService, this.contextKeyService, this.contextViewService, this.configurationService, this.layoutService, this.logService, this.sessionsManagementService, this.workspaceTrustRequestService, initial?.prompt ?? '', initial?.definitionId, initial?.configuration);
 					getPrompt = handle.getPrompt;
-					getMode = handle.getMode;
-					getPermissionLevel = handle.getPermissionLevel;
-					getModelId = handle.getModelId;
+					getDefinitionId = handle.getDefinitionId;
 					getConfiguration = handle.getConfiguration;
 					getBranch = handle.getBranch;
-					waitForAutomationSessionSync = handle.waitForAutomationSessionSync;
+					isLoading = handle.isLoading;
 					getFocusableElements = handle.getFocusableElements;
 					const keyboardNavigation = disposables.add(registerAutomationDialogKeyboardNavigation(
 						DOM.getWindow(container),
@@ -186,7 +178,7 @@ export class AutomationDialogService implements IAutomationDialogService {
 						isAutomationDialogPopupTarget,
 					));
 					focusFirst = keyboardNavigation.focusFirst;
-					revalidate = () => updateSaveButtonState(saveButton, state, validation, form, getPrompt, getBranch);
+					revalidate = () => updateSaveButtonState(saveButton, state, validation, form, getPrompt, getBranch, isLoading());
 					revalidate();
 				},
 			}, this.keybindingService, this.layoutService, this.hostService, automationDialogAllowableCommands),
@@ -204,13 +196,12 @@ export class AutomationDialogService implements IAutomationDialogService {
 			}
 			// Guard against submit-with-Enter bypassing live validation.
 			revalidate();
-			if (validation.nameError || validation.promptError || validation.folderError || validation.sessionTypeError || validation.branchError) {
+			if (isLoading() || validation.nameError || validation.promptError || validation.folderError || validation.sessionTypeError || validation.branchError) {
 				return undefined;
 			}
 			if ((!state.isQuickChat && !state.folderUri) || !state.sessionTypeId || (state.isQuickChat && !state.providerId)) {
 				return undefined;
 			}
-			await waitForAutomationSessionSync();
 
 			const schedule: IAutomationSchedule = {
 				interval: state.interval,
@@ -220,13 +211,11 @@ export class AutomationDialogService implements IAutomationDialogService {
 			};
 
 			const prompt = getPrompt();
-			const mode = getMode();
-			const permissionLevel = getPermissionLevel();
-			const modelId = getModelId();
+			const definitionId = getDefinitionId();
 			const automationConfiguration = await getConfiguration();
 			const branch = getBranch();
 			const target = createAutomationTarget(state, branch);
-			if (!target) {
+			if (!target || !definitionId || !automationConfiguration) {
 				return undefined;
 			}
 
@@ -236,10 +225,8 @@ export class AutomationDialogService implements IAutomationDialogService {
 					prompt,
 					schedule,
 					target,
+					definitionId,
 					configuration: automationConfiguration,
-					modelId: modelId ?? null,
-					mode: mode ?? null,
-					permissionLevel: permissionLevel ?? null,
 					enabled: state.enabled,
 				};
 				return { kind: 'update', id: initial.id, value: patch };
@@ -250,10 +237,8 @@ export class AutomationDialogService implements IAutomationDialogService {
 				prompt,
 				schedule,
 				target,
+				definitionId,
 				configuration: automationConfiguration,
-				modelId,
-				mode,
-				permissionLevel,
 				enabled: state.enabled,
 			};
 			return { kind: 'create', value: create };
