@@ -83,17 +83,14 @@ export class AutomationRunner implements IAutomationRunner {
 				: undefined;
 			const branch = target.kind === 'workspace' && target.isolation.kind === 'worktree' ? target.isolation.branch : undefined;
 
-			const createOptions: ICreateNewSessionOptions | undefined = target.providerId !== undefined || target.sessionTypeId !== undefined || automation.modelId !== undefined || automation.mode !== undefined || automation.permissionLevel !== undefined || isolationMode !== undefined || branch !== undefined
-				? {
-					providerId: target.providerId,
-					sessionTypeId: target.sessionTypeId,
-					modelId: automation.modelId,
-					modeId: automation.mode,
-					permissionLevel: automation.permissionLevel,
-					isolationMode,
-					branch,
-				}
-				: undefined;
+			const createOptions: ICreateNewSessionOptions = {
+				providerId: target.providerId,
+				sessionTypeId: target.sessionTypeId,
+				isolationMode,
+				branch,
+				automationDefinitionId: automation.definitionId,
+				automationConfiguration: automation.configuration,
+			};
 
 			const targetAvailable = target.kind === 'quickChat'
 				? this.sessionsManagementService.isQuickChatTargetAvailable(createOptions)
@@ -130,7 +127,7 @@ export class AutomationRunner implements IAutomationRunner {
 				title: automation.name?.substring(0, 100),
 			};
 
-			this.logService.trace(`[AutomationRunner] running ${automation.id}: target=${target.kind}, provider=${createOptions?.providerId ?? '(default)'}, sessionType=${createOptions?.sessionTypeId ?? '(default)'}, model=${createOptions?.modelId ?? '(default)'}, mode=${createOptions?.modeId ?? '(default)'}, permissionLevel=${createOptions?.permissionLevel ?? '(default)'}`);
+			this.logService.trace(`[AutomationRunner] running ${automation.id}: target=${target.kind}, provider=${createOptions?.providerId ?? '(default)'}, sessionType=${createOptions?.sessionTypeId ?? '(default)'}, definition=${automation.definitionId}`);
 
 			let session: ISession | undefined;
 			if (target.kind === 'quickChat') {

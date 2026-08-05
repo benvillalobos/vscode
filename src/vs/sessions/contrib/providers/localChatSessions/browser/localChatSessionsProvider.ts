@@ -5,6 +5,7 @@
 
 import { Emitter, Event } from '../../../../../base/common/event.js';
 import { Codicon } from '../../../../../base/common/codicons.js';
+import { CancellationError } from '../../../../../base/common/errors.js';
 import { Disposable, DisposableMap, MutableDisposable } from '../../../../../base/common/lifecycle.js';
 import { Schemas } from '../../../../../base/common/network.js';
 import { autorun, constObservable, IObservable, IReader, ISettableObservable, observableFromEvent, observableValue, transaction } from '../../../../../base/common/observable.js';
@@ -16,8 +17,8 @@ import { IChatSessionFileChange2, IChatSessionProviderOptionItem, SessionType } 
 import { ISession, IChat, ISessionGitRepository, ISessionFolder, ISessionWorkspace, ISideChatSelection, SessionStatus, ISessionType, ISessionFileChange, toSessionId, SESSION_WORKSPACE_GROUP_LOCAL, IChatCheckpoints, ChatInteractivity, SessionTypeAuthRequirement } from '../../../../services/sessions/common/session.js';
 import { ChatAgentLocation, ChatConfiguration, ChatModeKind, ChatPermissionLevel, isChatPermissionLevel } from '../../../../../workbench/contrib/chat/common/constants.js';
 import { basename, dirname, isEqual } from '../../../../../base/common/resources.js';
-import { IDeleteChatOptions, ISendRequestOptions, ISessionChangeEvent, ISessionModelPickerOptions, ISessionModelsSnapshot, ISessionsProvider } from '../../../../services/sessions/common/sessionsProvider.js';
-import { isBuiltinChatMode, IChatMode } from '../../../../../workbench/contrib/chat/common/chatModes.js';
+import { IDeleteChatOptions, ISendRequestOptions, ISessionAutomationConfiguration, ISessionAutomationConfigurationValue, ISessionAutomationDefinition, ISessionChangeEvent, ISessionModelPickerOptions, ISessionModelsSnapshot, ISessionsProvider, ISessionsProviderAutomationCapability, ScheduledPromptAutomationDefinitionId } from '../../../../services/sessions/common/sessionsProvider.js';
+import { ChatMode, isBuiltinChatMode, IChatMode } from '../../../../../workbench/contrib/chat/common/chatModes.js';
 import { IChatModel } from '../../../../../workbench/contrib/chat/common/model/chatModel.js';
 import { IGitService } from '../../../../../workbench/contrib/git/common/gitService.js';
 import { localize } from '../../../../../nls.js';
@@ -42,6 +43,10 @@ export const LocalSessionType: ISessionType = {
 	// In-process VS Code chat, which is Copilot-backed.
 	authRequirement: SessionTypeAuthRequirement.GitHub,
 };
+
+function isAutomationConfigurationObject(value: ISessionAutomationConfigurationValue): value is { readonly [key: string]: ISessionAutomationConfigurationValue } {
+	return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
 
 /** Setting key controlling whether Local VS Code chat sessions are available in the Agents app. */
 export const LOCAL_SESSION_ENABLED_SETTING = 'sessions.chat.localAgent.enabled';
@@ -409,17 +414,25 @@ class LocalSession extends Disposable {
  * Sessions provider that wraps local in-process chat sessions
  * (using {@link IChatService} directly) into the {@link ISessionsProvider} interface.
  */
-export class LocalChatSessionsProvider extends Disposable implements ISessionsProvider {
+export class LocalChatSessionsProvider extends Disposable implements ISessionsProvider, ISessionsProviderAutomationCapability {
 
 	readonly id = LOCAL_PROVIDER_ID;
 	readonly label = localize('localChatSessionsProvider', "Copilot Chat");
 	readonly icon = Codicon.vm;
 	readonly order = 0;
+	readonly automation = this;
 	readonly browseActions: readonly [] = [];
 	readonly supportsLocalWorkspaces = true;
 
 	readonly sessionTypes: readonly ISessionType[] = [LocalSessionType];
 	readonly onDidChangeSessionTypes: Event<void> = Event.None;
+	readonly definitions: readonly ISessionAutomationDefinition[] = [{
+		id: ScheduledPromptAutomationDefinitionId,
+		label: LocalSessionType.label,
+		sessionTypeId: LocalSessionType.id,
+		configurationVersion: 1,
+	}];
+	readonly onDidChangeDefinitions: Event<void> = Event.None;
 
 	private readonly _onDidChangeSessions = this._register(new Emitter<ISessionChangeEvent>());
 	readonly onDidChangeSessions: Event<ISessionChangeEvent> = this._onDidChangeSessions.event;
@@ -777,6 +790,83 @@ export class LocalChatSessionsProvider extends Disposable implements ISessionsPr
 			showUnavailableFeatured: false,
 			showManageModelsAction: true,
 		};
+	}
+
+	captureConfiguration(sessionId: string, definitionId: string): ISessionAutomationConfiguration {
+		const session = this._newSessions.get(sessionId);
+		if (!session || definitionId !== ScheduledPromptAutomationDefinitionId) {
+			throw new Error(`Automation definition '${definitionId}' is unavailable for session '${sessionId}'.`);
+		}
+		const value: { [key: string]: ISessionAutomationConfigurationValue } = {};
+		const modelId = session.modelId.get();
+		const modeId = session.mode.get()?.id;
+		if (modelId) {
+			value.modelId = modelId;
+		}
+		if (modeId) {
+			value.modeId = modeId;
+		}
+		value.permissionLevel = session.permissionLevel.get();
+		return { version: 1, value };
+	}
+
+	resolveConfiguration(definitionId: string, configuration: ISessionAutomationConfiguration): ISessionAutomationConfiguration {
+		if (definitionId !== ScheduledPromptAutomationDefinitionId || configuration.version !== 1 || !isAutomationConfigurationObject(configuration.value)) {
+			throw new Error(`Unsupported automation configuration for definition '${definitionId}'.`);
+		}
+		for (const key of ['modelId', 'modeId', 'permissionLevel']) {
+			const value = configuration.value[key];
+			if (value !== undefined && typeof value !== 'string') {
+				throw new Error(`Automation configuration property '${key}' must be a string.`);
+			}
+		}
+		const modeId = configuration.value.modeId;
+		if (typeof modeId === 'string' && modeId !== ChatModeKind.Agent && modeId !== ChatModeKind.Edit && modeId !== ChatModeKind.Ask) {
+			throw new Error(`Automation configuration property 'modeId' has unsupported value '${modeId}'.`);
+		}
+		const permissionLevel = configuration.value.permissionLevel;
+		if (typeof permissionLevel === 'string' && !isChatPermissionLevel(permissionLevel)) {
+			throw new Error(`Automation configuration property 'permissionLevel' has unsupported value '${permissionLevel}'.`);
+		}
+		return {
+			version: 1,
+			value: {
+				...(typeof configuration.value.modelId === 'string' ? { modelId: configuration.value.modelId } : {}),
+				...(typeof modeId === 'string' ? { modeId } : {}),
+				...(typeof permissionLevel === 'string' ? { permissionLevel } : {}),
+			},
+		};
+	}
+
+	applyConfiguration(sessionId: string, definitionId: string, configuration: ISessionAutomationConfiguration, token: CancellationToken): Promise<void> {
+		const resolved = this.resolveConfiguration(definitionId, configuration);
+		if (token.isCancellationRequested) {
+			throw new CancellationError();
+		}
+		const session = this._newSessions.get(sessionId);
+		if (!session || !isAutomationConfigurationObject(resolved.value)) {
+			throw new Error(`Automation definition '${definitionId}' is unavailable for session '${sessionId}'.`);
+		}
+		const modelId = resolved.value.modelId;
+		const modeId = resolved.value.modeId;
+		const permissionLevel = resolved.value.permissionLevel;
+		if (typeof modelId === 'string') {
+			session.setModelId(modelId);
+		}
+		if (typeof modeId === 'string') {
+			session.setMode(modeId === ChatModeKind.Agent
+				? ChatMode.Agent
+				: modeId === ChatModeKind.Edit
+					? ChatMode.Edit
+					: ChatMode.Ask);
+		}
+		if (typeof permissionLevel === 'string') {
+			if (!isChatPermissionLevel(permissionLevel)) {
+				throw new Error(`Automation configuration property 'permissionLevel' has unsupported value '${permissionLevel}'.`);
+			}
+			session.setPermissionLevel(permissionLevel);
+		}
+		return Promise.resolve();
 	}
 
 	setModel(sessionId: string, modelId: string): void {

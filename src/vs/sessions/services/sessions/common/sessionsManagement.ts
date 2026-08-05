@@ -9,7 +9,7 @@ import { URI } from '../../../../base/common/uri.js';
 import { CancellationToken } from '../../../../base/common/cancellation.js';
 import { createDecorator } from '../../../../platform/instantiation/common/instantiation.js';
 import { IChat, ISession, ISessionType, ISessionWorkspace, ISideChatSelection } from './session.js';
-import { IDeleteChatOptions, ISendRequestOptions as ISessionsProviderSendRequestOptions } from './sessionsProvider.js';
+import { IDeleteChatOptions, ISendRequestOptions as ISessionsProviderSendRequestOptions, ISessionAutomationConfiguration, ISessionAutomationDefinition } from './sessionsProvider.js';
 
 /** Raised when unattended session creation targets a workspace that requires trust. */
 export class WorkspaceNotTrustedError extends Error {
@@ -45,6 +45,11 @@ export interface ISendRequestOptions extends ISessionsProviderSendRequestOptions
 export interface IProviderSessionType {
 	readonly providerId: string;
 	readonly sessionType: ISessionType;
+}
+
+export interface IProviderAutomationDefinition {
+	readonly providerId: string;
+	readonly definition: ISessionAutomationDefinition;
 }
 
 /**
@@ -99,6 +104,8 @@ export interface ICreateNewSessionOptions {
 	 * programmatic session creation and is not surfaced in the new-session UI.
 	 */
 	readonly worktreeBranchTrack?: boolean;
+	readonly automationDefinitionId?: string;
+	readonly automationConfiguration?: ISessionAutomationConfiguration;
 }
 
 /**
@@ -253,6 +260,21 @@ export interface ISessionsManagementService {
 	 */
 	getQuickChatSessionTypes(): IProviderSessionType[];
 
+	/** Get every automation definition advertised by registered providers. */
+	getAutomationDefinitions(): IProviderAutomationDefinition[];
+
+	/** Resolve an exact provider-owned automation definition. */
+	getAutomationDefinition(providerId: string, sessionTypeId: string, definitionId: string): IProviderAutomationDefinition | undefined;
+
+	/** Capture provider-owned configuration from an automation draft. */
+	captureAutomationConfiguration(session: ISession, definitionId: string): ISessionAutomationConfiguration;
+
+	/** Validate and migrate persisted provider-owned configuration. */
+	resolveAutomationConfiguration(providerId: string, sessionTypeId: string, definitionId: string, configuration: ISessionAutomationConfiguration): ISessionAutomationConfiguration;
+
+	/** Apply provider-owned configuration to a newly-created automation draft. */
+	applyAutomationConfiguration(session: ISession, definitionId: string, configuration: ISessionAutomationConfiguration, token?: CancellationToken): Promise<void>;
+
 	/** Whether the requested workspace session target is currently advertised. */
 	isNewSessionTargetAvailable(folderUri: URI, options?: ICreateNewSessionOptions): boolean;
 
@@ -274,6 +296,9 @@ export interface ISessionsManagementService {
 	 * Fires when available session types change (providers added/removed).
 	 */
 	readonly onDidChangeSessionTypes: Event<void>;
+
+	/** Fires when provider-owned automation definitions may have changed. */
+	readonly onDidChangeAutomationDefinitions: Event<void>;
 
 	/**
 	 * Fires when sessions change across any provider.
@@ -345,6 +370,9 @@ export interface ISessionsManagementService {
 	 * Create and track an automation-dialog session draft for the given folder.
 	 */
 	createAutomationSession(folderUri: URI, options?: ICreateNewSessionOptions): ISession;
+
+	/** Create and track a workspace-less automation-dialog draft. */
+	createAutomationQuickChat(options?: ICreateNewSessionOptions): ISession;
 
 	/**
 	 * Discard the matching automation-dialog session draft.

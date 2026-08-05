@@ -38,9 +38,10 @@ import { BranchPicker, IBranchPickerBranch } from '../../chat/browser/branchPick
 import { NewChatInputWidget } from '../../chat/browser/newChatInput.js';
 import { isMobilePickerSheetTarget } from '../../../browser/parts/mobile/mobilePickerSheet.js';
 import { ISession, ISessionWorkspaceBrowseAction, SESSION_WORKSPACE_GROUP_LOCAL } from '../../../services/sessions/common/session.js';
+import { setActiveSessionContextKeys } from '../../../services/sessions/common/sessionContextKeys.js';
 import { VisibleSession } from '../../../services/sessions/browser/visibleSessions.js';
 import { IGitRepository, IGitService } from '../../../../workbench/contrib/git/common/gitService.js';
-import { AutomationInterval } from '../../../../workbench/contrib/chat/common/automations/automation.js';
+import { AutomationInterval, IAutomationConfiguration, ScheduledPromptAutomationDefinitionId } from '../../../../workbench/contrib/chat/common/automations/automation.js';
 import { DAYS_OF_WEEK } from '../../../../workbench/contrib/chat/common/automations/schedule.js';
 import { ChatContextKeys } from '../../../../workbench/contrib/chat/common/actions/chatContextKeys.js';
 import { ILanguageModelsService } from '../../../../workbench/contrib/chat/common/languageModels.js';
@@ -185,9 +186,8 @@ export interface IValidationState {
 
 interface IRenderFormHandle {
 	readonly getPrompt: () => string;
-	readonly getMode: () => string | undefined;
-	readonly getPermissionLevel: () => string | undefined;
-	readonly getModelId: () => string | undefined;
+	readonly getDefinitionId: () => string | undefined;
+	readonly getConfiguration: () => Promise<IAutomationConfiguration | undefined>;
 	readonly getBranch: () => string | undefined;
 	readonly getFocusableElements: () => readonly HTMLElement[];
 }
@@ -591,9 +591,8 @@ export function renderForm(
 	sessionsManagementService: ISessionsManagementService,
 	workspaceTrustRequestService: IWorkspaceTrustRequestService,
 	initialPrompt: string,
-	initialMode: string | undefined,
-	initialPermissionLevel: string | undefined,
-	initialModelId: string | undefined,
+	initialDefinitionId: string | undefined,
+	initialConfiguration: IAutomationConfiguration | undefined,
 ): IRenderFormHandle {
 	const nameRow = DOM.append(form, $('.automation-form-row'));
 	DOM.append(nameRow, $('span.automation-form-label', undefined, localize('automation.form.name', "Name")));
@@ -693,14 +692,20 @@ export function renderForm(
 	workspacePicker.setLayoutService(layoutService);
 
 	let dialogAutomationSession: ISession | undefined;
-	let dialogAutomationSessionTarget: { readonly folderUri: URI; readonly providerId: string | undefined; readonly sessionTypeId: string } | undefined;
+	let dialogAutomationSessionTarget:
+		| { readonly kind: 'workspace'; readonly folderUri: URI; readonly providerId: string | undefined; readonly sessionTypeId: string }
+		| { readonly kind: 'quickChat'; readonly providerId: string; readonly sessionTypeId: string }
+		| undefined;
 	let automationSessionSyncGeneration = 0;
 	let automationSessionSyncScheduled = false;
+	let automationSessionSyncPromise = Promise.resolve();
+	let pendingInitialConfiguration = initialConfiguration;
 	const syncAutomationSession = async () => {
 		const generation = ++automationSessionSyncGeneration;
 		const folderUri = isolationModel.folderUriObs.get();
-		const pick = authoritativeSessionTypePicker?.selectedPick;
-		if (!folderUri || !pick || isolationModel.isQuickChatObs.get()) {
+		const pick = authoritativeSessionTypePicker.selectedPick;
+		const isQuickChat = isolationModel.isQuickChatObs.get();
+		if (!pick || (isQuickChat && !pick.providerId) || (!isQuickChat && !folderUri)) {
 			sessionsManagementService.discardAutomationSession(dialogAutomationSession);
 			dialogAutomationSession = undefined;
 			dialogAutomationSessionTarget = undefined;
@@ -709,23 +714,46 @@ export function renderForm(
 		if (dialogAutomationSession
 			&& dialogAutomationSessionTarget
 			&& sessionsManagementService.automationSession.get()?.sessionId === dialogAutomationSession.sessionId
-			&& isEqual(dialogAutomationSessionTarget.folderUri, folderUri)
+			&& dialogAutomationSessionTarget.kind === (isQuickChat ? 'quickChat' : 'workspace')
+			&& (dialogAutomationSessionTarget.kind === 'quickChat' || isEqual(dialogAutomationSessionTarget.folderUri, folderUri))
 			&& dialogAutomationSessionTarget.providerId === pick.providerId
 			&& dialogAutomationSessionTarget.sessionTypeId === pick.sessionTypeId) {
 			return;
 		}
-		if (!await canSelectAutomationWorkspace(folderUri, pick.providerId, sessionsManagementService, workspaceTrustRequestService)) {
+		if (!isQuickChat && (!folderUri || !await canSelectAutomationWorkspace(folderUri, pick.providerId, sessionsManagementService, workspaceTrustRequestService))) {
 			return;
 		}
 		if (disposables.isDisposed || generation !== automationSessionSyncGeneration) {
 			return;
 		}
 		try {
-			dialogAutomationSession = sessionsManagementService.createAutomationSession(folderUri, {
-				providerId: pick.providerId,
-				sessionTypeId: pick.sessionTypeId,
-			});
-			dialogAutomationSessionTarget = { folderUri, providerId: pick.providerId, sessionTypeId: pick.sessionTypeId };
+			if (isQuickChat) {
+				const providerId = pick.providerId;
+				if (!providerId) {
+					return;
+				}
+				dialogAutomationSession = sessionsManagementService.createAutomationQuickChat({
+					providerId,
+					sessionTypeId: pick.sessionTypeId,
+				});
+				dialogAutomationSessionTarget = { kind: 'quickChat', providerId, sessionTypeId: pick.sessionTypeId };
+			} else {
+				if (!folderUri) {
+					return;
+				}
+				dialogAutomationSession = sessionsManagementService.createAutomationSession(folderUri, {
+					providerId: pick.providerId,
+					sessionTypeId: pick.sessionTypeId,
+				});
+				dialogAutomationSessionTarget = { kind: 'workspace', folderUri, providerId: pick.providerId, sessionTypeId: pick.sessionTypeId };
+			}
+			if (pendingInitialConfiguration) {
+				const definitionId = initialDefinitionId ?? ScheduledPromptAutomationDefinitionId;
+				await sessionsManagementService.applyAutomationConfiguration(dialogAutomationSession, definitionId, pendingInitialConfiguration);
+				if (generation === automationSessionSyncGeneration) {
+					pendingInitialConfiguration = undefined;
+				}
+			}
 		} catch (error) {
 			logService.error('[AutomationDialog] Failed to synchronize the automation session draft.', error);
 		}
@@ -735,11 +763,12 @@ export function renderForm(
 			return;
 		}
 		automationSessionSyncScheduled = true;
-		queueMicrotask(() => {
+		automationSessionSyncPromise = Promise.resolve().then(() => {
 			automationSessionSyncScheduled = false;
 			if (!disposables.isDisposed) {
-				void syncAutomationSession();
+				return syncAutomationSession();
 			}
+			return undefined;
 		});
 	};
 	disposables.add({
@@ -786,6 +815,7 @@ export function renderForm(
 		const session = sessionsManagementService.automationSession.read(reader);
 		return session ? reader.store.add(new VisibleSession(session, session.mainChat.read(undefined))) : undefined;
 	});
+	disposables.add(autorun(reader => setActiveSessionContextKeys(automationSession.read(reader), scopedContextKeyService, reader)));
 	const automationSessionLoading = derived(reader => automationSession.read(reader)?.loading.read(reader) ?? false);
 	const newChatInput = disposables.add(scopedInstantiationService.createInstance(NewChatInputWidget, {
 		session: automationSession,
@@ -880,9 +910,27 @@ export function renderForm(
 
 	return {
 		getPrompt: () => newChatInputEditor.getValue(),
-		getMode: () => dialogAutomationSession?.mode.get()?.id ?? initialMode,
-		getPermissionLevel: () => initialPermissionLevel,
-		getModelId: () => dialogAutomationSession?.modelId.get() ?? initialModelId,
+		getDefinitionId: () => {
+			const pick = authoritativeSessionTypePicker.selectedPick;
+			if (!pick?.providerId) {
+				return undefined;
+			}
+			return sessionsManagementService.getAutomationDefinition(
+				pick.providerId,
+				pick.sessionTypeId,
+				initialDefinitionId ?? ScheduledPromptAutomationDefinitionId,
+			)?.definition.id;
+		},
+		getConfiguration: async () => {
+			let pendingSync: Promise<void>;
+			do {
+				pendingSync = automationSessionSyncPromise;
+				await pendingSync;
+			} while (pendingSync !== automationSessionSyncPromise);
+			const session = dialogAutomationSession;
+			const definitionId = initialDefinitionId ?? ScheduledPromptAutomationDefinitionId;
+			return session ? sessionsManagementService.captureAutomationConfiguration(session, definitionId) : undefined;
+		},
 		getBranch: () => isolationModel.persistedBranch,
 		getFocusableElements: () => {
 			// eslint-disable-next-line no-restricted-syntax -- the dialog owns this form subtree and supplies its dynamic focus order.

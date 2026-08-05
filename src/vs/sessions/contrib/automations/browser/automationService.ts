@@ -12,10 +12,13 @@ import { IStorageService, StorageScope } from '../../../../platform/storage/comm
 import { ITelemetryService } from '../../../../platform/telemetry/common/telemetry.js';
 import {
 	AutomationRunTrigger,
+	AutomationConfigurationValue,
 	AutomationTarget,
 	AutomationWorkspaceIsolation,
 	IAutomation,
+	IAutomationConfiguration,
 	IAutomationRun,
+	ScheduledPromptAutomationDefinitionId,
 } from '../../../../workbench/contrib/chat/common/automations/automation.js';
 import {
 	type AutomationMutationGuard,
@@ -32,8 +35,8 @@ import { computeNextRunAt } from '../../../../workbench/contrib/chat/common/auto
 import { ChatPermissionLevel, isChatPermissionLevel } from '../../../../workbench/contrib/chat/common/constants.js';
 import { AUTOMATION_STORAGE_KEY, IAutomationStorageService } from '../common/automationStorageService.js';
 
-const LEGACY_SCHEMA_VERSIONS = new Set([1, 2]);
-const CURRENT_SCHEMA_VERSION = 3;
+const LEGACY_SCHEMA_VERSIONS = new Set([1, 2, 3]);
+const CURRENT_SCHEMA_VERSION = 4;
 
 const MAX_RUNS_PER_AUTOMATION = 50;
 
@@ -42,9 +45,6 @@ interface ISerializedAutomationBase {
 	readonly name: string;
 	readonly prompt: string;
 	readonly schedule: IAutomation['schedule'];
-	readonly modelId?: string;
-	readonly mode?: string;
-	readonly permissionLevel?: string;
 	readonly enabled: boolean;
 	readonly createdAt: string;
 	readonly updatedAt: string;
@@ -68,9 +68,21 @@ type ISerializedAutomationTarget =
 
 interface ISerializedAutomation extends ISerializedAutomationBase {
 	readonly target: ISerializedAutomationTarget;
+	readonly definitionId: string;
+	readonly configuration: IAutomationConfiguration;
 }
 
-interface ILegacySerializedAutomation extends ISerializedAutomationBase {
+interface IPreviousSerializedAutomationBase extends ISerializedAutomationBase {
+	readonly modelId?: string;
+	readonly mode?: string;
+	readonly permissionLevel?: string;
+}
+
+interface ISchema3SerializedAutomation extends IPreviousSerializedAutomationBase {
+	readonly target: ISerializedAutomationTarget;
+}
+
+interface ILegacySerializedAutomation extends IPreviousSerializedAutomationBase {
 	readonly isQuickChat?: boolean;
 	readonly folderUri?: UriComponents;
 	readonly providerId?: string;
@@ -80,10 +92,17 @@ interface ILegacySerializedAutomation extends ISerializedAutomationBase {
 }
 
 interface ISerializedLedger {
-	readonly schemaVersion: 3;
+	readonly schemaVersion: 4;
 	// Optimistic-concurrency counter. 0 for legacy blobs without this field.
 	readonly revision?: number;
 	readonly automations: readonly ISerializedAutomation[];
+	readonly runs: readonly IAutomationRun[];
+}
+
+interface ISchema3SerializedLedger {
+	readonly schemaVersion: 3;
+	readonly revision?: number;
+	readonly automations: readonly ISchema3SerializedAutomation[];
 	readonly runs: readonly IAutomationRun[];
 }
 
@@ -176,9 +195,8 @@ export class AutomationService extends Disposable implements IAutomationService 
 			prompt: options.prompt,
 			schedule: options.schedule,
 			target: normalizeAutomationTarget(options.target),
-			modelId: options.modelId,
-			mode: options.mode,
-			permissionLevel: isChatPermissionLevel(options.permissionLevel) ? options.permissionLevel : undefined,
+			definitionId: options.definitionId ?? ScheduledPromptAutomationDefinitionId,
+			configuration: options.configuration ?? createLegacyAutomationConfiguration(options),
 			enabled: options.enabled ?? true,
 			createdAt: nowIso,
 			updatedAt: nowIso,
@@ -428,7 +446,7 @@ export class AutomationService extends Disposable implements IAutomationService 
 			return { kind: 'ledger', ledger: EMPTY_LEDGER, revision: 0 };
 		}
 		try {
-			const parsed = JSON.parse(raw) as ISerializedLedger | ILegacySerializedLedger;
+			const parsed = JSON.parse(raw) as ISerializedLedger | ISchema3SerializedLedger | ILegacySerializedLedger;
 			if (typeof parsed?.schemaVersion === 'number' && parsed.schemaVersion > CURRENT_SCHEMA_VERSION) {
 				this.logService.warn(`[AutomationService] Ledger has schema v${parsed.schemaVersion}; this build only supports v${CURRENT_SCHEMA_VERSION}. Entering read-only mode.`);
 				return { kind: 'unsupportedSchema' };
@@ -443,6 +461,20 @@ export class AutomationService extends Disposable implements IAutomationService 
 				for (const entry of entries) {
 					try {
 						const automation = deserializeAutomation(entry);
+						if (automation) {
+							automations.push(automation);
+						} else {
+							this.logService.warn(`[AutomationService] Dropping persisted automation ${entry?.id} with an invalid target.`);
+						}
+					} catch (err) {
+						this.logService.warn(`[AutomationService] Dropping malformed persisted automation ${entry?.id}.`, err);
+					}
+				}
+			} else if (parsed.schemaVersion === 3) {
+				const entries = Array.isArray(parsed.automations) ? parsed.automations : [];
+				for (const entry of entries) {
+					try {
+						const automation = deserializeSchema3Automation(entry as ISchema3SerializedAutomation);
 						if (automation) {
 							automations.push(automation);
 						} else {
@@ -490,9 +522,8 @@ function serializeAutomation(a: IAutomation): ISerializedAutomation {
 		prompt: a.prompt,
 		schedule: a.schedule,
 		target: serializeAutomationTarget(a.target),
-		modelId: a.modelId,
-		mode: a.mode,
-		permissionLevel: a.permissionLevel,
+		definitionId: a.definitionId,
+		configuration: a.configuration,
 		enabled: a.enabled,
 		createdAt: a.createdAt,
 		updatedAt: a.updatedAt,
@@ -503,7 +534,16 @@ function serializeAutomation(a: IAutomation): ISerializedAutomation {
 
 function deserializeAutomation(s: ISerializedAutomation): IAutomation | undefined {
 	const target = deserializeAutomationTarget(s.target);
-	return target ? createAutomationFromSerialized(s, target) : undefined;
+	return target && isAutomationConfiguration(s.configuration)
+		? createAutomationFromSerialized(s, target, s.definitionId, s.configuration)
+		: undefined;
+}
+
+function deserializeSchema3Automation(s: ISchema3SerializedAutomation): IAutomation | undefined {
+	const target = deserializeAutomationTarget(s.target);
+	return target
+		? createAutomationFromSerialized(s, target, ScheduledPromptAutomationDefinitionId, createLegacyAutomationConfiguration(s))
+		: undefined;
 }
 
 function deserializeLegacyAutomation(s: ILegacySerializedAutomation): IAutomation | undefined {
@@ -524,24 +564,18 @@ function deserializeLegacyAutomation(s: ILegacySerializedAutomation): IAutomatio
 			deserializeLegacyIsolation(s.isolationMode, s.branch),
 		);
 	}
-	return createAutomationFromSerialized(s, target);
+	return createAutomationFromSerialized(s, target, ScheduledPromptAutomationDefinitionId, createLegacyAutomationConfiguration(s));
 }
 
-function createAutomationFromSerialized(s: ISerializedAutomationBase, target: AutomationTarget): IAutomation {
-	// Default to most restrictive if the persisted value is invalid.
-	const permissionLevel = isChatPermissionLevel(s.permissionLevel)
-		? s.permissionLevel
-		: ChatPermissionLevel.Default;
-
+function createAutomationFromSerialized(s: ISerializedAutomationBase, target: AutomationTarget, definitionId: string, configuration: IAutomationConfiguration): IAutomation {
 	return Object.freeze({
 		id: s.id,
 		name: s.name,
 		prompt: s.prompt,
 		schedule: s.schedule,
 		target,
-		modelId: s.modelId,
-		mode: s.mode,
-		permissionLevel,
+		definitionId,
+		configuration,
 		enabled: s.enabled,
 		createdAt: s.createdAt,
 		updatedAt: s.updatedAt,
@@ -570,11 +604,73 @@ function mergeAutomation(current: IAutomation, patch: IUpdateAutomationOptions):
 		prompt: patch.prompt ?? current.prompt,
 		schedule: patch.schedule ?? current.schedule,
 		target: patch.target ? normalizeAutomationTarget(patch.target) : current.target,
-		modelId: patch.modelId === null ? undefined : (patch.modelId ?? current.modelId),
-		mode: patch.mode === null ? undefined : (patch.mode ?? current.mode),
-		permissionLevel: patch.permissionLevel === null ? undefined : (patch.permissionLevel && isChatPermissionLevel(patch.permissionLevel) ? patch.permissionLevel : current.permissionLevel),
+		definitionId: patch.definitionId ?? current.definitionId,
+		configuration: patch.configuration ?? (patch.modelId !== undefined || patch.mode !== undefined || patch.permissionLevel !== undefined
+			? mergeLegacyAutomationConfiguration(current.configuration, patch)
+			: current.configuration),
 		enabled: patch.enabled ?? current.enabled,
 	};
+}
+
+function createLegacyAutomationConfiguration(options: { readonly modelId?: string; readonly mode?: string; readonly permissionLevel?: string }): IAutomationConfiguration {
+	const value: { [key: string]: AutomationConfigurationValue } = {};
+	if (options.modelId) {
+		value.modelId = options.modelId;
+	}
+	if (options.mode) {
+		value.modeId = options.mode;
+	}
+	value.permissionLevel = isChatPermissionLevel(options.permissionLevel) ? options.permissionLevel : ChatPermissionLevel.Default;
+	return { version: 1, value };
+}
+
+function mergeLegacyAutomationConfiguration(configuration: IAutomationConfiguration, patch: IUpdateAutomationOptions): IAutomationConfiguration {
+	const value: { [key: string]: AutomationConfigurationValue } = isAutomationConfigurationObject(configuration.value)
+		? { ...configuration.value }
+		: {};
+	updateOptionalLegacyConfigurationValue(value, 'modelId', patch.modelId);
+	updateOptionalLegacyConfigurationValue(value, 'modeId', patch.mode);
+	updateOptionalLegacyConfigurationValue(value, 'permissionLevel', patch.permissionLevel);
+	return { version: configuration.version, value };
+}
+
+function updateOptionalLegacyConfigurationValue(value: { [key: string]: AutomationConfigurationValue }, key: string, update: string | null | undefined): void {
+	if (update === undefined) {
+		return;
+	}
+	if (update === null) {
+		delete value[key];
+		return;
+	}
+	value[key] = update;
+}
+
+function isAutomationConfiguration(value: unknown): value is IAutomationConfiguration {
+	if (!value || typeof value !== 'object') {
+		return false;
+	}
+	const candidate = value as { readonly version?: unknown; readonly value?: unknown };
+	return typeof candidate.version === 'number'
+		&& Number.isInteger(candidate.version)
+		&& candidate.version > 0
+		&& isAutomationConfigurationValue(candidate.value);
+}
+
+function isAutomationConfigurationValue(value: unknown): value is AutomationConfigurationValue {
+	if (value === null || typeof value === 'boolean' || typeof value === 'number' || typeof value === 'string') {
+		return true;
+	}
+	if (Array.isArray(value)) {
+		return value.every(isAutomationConfigurationValue);
+	}
+	if (!value || typeof value !== 'object') {
+		return false;
+	}
+	return Object.values(value).every(child => child !== undefined && isAutomationConfigurationValue(child));
+}
+
+function isAutomationConfigurationObject(value: AutomationConfigurationValue): value is { readonly [key: string]: AutomationConfigurationValue } {
+	return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function normalizeAutomationTarget(target: AutomationTarget): AutomationTarget {

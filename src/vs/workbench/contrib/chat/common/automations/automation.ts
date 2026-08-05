@@ -5,6 +5,21 @@
 
 import { URI } from '../../../../../base/common/uri.js';
 
+export const ScheduledPromptAutomationDefinitionId = 'scheduledPrompt';
+
+export type AutomationConfigurationValue =
+	| null
+	| boolean
+	| number
+	| string
+	| readonly AutomationConfigurationValue[]
+	| { readonly [key: string]: AutomationConfigurationValue };
+
+export interface IAutomationConfiguration {
+	readonly version: number;
+	readonly value: AutomationConfigurationValue;
+}
+
 /**
  * How often an automation runs. `hourly` fires every hour from creation/update;
  * `daily`/`weekly` fire at the configured local-time hour/minute (and day-of-week).
@@ -65,14 +80,8 @@ export interface IAutomation {
 	/** Explicit workspace-backed or workspace-less execution target. */
 	readonly target: AutomationTarget;
 
-	/** Optional language model identifier to seed the new session with. */
-	readonly modelId?: string;
-
-	/** Optional chat mode (`agent`/`ask`/`edit`). Defaults to provider's default; custom modes unsupported. */
-	readonly mode?: string;
-
-	/** Optional permission level (`default`/`autoApprove`/`autopilot`). Overrides only for scheduled runs; defaults to provider's default. */
-	readonly permissionLevel?: string;
+	readonly definitionId: string;
+	readonly configuration: IAutomationConfiguration;
 
 	readonly enabled: boolean;
 

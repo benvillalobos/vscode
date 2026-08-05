@@ -16,7 +16,7 @@ import { NullLogService } from '../../../../../platform/log/common/log.js';
 import { InMemoryStorageService, StorageScope, StorageTarget } from '../../../../../platform/storage/common/storage.js';
 import { NullTelemetryService } from '../../../../../platform/telemetry/common/telemetryUtils.js';
 import { ChatContextKeys } from '../../../../../workbench/contrib/chat/common/actions/chatContextKeys.js';
-import { AutomationRunTrigger, AutomationTarget, IAutomation, IAutomationRun, IAutomationSchedule } from '../../../../../workbench/contrib/chat/common/automations/automation.js';
+import { AutomationRunTrigger, AutomationTarget, IAutomation, IAutomationRun, IAutomationSchedule, ScheduledPromptAutomationDefinitionId } from '../../../../../workbench/contrib/chat/common/automations/automation.js';
 import { IAutomationRunDispatch, IAutomationRunner, IAutomationRunOperation } from '../../../../../workbench/contrib/chat/common/automations/automationRunner.js';
 import { IAutomationService, ICreateAutomationOptions, IGuardedAutomationUpdateResult, IUpdateAutomationOptions } from '../../../../../workbench/contrib/chat/common/automations/automationService.js';
 import { ChatAutomationsEnabledContext, CHAT_AUTOMATIONS_ENABLED_SETTING } from '../../../../../workbench/contrib/chat/common/automations/automationsEnabled.js';
@@ -46,9 +46,11 @@ function createAutomation(overrides?: Partial<IAutomation>): IAutomation {
 			sessionTypeId: 'copilot',
 			isolation: { kind: 'default' },
 		},
-		modelId: 'gpt-test',
-		mode: 'agent',
-		permissionLevel: 'default',
+		definitionId: ScheduledPromptAutomationDefinitionId,
+		configuration: {
+			version: 1,
+			value: { modelId: 'gpt-test', modeId: 'agent', permissionLevel: 'default' },
+		},
 		enabled: true,
 		createdAt: NOW,
 		updatedAt: NOW,
@@ -90,6 +92,8 @@ class FakeAutomationService extends mock<IAutomationService>() {
 		return {
 			...options,
 			id: 'created-automation',
+			definitionId: options.definitionId ?? ScheduledPromptAutomationDefinitionId,
+			configuration: options.configuration ?? { version: 1, value: {} },
 			enabled: options.enabled ?? true,
 			createdAt: NOW,
 			updatedAt: NOW,
@@ -106,9 +110,8 @@ class FakeAutomationService extends mock<IAutomationService>() {
 			prompt: patch.prompt ?? existing.prompt,
 			schedule: patch.schedule ?? existing.schedule,
 			target: patch.target ?? existing.target,
-			modelId: patch.modelId === null ? undefined : patch.modelId ?? existing.modelId,
-			mode: patch.mode === null ? undefined : patch.mode ?? existing.mode,
-			permissionLevel: patch.permissionLevel === null ? undefined : patch.permissionLevel ?? existing.permissionLevel,
+			definitionId: patch.definitionId ?? existing.definitionId,
+			configuration: patch.configuration ?? existing.configuration,
 			enabled: patch.enabled ?? existing.enabled,
 			updatedAt: NOW,
 		};
@@ -230,16 +233,15 @@ function editableAutomationKey(automation: IAutomation): string {
 		target: automation.target.kind === 'workspace'
 			? { ...automation.target, folderUri: automation.target.folderUri.toString() }
 			: automation.target,
-		modelId: automation.modelId,
-		mode: automation.mode,
-		permissionLevel: automation.permissionLevel,
+		definitionId: automation.definitionId,
+		configuration: automation.configuration,
 		enabled: automation.enabled,
 	});
 }
 
 function serializeAutomationLedger(automations: readonly IAutomation[], revision = 1): string {
 	return JSON.stringify({
-		schemaVersion: 3,
+		schemaVersion: 4,
 		revision,
 		automations: automations.map(automation => ({
 			...automation,
@@ -413,9 +415,15 @@ suite('AutomationTools', () => {
 					sessionTypeId: 'copilot',
 					isolation: { kind: 'default' },
 				},
-				modelId: 'gpt-test',
-				mode: 'agent',
-				permissionLevel: 'default',
+				definitionId: ScheduledPromptAutomationDefinitionId,
+				configuration: {
+					version: 1,
+					value: {
+						modelId: 'gpt-test',
+						modeId: 'agent',
+						permissionLevel: 'default',
+					},
+				},
 				enabled: true,
 				createdAt: NOW,
 				updatedAt: NOW,

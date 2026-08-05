@@ -29,7 +29,7 @@ import { PreferredGroup } from '../../../../../workbench/services/editor/common/
 import { nullExtensionDescription } from '../../../../../workbench/services/extensions/common/extensions.js';
 import { SessionTypeAuthRequirement, ChatInteractivity, ChatOriginKind, IChat, ISession, ISessionType, ISessionWorkspace, ISideChatSelection, SessionStatus } from '../../common/session.js';
 import { ILanguageModelChatMetadataAndIdentifier } from '../../../../../workbench/contrib/chat/common/languageModels.js';
-import { ISessionChangeEvent, ISendRequestOptions, ISessionModelsSnapshot, ISessionModelPickerOptions, ISessionsProvider } from '../../common/sessionsProvider.js';
+import { ISessionAutomationConfiguration, ISessionChangeEvent, ISendRequestOptions, ISessionModelsSnapshot, ISessionModelPickerOptions, ISessionsProvider, ISessionsProviderAutomationCapability } from '../../common/sessionsProvider.js';
 import { SessionsManagementService } from '../../browser/sessionsManagementService.js';
 import { ISessionsManagementService, ICreateNewSessionOptions, inheritableSessionTarget, WorkspaceNotTrustedError } from '../../common/sessionsManagement.js';
 import { SessionsService } from '../../browser/sessionsService.js';
@@ -296,6 +296,68 @@ suite('SessionsManagementService', () => {
 			{ activeId: view.activeSession.get()?.sessionId, otherRead: other.isRead.get() },
 			{ activeId: undefined, otherRead: false },
 		);
+	});
+
+	test('preserves provider and session type identity when routing automation definitions and configuration', async () => {
+		const session = stubSession({ sessionId: 'automation-definitions', providerId: 'test', sessionType: 'second' });
+		const calls: string[] = [];
+		const automation: ISessionsProviderAutomationCapability = {
+			definitions: [
+				{ id: 'scheduledPrompt', label: 'First', sessionTypeId: 'first', configurationVersion: 1 },
+				{ id: 'scheduledPrompt', label: 'Second', sessionTypeId: 'second', configurationVersion: 2 },
+			],
+			onDidChangeDefinitions: Event.None,
+			captureConfiguration: (sessionId, definitionId) => {
+				calls.push(`capture:${sessionId}:${definitionId}`);
+				return { version: 1, value: { captured: true } };
+			},
+			resolveConfiguration: (definitionId: string, configuration: ISessionAutomationConfiguration) => {
+				calls.push(`resolve:${definitionId}`);
+				return { ...configuration, value: { resolved: true } };
+			},
+			applyConfiguration: async (sessionId, definitionId, _configuration, token) => {
+				calls.push(`apply:${sessionId}:${definitionId}:${token.isCancellationRequested}`);
+			},
+		};
+		const provider = new class extends TestSessionsProvider {
+			override readonly automation = automation;
+		}(session);
+		const { service } = createSessionsManagementService(session, disposables, provider);
+		const configuration = { version: 1, value: { original: true } };
+		const captured = service.captureAutomationConfiguration(session, 'scheduledPrompt');
+		const resolved = service.resolveAutomationConfiguration('test', 'second', 'scheduledPrompt', configuration);
+		await service.applyAutomationConfiguration(session, 'scheduledPrompt', configuration);
+
+		assert.deepStrictEqual({
+			definitions: service.getAutomationDefinitions().map(candidate => ({
+				providerId: candidate.providerId,
+				sessionTypeId: candidate.definition.sessionTypeId,
+				definitionId: candidate.definition.id,
+				version: candidate.definition.configurationVersion,
+			})),
+			resolved: service.getAutomationDefinition('test', 'second', 'scheduledPrompt'),
+			missing: service.getAutomationDefinition('test', 'missing', 'scheduledPrompt'),
+			captured,
+			resolvedConfiguration: resolved,
+			calls,
+		}, {
+			definitions: [
+				{ providerId: 'test', sessionTypeId: 'first', definitionId: 'scheduledPrompt', version: 1 },
+				{ providerId: 'test', sessionTypeId: 'second', definitionId: 'scheduledPrompt', version: 2 },
+			],
+			resolved: {
+				providerId: 'test',
+				definition: { id: 'scheduledPrompt', label: 'Second', sessionTypeId: 'second', configurationVersion: 2 },
+			},
+			missing: undefined,
+			captured: { version: 1, value: { captured: true } },
+			resolvedConfiguration: { version: 1, value: { resolved: true } },
+			calls: [
+				'capture:automation-definitions:scheduledPrompt',
+				'resolve:scheduledPrompt',
+				'apply:automation-definitions:scheduledPrompt:false',
+			],
+		});
 	});
 
 	test('does not change active session when added session is not displayed in any widget', async () => {

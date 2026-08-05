@@ -31,6 +31,9 @@ function serializeLedgerAutomation(id: string, name: string) {
 		prompt: 'p',
 		schedule: dailySchedule(),
 		target: { kind: 'workspace', folderUri: FOLDER.toJSON(), isolation: { kind: 'default' } },
+		modelId: 'legacy-model',
+		mode: 'agent',
+		permissionLevel: 'autopilot',
 		enabled: true,
 		createdAt: '2026-01-01T00:00:00.000Z',
 		updatedAt: '2026-01-01T00:00:00.000Z',
@@ -170,7 +173,7 @@ suite('AutomationService', () => {
 		assert.strictEqual(b.name, 'B');
 	});
 
-	test('updateAutomation can clear modelId/mode/permissionLevel by passing null but keeps folderUri', async () => {
+	test('updateAutomation can clear legacy provider configuration by passing null but keeps folderUri', async () => {
 		const { service } = createService();
 		const a = await service.createAutomation({
 			name: 'A', prompt: 'p', schedule: dailySchedule(),
@@ -180,10 +183,13 @@ suite('AutomationService', () => {
 			permissionLevel: 'autopilot',
 		});
 		const b = await service.updateAutomation(a.id, { modelId: null, mode: null, permissionLevel: null });
-		assert.strictEqual(b.modelId, undefined);
-		assert.strictEqual(b.mode, undefined);
-		assert.strictEqual(b.permissionLevel, undefined);
-		assert.strictEqual(b.target.kind === 'workspace' ? b.target.folderUri.toString() : undefined, FOLDER.toString());
+		assert.deepStrictEqual({
+			configuration: b.configuration,
+			folderUri: b.target.kind === 'workspace' ? b.target.folderUri.toString() : undefined,
+		}, {
+			configuration: { version: 1, value: {} },
+			folderUri: FOLDER.toString(),
+		});
 	});
 
 	test('updateAutomation switches folder when a new folderUri is provided', async () => {
@@ -389,6 +395,44 @@ suite('AutomationService', () => {
 		assert.strictEqual(secondService.automations.get().length, 1);
 		assert.strictEqual(secondService.automations.get()[0].id, a.id);
 		assert.strictEqual(secondService.runs.get().length, 1);
+	});
+
+	test('round-trips provider configuration and preserves unrelated values during legacy updates', async () => {
+		const sharedStorage = teardown.add(new InMemoryStorageService());
+		const firstService = teardown.add(createAutomationService(sharedStorage, new NullLogService(), NullTelemetryService));
+		const created = await firstService.createAutomation({
+			name: 'A',
+			prompt: 'p',
+			schedule: dailySchedule(),
+			target: workspaceTarget(),
+			definitionId: 'scheduledPrompt',
+			configuration: {
+				version: 1,
+				value: {
+					modelId: 'old-model',
+					providerSetting: { enabled: true, choices: ['one', 'two'] },
+				},
+			},
+		});
+		await firstService.updateAutomation(created.id, { modelId: 'new-model', permissionLevel: 'autopilot' });
+		firstService.dispose();
+
+		const secondService = teardown.add(createAutomationService(sharedStorage, new NullLogService(), NullTelemetryService));
+		const restored = secondService.getAutomation(created.id);
+		assert.deepStrictEqual({
+			definitionId: restored?.definitionId,
+			configuration: restored?.configuration,
+		}, {
+			definitionId: 'scheduledPrompt',
+			configuration: {
+				version: 1,
+				value: {
+					modelId: 'new-model',
+					permissionLevel: 'autopilot',
+					providerSetting: { enabled: true, choices: ['one', 'two'] },
+				},
+			},
+		});
 	});
 
 	test('round-trips and clears Worktree branch configuration', async () => {
@@ -668,6 +712,9 @@ suite('AutomationService', () => {
 					prompt: 'p',
 					schedule: dailySchedule(),
 					target: { kind: 'workspace', folderUri: FOLDER.toJSON(), isolation: { kind: 'default' } },
+					modelId: 'legacy-model',
+					mode: 'agent',
+					permissionLevel: 'autopilot',
 					enabled: true,
 					createdAt: '2024-01-01T00:00:00Z',
 					updatedAt: '2024-01-01T00:00:00Z',
@@ -681,15 +728,30 @@ suite('AutomationService', () => {
 
 		const service = teardown.add(createAutomationService(storage, new NullLogService(), NullTelemetryService));
 		assert.deepStrictEqual({
-			automationIds: service.automations.get().map(automation => automation.id),
+			automations: service.automations.get().map(automation => ({
+				id: automation.id,
+				definitionId: automation.definitionId,
+				configuration: automation.configuration,
+			})),
 			runIds: service.runs.get().map(run => run.id),
 		}, {
-			automationIds: ['keep'],
+			automations: [{
+				id: 'keep',
+				definitionId: 'scheduledPrompt',
+				configuration: {
+					version: 1,
+					value: {
+						modelId: 'legacy-model',
+						modeId: 'agent',
+						permissionLevel: 'autopilot',
+					},
+				},
+			}],
 			runIds: ['r-keep'],
 		});
 	});
 
-	test('migrates valid schema v1 records to v3 while dropping malformed targets', async () => {
+	test('migrates valid schema v1 records to v4 while dropping malformed targets', async () => {
 		const storage = teardown.add(new InMemoryStorageService());
 		const ledger = {
 			schemaVersion: 1,
@@ -726,13 +788,13 @@ suite('AutomationService', () => {
 			automationIds: migrated.automations.map((automation: { id: string }) => automation.id),
 			runIds: migrated.runs.map((run: { id: string }) => run.id),
 		}, {
-			schemaVersion: 3,
+			schemaVersion: 4,
 			automationIds: ['keep', 'quick'],
 			runIds: ['r-keep', 'r-quick'],
 		});
 	});
 
-	test('migrates schema v2 flat targets to schema v3 target unions', async () => {
+	test('migrates schema v2 flat targets to schema v4 target unions', async () => {
 		const storage = teardown.add(new InMemoryStorageService());
 		const common = {
 			prompt: 'p',
@@ -760,7 +822,7 @@ suite('AutomationService', () => {
 
 		await service.updateAutomation('workspace', { name: 'Updated' });
 		const migrated = JSON.parse(storage.get('chat.automations.ledger', -1)!);
-		assert.strictEqual(migrated.schemaVersion, 3);
+		assert.strictEqual(migrated.schemaVersion, 4);
 	});
 
 	test('round-trips a folderUri through persistence', async () => {

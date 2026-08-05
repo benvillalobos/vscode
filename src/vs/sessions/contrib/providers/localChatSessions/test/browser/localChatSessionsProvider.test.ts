@@ -4,6 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import assert from 'assert';
+import { CancellationToken } from '../../../../../../base/common/cancellation.js';
 import { Emitter, Event } from '../../../../../../base/common/event.js';
 import { Disposable, DisposableStore } from '../../../../../../base/common/lifecycle.js';
 import { IObservable, observableValue } from '../../../../../../base/common/observable.js';
@@ -28,6 +29,7 @@ import { ILanguageModelToolsService } from '../../../../../../workbench/contrib/
 import { IGitService } from '../../../../../../workbench/contrib/git/common/gitService.js';
 import { IFileService } from '../../../../../../platform/files/common/files.js';
 import { ISession, SessionStatus } from '../../../../../services/sessions/common/session.js';
+import { ScheduledPromptAutomationDefinitionId } from '../../../../../services/sessions/common/sessionsProvider.js';
 import { LocalChatSessionsProvider, LocalSessionType, LOCAL_SESSION_ENABLED_SETTING } from '../../browser/localChatSessionsProvider.js';
 
 // ---- Mock chat service ----------------------------------------------------
@@ -191,6 +193,44 @@ suite('LocalChatSessionsProvider', () => {
 
 		const provider = store.add(instantiationService.createInstance(LocalChatSessionsProvider));
 		assert.deepStrictEqual(provider.sessionTypes.map(t => t.id), [LocalSessionType.id]);
+	});
+
+	test('round-trips provider-owned automation configuration', async () => {
+		const store = leaks.add(new DisposableStore());
+		const { instantiationService } = createFixture(store);
+		const provider = store.add(instantiationService.createInstance(LocalChatSessionsProvider));
+		const session = provider.createNewSession(TEST_FOLDER, LocalSessionType.id);
+		const configuration = {
+			version: 1,
+			value: {
+				modelId: 'test-model',
+				modeId: 'agent',
+				permissionLevel: 'autopilot',
+			},
+		};
+
+		await provider.applyConfiguration(session.sessionId, ScheduledPromptAutomationDefinitionId, configuration, CancellationToken.None);
+
+		assert.deepStrictEqual({
+			definitions: provider.definitions,
+			captured: provider.captureConfiguration(session.sessionId, ScheduledPromptAutomationDefinitionId),
+		}, {
+			definitions: [{
+				id: ScheduledPromptAutomationDefinitionId,
+				label: LocalSessionType.label,
+				sessionTypeId: LocalSessionType.id,
+				configurationVersion: 1,
+			}],
+			captured: configuration,
+		});
+		assert.throws(() => provider.resolveConfiguration(ScheduledPromptAutomationDefinitionId, {
+			version: 1,
+			value: { permissionLevel: 'invalid' },
+		}));
+		assert.throws(() => provider.resolveConfiguration(ScheduledPromptAutomationDefinitionId, {
+			version: 1,
+			value: { modeId: 'custom' },
+		}));
 	});
 
 	test('keeps empty Copilot resolution pending until live Copilot models arrive', () => {

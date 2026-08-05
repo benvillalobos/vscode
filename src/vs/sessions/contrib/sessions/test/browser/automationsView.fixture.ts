@@ -16,7 +16,7 @@ import { ContextKeyService } from '../../../../../platform/contextkey/browser/co
 import { IContextKeyService } from '../../../../../platform/contextkey/common/contextkey.js';
 import { TestConfigurationService } from '../../../../../platform/configuration/test/common/testConfigurationService.js';
 import { NullLogService } from '../../../../../platform/log/common/log.js';
-import { IAutomation, IAutomationRun } from '../../../../../workbench/contrib/chat/common/automations/automation.js';
+import { IAutomation, IAutomationRun, ScheduledPromptAutomationDefinitionId } from '../../../../../workbench/contrib/chat/common/automations/automation.js';
 import { IAutomationDialogService } from '../../../../../workbench/contrib/chat/common/automations/automationDialogService.js';
 import { ChatAutomationsEnabledContext } from '../../../../../workbench/contrib/chat/common/automations/automationsEnabled.js';
 import { IAutomationRunner } from '../../../../../workbench/contrib/chat/common/automations/automationRunner.js';
@@ -224,6 +224,8 @@ function createAutomation(overrides: Partial<IAutomation>): IAutomation {
 		prompt: 'Run the automation.',
 		schedule: { interval: 'manual', scheduleHour: 0, scheduleMinute: 0, scheduleDay: 0 },
 		target: { kind: 'workspace', folderUri: WORKSPACE, isolation: { kind: 'default' } },
+		definitionId: ScheduledPromptAutomationDefinitionId,
+		configuration: { version: 1, value: {} },
 		enabled: true,
 		createdAt: now,
 		updatedAt: now,

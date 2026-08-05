@@ -4,6 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import assert from 'assert';
+import { CancellationToken } from '../../../../../base/common/cancellation.js';
 import { DisposableStore } from '../../../../../base/common/lifecycle.js';
 import { constObservable, IObservable, observableValue } from '../../../../../base/common/observable.js';
 import { URI } from '../../../../../base/common/uri.js';
@@ -12,12 +13,12 @@ import { Codicon } from '../../../../../base/common/codicons.js';
 import { NullLogService } from '../../../../../platform/log/common/log.js';
 import { InMemoryStorageService } from '../../../../../platform/storage/common/storage.js';
 import { MockContextKeyService } from '../../../../../platform/keybinding/test/common/mockKeybindingService.js';
-import { IActiveSession, ICreateNewSessionOptions, IProviderSessionType, IRecentlyOpenedSessions, ISessionsManagementService } from '../../common/sessionsManagement.js';
+import { IActiveSession, ICreateNewSessionOptions, IProviderAutomationDefinition, IProviderSessionType, IRecentlyOpenedSessions, ISessionsManagementService } from '../../common/sessionsManagement.js';
 import { ChatInteractivity, IChat, ISession, ISessionType, ISessionWorkspace, ISideChatSelection, SessionStatus } from '../../common/session.js';
 import { SessionsNavigation } from '../../browser/sessionNavigation.js';
 import { SessionsRecencyHistory } from '../../browser/sessionsRecencyHistory.js';
 import { Event } from '../../../../../base/common/event.js';
-import { ISendRequestOptions } from '../../common/sessionsProvider.js';
+import { ISendRequestOptions, ISessionAutomationConfiguration } from '../../common/sessionsProvider.js';
 
 const stubChat = {
 	resource: URI.parse('test:///chat'),
@@ -104,6 +105,7 @@ class MockSessionStore implements ISessionsManagementService {
 	readonly onDidDiscardNewSession = Event.None;
 	readonly onDidReplaceNewDraftSession = Event.None;
 	readonly onDidToggleSessionStickiness = Event.None;
+	readonly onDidChangeAutomationDefinitions = Event.None;
 
 	readonly newSession: IObservable<ISession | undefined> = constObservable(undefined);
 	readonly automationSession: IObservable<ISession | undefined> = constObservable(undefined);
@@ -206,8 +208,14 @@ class MockSessionStore implements ISessionsManagementService {
 		}
 	}
 	restoreVisibleSessions(): Promise<void> { throw new Error('not implemented'); }
+	getAutomationDefinitions(): IProviderAutomationDefinition[] { return []; }
+	getAutomationDefinition(_providerId: string, _sessionTypeId: string, _definitionId: string): IProviderAutomationDefinition | undefined { return undefined; }
+	captureAutomationConfiguration(_session: ISession, _definitionId: string): ISessionAutomationConfiguration { throw new Error('not implemented'); }
+	resolveAutomationConfiguration(_providerId: string, _sessionTypeId: string, _definitionId: string, _configuration: ISessionAutomationConfiguration): ISessionAutomationConfiguration { throw new Error('not implemented'); }
+	applyAutomationConfiguration(_session: ISession, _definitionId: string, _configuration: ISessionAutomationConfiguration, _token?: CancellationToken): Promise<void> { throw new Error('not implemented'); }
 	createNewSession(_folderUri: URI, _options?: ICreateNewSessionOptions): ISession { throw new Error('not implemented'); }
 	createAutomationSession(_folderUri: URI, _options?: ICreateNewSessionOptions): ISession { throw new Error('not implemented'); }
+	createAutomationQuickChat(_options?: ICreateNewSessionOptions): ISession { throw new Error('not implemented'); }
 	createQuickChat(_options?: ICreateNewSessionOptions): ISession { throw new Error('not implemented'); }
 	createNewChatInSession(_session: ISession): Promise<IChat | undefined> { throw new Error('not implemented'); }
 	forkChatInSession(_session: ISession, _sourceChat: URI, _turnId: string): Promise<IChat> { throw new Error('not implemented'); }

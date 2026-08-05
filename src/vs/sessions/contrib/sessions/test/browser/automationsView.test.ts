@@ -21,7 +21,7 @@ import { NullHoverService } from '../../../../../platform/hover/test/browser/nul
 import { TestInstantiationService } from '../../../../../platform/instantiation/test/common/instantiationServiceMock.js';
 import { MockContextKeyService } from '../../../../../platform/keybinding/test/common/mockKeybindingService.js';
 import { ILogService, NullLogService } from '../../../../../platform/log/common/log.js';
-import { IAutomation, IAutomationRun, IAutomationSchedule, AutomationRunTrigger, AutomationTarget } from '../../../../../workbench/contrib/chat/common/automations/automation.js';
+import { IAutomation, IAutomationRun, IAutomationSchedule, AutomationRunTrigger, AutomationTarget, ScheduledPromptAutomationDefinitionId } from '../../../../../workbench/contrib/chat/common/automations/automation.js';
 import { IAutomationDialogResult, IAutomationDialogService, IShowAutomationDialogOptions } from '../../../../../workbench/contrib/chat/common/automations/automationDialogService.js';
 import { IAutomationRunDispatch, IAutomationRunner, IAutomationRunOperation } from '../../../../../workbench/contrib/chat/common/automations/automationRunner.js';
 import { AutomationMutationGuard, IAutomationRunClaim, IAutomationService, ICreateAutomationOptions, IGuardedAutomationUpdateResult, IUpdateAutomationOptions, IUpdateAutomationRunOptions } from '../../../../../workbench/contrib/chat/common/automations/automationService.js';
@@ -56,6 +56,8 @@ function automation(overrides: Partial<IAutomation> = {}): IAutomation {
 		prompt: 'Review the workspace',
 		schedule: hourly(),
 		target: workspaceTarget(),
+		definitionId: ScheduledPromptAutomationDefinitionId,
+		configuration: { version: 1, value: {} },
 		enabled: true,
 		createdAt: new Date().toISOString(),
 		updatedAt: new Date().toISOString(),
@@ -108,9 +110,8 @@ class FakeAutomationService extends mock<IAutomationService>() {
 			prompt: options.prompt,
 			schedule: options.schedule,
 			target: options.target,
-			modelId: options.modelId ?? undefined,
-			mode: options.mode ?? undefined,
-			permissionLevel: options.permissionLevel ?? undefined,
+			definitionId: options.definitionId ?? ScheduledPromptAutomationDefinitionId,
+			configuration: options.configuration ?? { version: 1, value: {} },
 			enabled: options.enabled ?? true,
 		});
 		this.setAutomations([created, ...this.automationValue.get()]);
@@ -128,9 +129,8 @@ class FakeAutomationService extends mock<IAutomationService>() {
 			prompt: patch.prompt ?? current.prompt,
 			schedule: patch.schedule ?? current.schedule,
 			target: patch.target ?? current.target,
-			modelId: patch.modelId === undefined ? current.modelId : patch.modelId ?? undefined,
-			mode: patch.mode === undefined ? current.mode : patch.mode ?? undefined,
-			permissionLevel: patch.permissionLevel === undefined ? current.permissionLevel : patch.permissionLevel ?? undefined,
+			definitionId: patch.definitionId ?? current.definitionId,
+			configuration: patch.configuration ?? current.configuration,
 			enabled: patch.enabled ?? current.enabled,
 			updatedAt: new Date().toISOString(),
 		};

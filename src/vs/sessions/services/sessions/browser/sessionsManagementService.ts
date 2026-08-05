@@ -21,9 +21,9 @@ import { IChatRequestVariableEntry } from '../../../../workbench/contrib/chat/co
 import { IPathService } from '../../../../workbench/services/path/common/pathService.js';
 import { IUriIdentityService } from '../../../../platform/uriIdentity/common/uriIdentity.js';
 import { getSessionReferenceResource } from './sessionReference.js';
-import { ICreateNewChatInSessionOptions, ICreateNewSessionOptions, IProviderSessionType, ISendRequestOptions, ISendRequestSentEvent, ISessionsChangeEvent, ISessionsManagementService, WorkspaceNotTrustedError } from '../common/sessionsManagement.js';
+import { ICreateNewChatInSessionOptions, ICreateNewSessionOptions, IProviderAutomationDefinition, IProviderSessionType, ISendRequestOptions, ISendRequestSentEvent, ISessionsChangeEvent, ISessionsManagementService, WorkspaceNotTrustedError } from '../common/sessionsManagement.js';
 import { ISessionsProvidersChangeEvent, ISessionsProvidersService } from './sessionsProvidersService.js';
-import { IDeleteChatOptions, ISessionChangeEvent, ISessionsProvider } from '../common/sessionsProvider.js';
+import { IDeleteChatOptions, ISessionAutomationConfiguration, ISessionChangeEvent, ISessionsProvider } from '../common/sessionsProvider.js';
 import { IChat, ISession, ISessionWorkspace, ISideChatSelection, SessionStatus, ISessionType } from '../common/session.js';
 import { InstantiationType, registerSingleton } from '../../../../platform/instantiation/common/extensions.js';
 import { IStorageService, StorageScope, StorageTarget } from '../../../../platform/storage/common/storage.js';
@@ -61,6 +61,8 @@ export class SessionsManagementService extends Disposable implements ISessionsMa
 
 	private readonly _onDidChangeSessionTypes = this._register(new Emitter<void>());
 	readonly onDidChangeSessionTypes: Event<void> = this._onDidChangeSessionTypes.event;
+	private readonly _onDidChangeAutomationDefinitions = this._register(new Emitter<void>());
+	readonly onDidChangeAutomationDefinitions: Event<void> = this._onDidChangeAutomationDefinitions.event;
 
 	private readonly _onDidReplaceSession = this._register(new Emitter<{ readonly from: ISession; readonly to: ISession }>());
 	readonly onDidReplaceSession: Event<{ readonly from: ISession; readonly to: ISession }> = this._onDidReplaceSession.event;
@@ -109,6 +111,7 @@ export class SessionsManagementService extends Disposable implements ISessionsMa
 		this._register(this.sessionsProvidersService.onDidChangeProviders(e => {
 			this._onProvidersChanged(e);
 			this._updateSessionTypes();
+			this._onDidChangeAutomationDefinitions.fire();
 		}));
 		this._subscribeToProviders(this.sessionsProvidersService.getProviders());
 		this._sessionTypes = this._collectSessionTypes();
@@ -155,6 +158,9 @@ export class SessionsManagementService extends Disposable implements ISessionsMa
 			}
 			if (provider.onDidChangeSessionTypes) {
 				disposables.add(provider.onDidChangeSessionTypes(() => this._updateSessionTypes()));
+			}
+			if (provider.automation) {
+				disposables.add(provider.automation.onDidChangeDefinitions(() => this._onDidChangeAutomationDefinitions.fire()));
 			}
 			this._providerListeners.set(provider.id, disposables);
 		}
@@ -260,6 +266,48 @@ export class SessionsManagementService extends Disposable implements ISessionsMa
 			}
 		}
 		return result;
+	}
+
+	getAutomationDefinitions(): IProviderAutomationDefinition[] {
+		const result: IProviderAutomationDefinition[] = [];
+		for (const provider of this.sessionsProvidersService.getProviders()) {
+			for (const definition of provider.automation?.definitions ?? []) {
+				result.push({ providerId: provider.id, definition });
+			}
+		}
+		return result;
+	}
+
+	getAutomationDefinition(providerId: string, sessionTypeId: string, definitionId: string): IProviderAutomationDefinition | undefined {
+		const provider = this.sessionsProvidersService.getProvider(providerId);
+		const definition = provider?.automation?.definitions.find(candidate =>
+			candidate.sessionTypeId === sessionTypeId && candidate.id === definitionId
+		);
+		return definition ? { providerId, definition } : undefined;
+	}
+
+	captureAutomationConfiguration(session: ISession, definitionId: string): ISessionAutomationConfiguration {
+		const automation = this._getAutomationCapability(session.providerId, session.sessionType, definitionId);
+		return automation.captureConfiguration(session.sessionId, definitionId);
+	}
+
+	resolveAutomationConfiguration(providerId: string, sessionTypeId: string, definitionId: string, configuration: ISessionAutomationConfiguration): ISessionAutomationConfiguration {
+		const automation = this._getAutomationCapability(providerId, sessionTypeId, definitionId);
+		return automation.resolveConfiguration(definitionId, configuration);
+	}
+
+	applyAutomationConfiguration(session: ISession, definitionId: string, configuration: ISessionAutomationConfiguration, token: CancellationToken = CancellationToken.None): Promise<void> {
+		const automation = this._getAutomationCapability(session.providerId, session.sessionType, definitionId);
+		return automation.applyConfiguration(session.sessionId, definitionId, configuration, token);
+	}
+
+	private _getAutomationCapability(providerId: string, sessionTypeId: string, definitionId: string) {
+		const provider = this.sessionsProvidersService.getProvider(providerId);
+		const automation = provider?.automation;
+		if (!automation?.definitions.some(definition => definition.sessionTypeId === sessionTypeId && definition.id === definitionId)) {
+			throw new Error(`Automation definition '${definitionId}' is unavailable for provider '${providerId}' and session type '${sessionTypeId}'.`);
+		}
+		return automation;
 	}
 
 	isNewSessionTargetAvailable(folderUri: URI, options?: ICreateNewSessionOptions): boolean {
@@ -419,6 +467,17 @@ export class SessionsManagementService extends Disposable implements ISessionsMa
 		const { provider, sessionTypeId } = this._resolveProviderForNewSession(folderUri, options);
 		const previousAutomationSession = this._automationSession.get();
 		const session = provider.createNewSession(folderUri, sessionTypeId);
+		if (previousAutomationSession && previousAutomationSession.sessionId !== session.sessionId) {
+			this._getProvider(previousAutomationSession)?.deleteNewSession(previousAutomationSession.sessionId);
+		}
+		this._automationSession.set(session, undefined);
+		return session;
+	}
+
+	createAutomationQuickChat(options?: ICreateNewSessionOptions): ISession {
+		const { provider, sessionTypeId } = this._resolveProviderForQuickChat(options);
+		const previousAutomationSession = this._automationSession.get();
+		const session = provider.createQuickChat(sessionTypeId);
 		if (previousAutomationSession && previousAutomationSession.sessionId !== session.sessionId) {
 			this._getProvider(previousAutomationSession)?.deleteNewSession(previousAutomationSession.sessionId);
 		}
@@ -693,6 +752,12 @@ export class SessionsManagementService extends Disposable implements ISessionsMa
 		try {
 			if (token.isCancellationRequested) {
 				throw new CancellationError();
+			}
+			if (createOptions?.automationDefinitionId && createOptions.automationConfiguration) {
+				await raceCancellationError(
+					this.applyAutomationConfiguration(session, createOptions.automationDefinitionId, createOptions.automationConfiguration, token),
+					token,
+				);
 			}
 			if (createOptions?.modelId) {
 				const resolvedModelId = await this._waitForRequestedModel(provider, session, createOptions.modelId, token, folderUri);

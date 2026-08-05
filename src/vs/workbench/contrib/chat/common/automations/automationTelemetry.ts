@@ -10,21 +10,19 @@ import { AutomationInterval, AutomationRunTrigger, IAutomation } from './automat
  * GDPR-classified telemetry events for the Automations feature.
  *
  * Events capture cadence (`intervalKind`, `trigger`) and low-cardinality
- * enum values (`permissionLevel`, `isolationMode`) only.
+ * enum values (`isolationMode`) only.
  * Prompt text, automation names, folder URIs, and model identifiers are
  * never sent. They are user content / workspace-specific information.
  */
 
 type AutomationCreateEvent = {
 	intervalKind: AutomationInterval;
-	permissionLevel: string;
 	isolationMode: string;
 	enabled: boolean;
 };
 
 type AutomationCreateClassification = {
 	intervalKind: { classification: 'SystemMetaData'; purpose: 'FeatureInsight'; comment: 'Cadence the user picked (manual/hourly/daily/weekly).' };
-	permissionLevel: { classification: 'SystemMetaData'; purpose: 'FeatureInsight'; comment: 'Permission level chosen (default/autoApprove/autopilot).' };
 	isolationMode: { classification: 'SystemMetaData'; purpose: 'FeatureInsight'; comment: 'Isolation mode chosen (workspace/worktree).' };
 	enabled: { classification: 'SystemMetaData'; purpose: 'FeatureInsight'; isMeasurement: true; comment: 'Whether the automation was created in the enabled state.' };
 	owner: 'benvillalobos';
@@ -34,7 +32,6 @@ type AutomationCreateClassification = {
 export function publishAutomationCreated(telemetryService: ITelemetryService, automation: IAutomation): void {
 	telemetryService.publicLog2<AutomationCreateEvent, AutomationCreateClassification>('automation.create', {
 		intervalKind: automation.schedule.interval,
-		permissionLevel: automation.permissionLevel ?? '',
 		isolationMode: getAutomationIsolationMode(automation),
 		enabled: automation.enabled,
 	});
@@ -89,7 +86,6 @@ type AutomationRunEvent = {
 	intervalKind: AutomationInterval;
 	success: boolean;
 	durationMs: number;
-	permissionLevel: string;
 	isolationMode: string;
 };
 
@@ -98,7 +94,6 @@ type AutomationRunClassification = {
 	intervalKind: { classification: 'SystemMetaData'; purpose: 'FeatureInsight'; comment: 'Cadence of the automation that ran.' };
 	success: { classification: 'SystemMetaData'; purpose: 'FeatureInsight'; isMeasurement: true; comment: 'Whether the run completed without error.' };
 	durationMs: { classification: 'SystemMetaData'; purpose: 'PerformanceAndHealth'; isMeasurement: true; comment: 'Wall-clock duration of the run kickoff (recordRunStart through completed/failed).' };
-	permissionLevel: { classification: 'SystemMetaData'; purpose: 'FeatureInsight'; comment: 'Permission level applied to the run (default/autoApprove/autopilot).' };
 	isolationMode: { classification: 'SystemMetaData'; purpose: 'FeatureInsight'; comment: 'Isolation mode applied to the run (workspace/worktree).' };
 	owner: 'benvillalobos';
 	comment: 'Tracks Automations run outcomes and timing.';
@@ -115,7 +110,6 @@ export function publishAutomationRun(telemetryService: ITelemetryService, args: 
 		intervalKind: args.automation.schedule.interval,
 		success: args.success,
 		durationMs: Math.max(0, Math.round(args.durationMs)),
-		permissionLevel: args.automation.permissionLevel ?? '',
 		isolationMode: getAutomationIsolationMode(args.automation),
 	});
 }

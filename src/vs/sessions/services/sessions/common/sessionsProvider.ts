@@ -3,12 +3,14 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import { CancellationToken } from '../../../../base/common/cancellation.js';
 import { Event } from '../../../../base/common/event.js';
 import { ThemeIcon } from '../../../../base/common/themables.js';
 import { URI } from '../../../../base/common/uri.js';
 import { IChatRequestVariableEntry } from '../../../../workbench/contrib/chat/common/attachments/chatVariableEntries.js';
 import { ILanguageModelChatMetadataAndIdentifier } from '../../../../workbench/contrib/chat/common/languageModels.js';
 import { ModelIdentifierResolution } from '../../../../workbench/contrib/chat/common/modelSelection.js';
+import { AutomationConfigurationValue, IAutomationConfiguration, ScheduledPromptAutomationDefinitionId } from '../../../../workbench/contrib/chat/common/automations/automation.js';
 import { IChat, ISession, ISessionType, ISessionWorkspace, ISessionWorkspaceBrowseAction, ISideChatSelection } from './session.js';
 
 /**
@@ -63,6 +65,25 @@ export interface ISessionModelsSnapshot {
 	readonly desiredModelResolution: ModelIdentifierResolution;
 	/** Concrete chat session type targeted by this model pool, or undefined for the shared pool. */
 	readonly modelTarget: string | undefined;
+}
+
+export type ISessionAutomationConfigurationValue = AutomationConfigurationValue;
+export type ISessionAutomationConfiguration = IAutomationConfiguration;
+export { ScheduledPromptAutomationDefinitionId };
+
+export interface ISessionAutomationDefinition {
+	readonly id: string;
+	readonly label: string;
+	readonly sessionTypeId: string;
+	readonly configurationVersion: number;
+}
+
+export interface ISessionsProviderAutomationCapability {
+	readonly definitions: readonly ISessionAutomationDefinition[];
+	readonly onDidChangeDefinitions: Event<void>;
+	captureConfiguration(sessionId: string, definitionId: string): ISessionAutomationConfiguration;
+	resolveConfiguration(definitionId: string, configuration: ISessionAutomationConfiguration): ISessionAutomationConfiguration;
+	applyConfiguration(sessionId: string, definitionId: string, configuration: ISessionAutomationConfiguration, token: CancellationToken): Promise<void>;
 }
 
 /**
@@ -161,6 +182,9 @@ export interface ISessionsProvider {
 	 * {@link supportsQuickChats}) changes at runtime, so they can re-evaluate.
 	 */
 	readonly onDidChangeCapabilities?: Event<void>;
+
+	/** Provider-owned automation definitions and configuration lifecycle. */
+	readonly automation?: ISessionsProviderAutomationCapability;
 
 	/**
 	 * Resolve a workspace for the given repository URI.

@@ -15,7 +15,7 @@ import { ContextKeyExpr } from '../../../../platform/contextkey/common/contextke
 import { IInstantiationService } from '../../../../platform/instantiation/common/instantiation.js';
 import { IWorkbenchContribution } from '../../../../workbench/common/contributions.js';
 import { ChatContextKeys } from '../../../../workbench/contrib/chat/common/actions/chatContextKeys.js';
-import { AutomationInterval, AutomationTarget, AutomationWorkspaceIsolation, IAutomation, IAutomationRun, IAutomationSchedule } from '../../../../workbench/contrib/chat/common/automations/automation.js';
+import { AutomationInterval, AutomationTarget, AutomationWorkspaceIsolation, IAutomation, IAutomationConfiguration, IAutomationRun, IAutomationSchedule } from '../../../../workbench/contrib/chat/common/automations/automation.js';
 import { IAutomationRunDispatch, IAutomationRunner } from '../../../../workbench/contrib/chat/common/automations/automationRunner.js';
 import { type AutomationMutationGuard, ConfigureAutomationToolReferenceName, IAutomationService, ICreateAutomationOptions, IUpdateAutomationOptions, serializeAutomationEditableState } from '../../../../workbench/contrib/chat/common/automations/automationService.js';
 import { ChatAutomationsEnabledContext, CHAT_AUTOMATIONS_ENABLED_SETTING } from '../../../../workbench/contrib/chat/common/automations/automationsEnabled.js';
@@ -56,9 +56,8 @@ interface IAutomationToolOutput {
 		readonly providerId: string;
 		readonly sessionTypeId: string;
 	};
-	readonly modelId: string | null;
-	readonly mode: string | null;
-	readonly permissionLevel: string | null;
+	readonly definitionId: string;
+	readonly configuration: IAutomationConfiguration;
 	readonly enabled: boolean;
 	readonly createdAt: string;
 	readonly updatedAt: string;
@@ -876,9 +875,8 @@ function toAutomationToolOutput(automation: IAutomation): IAutomationToolOutput 
 		prompt: automation.prompt,
 		schedule: automation.schedule,
 		target,
-		modelId: automation.modelId ?? null,
-		mode: automation.mode ?? null,
-		permissionLevel: automation.permissionLevel ?? null,
+		definitionId: automation.definitionId,
+		configuration: automation.configuration,
 		enabled: automation.enabled,
 		createdAt: automation.createdAt,
 		updatedAt: automation.updatedAt,
