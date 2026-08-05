@@ -17,6 +17,7 @@ import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/tes
 import { IActionWidgetService } from '../../../../../platform/actionWidget/browser/actionWidget.js';
 import { IActionListDelegate, IActionListItem, IActionListOptions } from '../../../../../platform/actionWidget/browser/actionList.js';
 import { IAnchor } from '../../../../../base/browser/ui/contextview/contextview.js';
+import { IButton } from '../../../../../base/browser/ui/button/button.js';
 import { IListAccessibilityProvider } from '../../../../../base/browser/ui/list/listWidget.js';
 import { TestInstantiationService } from '../../../../../platform/instantiation/test/common/instantiationServiceMock.js';
 import { ILogService, NullLogService } from '../../../../../platform/log/common/log.js';
@@ -751,6 +752,33 @@ suite('Automation branch picker', () => {
 
 		updateSaveButtonState(undefined, state, validation, form, () => 'prompt', () => 'main');
 		assert.strictEqual(validation.branchError, undefined);
+	});
+
+	test('disables save while the automation session is loading', () => {
+		const state = createFormState({ branch: 'main' });
+		const validation: IValidationState = {
+			nameError: undefined,
+			promptError: undefined,
+			folderError: undefined,
+			sessionTypeError: undefined,
+			branchError: undefined,
+		};
+		const saveButton = upcastPartial<IButton>({ enabled: true });
+		const form = document.createElement('form');
+
+		updateSaveButtonState(saveButton, state, validation, form, () => 'prompt', () => 'main', true);
+		const whileLoading = saveButton.enabled;
+		updateSaveButtonState(saveButton, state, validation, form, () => 'prompt', () => 'main', false);
+
+		assert.deepStrictEqual({
+			whileLoading,
+			afterLoading: saveButton.enabled,
+			formInvalid: form.classList.contains('automation-form-invalid'),
+		}, {
+			whileLoading: false,
+			afterLoading: true,
+			formInvalid: false,
+		});
 	});
 
 	test('allows a workspace-less target without a folder and still requires a session type', () => {
