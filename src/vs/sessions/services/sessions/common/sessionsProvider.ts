@@ -11,6 +11,7 @@ import { IChatRequestVariableEntry } from '../../../../workbench/contrib/chat/co
 import { ILanguageModelChatMetadataAndIdentifier } from '../../../../workbench/contrib/chat/common/languageModels.js';
 import { ModelIdentifierResolution } from '../../../../workbench/contrib/chat/common/modelSelection.js';
 import { AutomationConfigurationValue, IAutomationConfiguration } from '../../../../workbench/contrib/chat/common/automations/automation.js';
+import { IAutomationService } from '../../../../workbench/contrib/chat/common/automations/automationService.js';
 import { IChat, ISession, ISessionType, ISessionWorkspace, ISessionWorkspaceBrowseAction, ISideChatSelection } from './session.js';
 
 /**
@@ -70,11 +71,13 @@ export interface ISessionModelsSnapshot {
 export type ISessionAutomationConfigurationValue = AutomationConfigurationValue;
 export type ISessionAutomationConfiguration = IAutomationConfiguration;
 
-export interface ISessionsProviderAutomationCapability {
+export interface ISessionAutomationConfigurationCapability {
 	captureConfiguration(sessionId: string): ISessionAutomationConfiguration;
 	validateAutomationConfiguration(sessionTypeId: string, configuration: ISessionAutomationConfiguration): ISessionAutomationConfiguration;
 	applyConfiguration(sessionId: string, configuration: ISessionAutomationConfiguration, token: CancellationToken): Promise<void>;
 }
+
+export type ISessionsProviderAutomations = Omit<IAutomationService, '_serviceBrand'>;
 
 /**
  * Options controlling how a chat is deleted via {@link ISessionsProvider.deleteChat}.
@@ -173,8 +176,11 @@ export interface ISessionsProvider {
 	 */
 	readonly onDidChangeCapabilities?: Event<void>;
 
-	/** Provider-owned Automation definitions and configuration lifecycle. */
-	readonly automations?: ISessionsProviderAutomationCapability;
+	/** Provider-specific session configuration used by Automations. */
+	readonly automationConfiguration?: ISessionAutomationConfigurationCapability;
+
+	/** Provider-owned Automation entities, persistence, and run history. */
+	readonly automations?: ISessionsProviderAutomations;
 
 	/**
 	 * Resolve a workspace for the given repository URI.

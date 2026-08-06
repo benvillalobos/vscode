@@ -109,9 +109,7 @@ type ReadLedgerResult =
 	| { kind: 'ledger'; ledger: ILedger; revision: number }
 	| { kind: 'unsupportedSchema' };
 
-export class AutomationService extends Disposable implements IAutomationService {
-
-	declare readonly _serviceBrand: undefined;
+export class AutomationStore extends Disposable implements Omit<IAutomationService, '_serviceBrand'> {
 
 	private readonly _automations: ISettableObservable<readonly IAutomation[]>;
 	private readonly _runs: ISettableObservable<readonly IAutomationRun[]>;
@@ -124,6 +122,7 @@ export class AutomationService extends Disposable implements IAutomationService 
 	readonly runs: IObservable<readonly IAutomationRun[]>;
 
 	constructor(
+		private readonly storageKey: string,
 		@IStorageService private readonly storageService: IStorageService,
 		@ILogService private readonly logService: ILogService,
 		@ITelemetryService private readonly telemetryService: ITelemetryService,
@@ -133,7 +132,7 @@ export class AutomationService extends Disposable implements IAutomationService 
 
 		this._now = () => new Date();
 
-		const result = this.readLedger(this.storageService.get(AUTOMATION_STORAGE_KEY, StorageScope.APPLICATION));
+		const result = this.readLedger(this.storageService.get(this.storageKey, StorageScope.APPLICATION));
 		const initial = result.kind === 'ledger' ? result.ledger : EMPTY_LEDGER;
 		if (result.kind === 'ledger') {
 			this._lastSeenRevision = result.revision;
@@ -143,7 +142,7 @@ export class AutomationService extends Disposable implements IAutomationService 
 		this.automations = this._automations;
 		this.runs = this._runs;
 
-		this._register(this.storageService.onDidChangeValue(StorageScope.APPLICATION, AUTOMATION_STORAGE_KEY, this._store)(() => {
+		this._register(this.storageService.onDidChangeValue(StorageScope.APPLICATION, this.storageKey, this._store)(() => {
 			this.refreshFromStorage();
 		}));
 	}
@@ -378,7 +377,7 @@ export class AutomationService extends Disposable implements IAutomationService 
 	//#region Persistence
 
 	private async mutateLedger<T>(mutate: (ledger: ILedger) => ILedgerMutation<T>, mutationGuard?: AutomationMutationGuard): Promise<T> {
-		let raw = await this.automationStorageService.read();
+		let raw = await this.automationStorageService.read(this.storageKey);
 		while (true) {
 			const readResult = this.readLedger(raw);
 			if (readResult.kind === 'unsupportedSchema') {
@@ -404,7 +403,7 @@ export class AutomationService extends Disposable implements IAutomationService 
 			};
 			const newValue = JSON.stringify(serialized);
 			mutationGuard?.();
-			const writeResult = await this.automationStorageService.compareAndSwap(raw, newValue);
+			const writeResult = await this.automationStorageService.compareAndSwap(this.storageKey, raw, newValue);
 			if (writeResult.swapped) {
 				this.setLedger(ledger, revision);
 				return mutation.result;
@@ -432,10 +431,11 @@ export class AutomationService extends Disposable implements IAutomationService 
 	}
 
 	private refreshFromStorage(): void {
-		const result = this.readLedger(this.storageService.get(AUTOMATION_STORAGE_KEY, StorageScope.APPLICATION));
+		const result = this.readLedger(this.storageService.get(this.storageKey, StorageScope.APPLICATION));
 		if (result.kind === 'unsupportedSchema') {
 			return;
 		}
+
 		this.acceptLedger(result.ledger, result.revision);
 	}
 
@@ -497,6 +497,20 @@ export class AutomationService extends Disposable implements IAutomationService 
 	}
 
 	//#endregion
+}
+
+export class AutomationService extends AutomationStore implements IAutomationService {
+
+	declare readonly _serviceBrand: undefined;
+
+	constructor(
+		@IStorageService storageService: IStorageService,
+		@ILogService logService: ILogService,
+		@ITelemetryService telemetryService: ITelemetryService,
+		@IAutomationStorageService automationStorageService: IAutomationStorageService,
+	) {
+		super(AUTOMATION_STORAGE_KEY, storageService, logService, telemetryService, automationStorageService);
+	}
 }
 
 function serializeAutomation(a: IAutomation): ISerializedAutomation {

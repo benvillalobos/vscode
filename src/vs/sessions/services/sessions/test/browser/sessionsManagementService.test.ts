@@ -31,7 +31,7 @@ import { PreferredGroup } from '../../../../../workbench/services/editor/common/
 import { nullExtensionDescription } from '../../../../../workbench/services/extensions/common/extensions.js';
 import { SessionTypeAuthRequirement, ChatInteractivity, ChatOriginKind, IChat, ISession, ISessionType, ISessionWorkspace, ISideChatSelection, SessionStatus } from '../../common/session.js';
 import { ILanguageModelChatMetadataAndIdentifier } from '../../../../../workbench/contrib/chat/common/languageModels.js';
-import { ISessionChangeEvent, ISendRequestOptions, ISessionModelsSnapshot, ISessionModelPickerOptions, ISessionsProvider, ISessionsProviderAutomationCapability } from '../../common/sessionsProvider.js';
+import { ISessionAutomationConfigurationCapability, ISessionChangeEvent, ISendRequestOptions, ISessionModelsSnapshot, ISessionModelPickerOptions, ISessionsProvider } from '../../common/sessionsProvider.js';
 import { SessionsManagementService } from '../../browser/sessionsManagementService.js';
 import { ISessionsManagementService, ICreateNewSessionOptions, inheritableSessionTarget, WorkspaceNotTrustedError } from '../../common/sessionsManagement.js';
 import { SessionsService } from '../../browser/sessionsService.js';
@@ -305,7 +305,7 @@ suite('SessionsManagementService', () => {
 	test('preserves provider and session type identity when routing Automation configuration', async () => {
 		const session = stubSession({ sessionId: 'automation-definitions', providerId: 'test', sessionType: 'second' });
 		const calls: string[] = [];
-		const automations: ISessionsProviderAutomationCapability = {
+		const automationConfiguration: ISessionAutomationConfigurationCapability = {
 			captureConfiguration: sessionId => {
 				calls.push(`capture:${sessionId}`);
 				return { version: 1, value: { captured: true } };
@@ -319,7 +319,7 @@ suite('SessionsManagementService', () => {
 			},
 		};
 		const provider = new class extends TestSessionsProvider {
-			override readonly automations = automations;
+			override readonly automationConfiguration = automationConfiguration;
 			override readonly sessionTypes: readonly ISessionType[] = [
 				{ authRequirement: SessionTypeAuthRequirement.GitHub, id: 'first', label: 'First', icon: Codicon.vm, supportsWorktreeConfiguration: true },
 				{ authRequirement: SessionTypeAuthRequirement.GitHub, id: 'second', label: 'Second', icon: Codicon.vm, supportsWorktreeConfiguration: true },

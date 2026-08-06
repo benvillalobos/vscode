@@ -310,7 +310,7 @@ export class SessionsManagementService extends Disposable implements ISessionsMa
 	getAutomationSessionTypes(): IProviderSessionType[] {
 		const result: IProviderSessionType[] = [];
 		for (const provider of this.sessionsProvidersService.getProviders()) {
-			if (!provider.automations) {
+			if (!provider.automationConfiguration) {
 				continue;
 			}
 			for (const sessionType of provider.sessionTypes) {
@@ -337,11 +337,11 @@ export class SessionsManagementService extends Disposable implements ISessionsMa
 
 	private _getAutomationCapability(providerId: string, sessionTypeId: string) {
 		const provider = this.sessionsProvidersService.getProvider(providerId);
-		const automations = provider?.automations;
-		if (!automations || !provider.sessionTypes.some(sessionType => sessionType.id === sessionTypeId)) {
+		const automationConfiguration = provider?.automationConfiguration;
+		if (!automationConfiguration || !provider.sessionTypes.some(sessionType => sessionType.id === sessionTypeId)) {
 			throw new Error(`Automations are unavailable for provider '${providerId}' and session type '${sessionTypeId}'.`);
 		}
-		return automations;
+		return automationConfiguration;
 	}
 
 	isNewSessionTargetAvailable(folderUri: URI, options?: ICreateNewSessionOptions): boolean {
