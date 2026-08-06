@@ -10,7 +10,7 @@ import { URI } from '../../../../base/common/uri.js';
 import { IChatRequestVariableEntry } from '../../../../workbench/contrib/chat/common/attachments/chatVariableEntries.js';
 import { ILanguageModelChatMetadataAndIdentifier } from '../../../../workbench/contrib/chat/common/languageModels.js';
 import { ModelIdentifierResolution } from '../../../../workbench/contrib/chat/common/modelSelection.js';
-import { AutomationConfigurationValue, IAutomationConfiguration } from '../../../../workbench/contrib/chat/common/automations/automation.js';
+import { AutomationConfigurationValue, IAutomation, IAutomationConfiguration, IAutomationRun } from '../../../../workbench/contrib/chat/common/automations/automation.js';
 import { IAutomationService } from '../../../../workbench/contrib/chat/common/automations/automationService.js';
 import { IChat, ISession, ISessionType, ISessionWorkspace, ISessionWorkspaceBrowseAction, ISideChatSelection } from './session.js';
 
@@ -77,7 +77,10 @@ export interface ISessionAutomationConfigurationCapability {
 	applyConfiguration(sessionId: string, configuration: ISessionAutomationConfiguration, token: CancellationToken): Promise<void>;
 }
 
-export type ISessionsProviderAutomations = Omit<IAutomationService, '_serviceBrand'>;
+export interface ISessionsProviderAutomations extends Omit<IAutomationService, '_serviceBrand'> {
+	importAutomation(automation: IAutomation, runs: readonly IAutomationRun[]): Promise<void>;
+	removeAutomationForMigration(id: string): Promise<void>;
+}
 
 /**
  * Options controlling how a chat is deleted via {@link ISessionsProvider.deleteChat}.

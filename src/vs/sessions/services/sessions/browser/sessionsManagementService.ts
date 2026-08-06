@@ -787,6 +787,10 @@ export class SessionsManagementService extends Disposable implements ISessionsMa
 			if (token.isCancellationRequested) {
 				throw new CancellationError();
 			}
+			if (createOptions?.automationConfiguration) {
+				const configuration = this.validateAutomationConfiguration(provider.id, session.sessionType, createOptions.automationConfiguration);
+				await raceCancellationError(this.applyAutomationConfiguration(session, configuration, token), token);
+			}
 			if (createOptions?.modelId) {
 				const resolvedModelId = await this._waitForRequestedModel(provider, session, createOptions.modelId, token, folderUri);
 				provider.setModel(session.sessionId, resolvedModelId);

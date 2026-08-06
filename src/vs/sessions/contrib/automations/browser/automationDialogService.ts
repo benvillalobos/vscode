@@ -19,7 +19,7 @@ import { IProductService } from '../../../../platform/product/common/productServ
 import { IWorkspaceTrustRequestService } from '../../../../platform/workspace/common/workspaceTrust.js';
 import { defaultDialogStyles } from '../../../../platform/theme/browser/defaultStyles.js';
 import { createWorkbenchDialogOptions } from '../../../../workbench/browser/parts/dialogs/dialog.js';
-import { AutomationTarget, IAutomationSchedule } from '../../../../workbench/contrib/chat/common/automations/automation.js';
+import { AutomationTarget, IAutomationConfiguration, IAutomationSchedule } from '../../../../workbench/contrib/chat/common/automations/automation.js';
 import { IAutomationDialogResult, IAutomationDialogService, IShowAutomationDialogOptions } from '../../../../workbench/contrib/chat/common/automations/automationDialogService.js';
 import { ICreateAutomationOptions, IUpdateAutomationOptions } from '../../../../workbench/contrib/chat/common/automations/automationService.js';
 import { ILanguageModelsService } from '../../../../workbench/contrib/chat/common/languageModels.js';
@@ -113,6 +113,7 @@ export class AutomationDialogService implements IAutomationDialogService {
 		let getMode: () => string | undefined = () => initial?.mode;
 		let getPermissionLevel: () => string | undefined = () => initial?.permissionLevel;
 		let getModelId: () => string | undefined = () => initial?.modelId;
+		let getConfiguration: () => Promise<IAutomationConfiguration | undefined> = async () => initial?.configuration;
 		let getBranch: () => string | undefined = () => initialWorkspaceTarget?.isolation.kind === 'worktree' ? initialWorkspaceTarget.isolation.branch : undefined;
 		let waitForAutomationSessionSync: () => Promise<void> = async () => { };
 		let getFocusableElements: () => readonly HTMLElement[] = () => [];
@@ -166,11 +167,12 @@ export class AutomationDialogService implements IAutomationDialogService {
 
 					const formPane = DOM.append(container, $('.automation-form-pane'));
 					const form = DOM.append(formPane, $('.automation-form'));
-					const handle = renderForm(form, state, disposables, validation, () => revalidate(), this.instantiationService, this.contextKeyService, this.contextViewService, this.configurationService, this.languageModelsService, this.layoutService, this.logService, this.productService, this.sessionsManagementService, this.workspaceTrustRequestService, initial?.prompt ?? '', initial?.mode, initial?.permissionLevel, initial?.modelId);
+					const handle = renderForm(form, state, disposables, validation, () => revalidate(), this.instantiationService, this.contextKeyService, this.contextViewService, this.configurationService, this.languageModelsService, this.layoutService, this.logService, this.productService, this.sessionsManagementService, this.workspaceTrustRequestService, initial?.prompt ?? '', initial?.mode, initial?.permissionLevel, initial?.modelId, initial?.configuration);
 					getPrompt = handle.getPrompt;
 					getMode = handle.getMode;
 					getPermissionLevel = handle.getPermissionLevel;
 					getModelId = handle.getModelId;
+					getConfiguration = handle.getConfiguration;
 					getBranch = handle.getBranch;
 					waitForAutomationSessionSync = handle.waitForAutomationSessionSync;
 					getFocusableElements = handle.getFocusableElements;
@@ -221,6 +223,7 @@ export class AutomationDialogService implements IAutomationDialogService {
 			const mode = getMode();
 			const permissionLevel = getPermissionLevel();
 			const modelId = getModelId();
+			const automationConfiguration = await getConfiguration();
 			const branch = getBranch();
 			const target = createAutomationTarget(state, branch);
 			if (!target) {
@@ -233,6 +236,7 @@ export class AutomationDialogService implements IAutomationDialogService {
 					prompt,
 					schedule,
 					target,
+					configuration: automationConfiguration,
 					modelId: modelId ?? null,
 					mode: mode ?? null,
 					permissionLevel: permissionLevel ?? null,
@@ -246,6 +250,7 @@ export class AutomationDialogService implements IAutomationDialogService {
 				prompt,
 				schedule,
 				target,
+				configuration: automationConfiguration,
 				modelId,
 				mode,
 				permissionLevel,

@@ -42,6 +42,7 @@ interface ISerializedAutomationBase {
 	readonly name: string;
 	readonly prompt: string;
 	readonly schedule: IAutomation['schedule'];
+	readonly configuration?: IAutomation['configuration'];
 	readonly modelId?: string;
 	readonly mode?: string;
 	readonly permissionLevel?: string;
@@ -175,6 +176,7 @@ export class AutomationStore extends Disposable implements Omit<IAutomationServi
 			prompt: options.prompt,
 			schedule: options.schedule,
 			target: normalizeAutomationTarget(options.target),
+			configuration: options.configuration,
 			modelId: options.modelId,
 			mode: options.mode,
 			permissionLevel: isChatPermissionLevel(options.permissionLevel) ? options.permissionLevel : undefined,
@@ -266,6 +268,40 @@ export class AutomationStore extends Disposable implements Omit<IAutomationServi
 
 		this._runsForCache.delete(id);
 		publishAutomationDeleted(this.telemetryService, existing);
+	}
+
+	async importAutomation(automation: IAutomation, runs: readonly IAutomationRun[]): Promise<void> {
+		await this.mutateLedger(ledger => {
+			if (ledger.automations.some(candidate => candidate.id === automation.id)) {
+				return { kind: 'noChange', result: undefined };
+			}
+			const runIds = new Set(ledger.runs.map(run => run.id));
+			return {
+				kind: 'commit',
+				ledger: {
+					automations: [automation, ...ledger.automations],
+					runs: [...runs.filter(run => !runIds.has(run.id)), ...ledger.runs],
+				},
+				result: undefined,
+			};
+		});
+	}
+
+	async removeAutomationForMigration(id: string): Promise<void> {
+		await this.mutateLedger(ledger => {
+			if (!ledger.automations.some(automation => automation.id === id)) {
+				return { kind: 'noChange', result: undefined };
+			}
+			return {
+				kind: 'commit',
+				ledger: {
+					automations: ledger.automations.filter(automation => automation.id !== id),
+					runs: ledger.runs.filter(run => run.automationId !== id),
+				},
+				result: undefined,
+			};
+		});
+		this._runsForCache.delete(id);
 	}
 
 	async recordRunStart(automationId: string, trigger: AutomationRunTrigger, leaderWindowId: number): Promise<IAutomationRunClaim> {
@@ -520,6 +556,7 @@ function serializeAutomation(a: IAutomation): ISerializedAutomation {
 		prompt: a.prompt,
 		schedule: a.schedule,
 		target: serializeAutomationTarget(a.target),
+		configuration: a.configuration,
 		modelId: a.modelId,
 		mode: a.mode,
 		permissionLevel: a.permissionLevel,
@@ -569,6 +606,7 @@ function createAutomationFromSerialized(s: ISerializedAutomationBase, target: Au
 		prompt: s.prompt,
 		schedule: s.schedule,
 		target,
+		configuration: s.configuration,
 		modelId: s.modelId,
 		mode: s.mode,
 		permissionLevel,
@@ -600,6 +638,7 @@ function mergeAutomation(current: IAutomation, patch: IUpdateAutomationOptions):
 		prompt: patch.prompt ?? current.prompt,
 		schedule: patch.schedule ?? current.schedule,
 		target: patch.target ? normalizeAutomationTarget(patch.target) : current.target,
+		configuration: patch.configuration ?? current.configuration,
 		modelId: patch.modelId === null ? undefined : (patch.modelId ?? current.modelId),
 		mode: patch.mode === null ? undefined : (patch.mode ?? current.mode),
 		permissionLevel: patch.permissionLevel === null ? undefined : (patch.permissionLevel && isChatPermissionLevel(patch.permissionLevel) ? patch.permissionLevel : current.permissionLevel),

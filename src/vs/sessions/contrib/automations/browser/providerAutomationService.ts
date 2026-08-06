@@ -3,10 +3,12 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import { Sequencer } from '../../../../base/common/async.js';
 import { Disposable } from '../../../../base/common/lifecycle.js';
 import { derived, IObservable, observableSignalFromEvent } from '../../../../base/common/observable.js';
 import { IInstantiationService } from '../../../../platform/instantiation/common/instantiation.js';
-import { IAutomation, IAutomationRun, AutomationRunTrigger } from '../../../../workbench/contrib/chat/common/automations/automation.js';
+import { ILogService } from '../../../../platform/log/common/log.js';
+import { IAutomation, IAutomationConfiguration, IAutomationRun, AutomationRunTrigger } from '../../../../workbench/contrib/chat/common/automations/automation.js';
 import { AutomationMutationGuard, IAutomationRunClaim, IAutomationService, ICreateAutomationOptions, IGuardedAutomationUpdateResult, IUpdateAutomationOptions, IUpdateAutomationRunOptions } from '../../../../workbench/contrib/chat/common/automations/automationService.js';
 import { ISessionsProvidersService } from '../../../services/sessions/browser/sessionsProvidersService.js';
 import { ISessionsProviderAutomations } from '../../../services/sessions/common/sessionsProvider.js';
@@ -23,6 +25,8 @@ export class ProviderAutomationService extends Disposable implements IAutomation
 
 	private readonly legacyStore: AutomationService;
 	private readonly providersChanged;
+	private readonly migrationSequencer = new Sequencer();
+	private migrationPromise: Promise<void> = Promise.resolve();
 
 	readonly automations: IObservable<readonly IAutomation[]>;
 	readonly runs: IObservable<readonly IAutomationRun[]>;
@@ -30,6 +34,7 @@ export class ProviderAutomationService extends Disposable implements IAutomation
 	constructor(
 		@ISessionsProvidersService private readonly sessionsProvidersService: ISessionsProvidersService,
 		@IInstantiationService instantiationService: IInstantiationService,
+		@ILogService private readonly logService: ILogService,
 	) {
 		super();
 		this.legacyStore = this._register(instantiationService.createInstance(AutomationService));
@@ -46,6 +51,8 @@ export class ProviderAutomationService extends Disposable implements IAutomation
 				.flatMap(entry => [...entry.store.runs.read(reader)])
 				.sort((a, b) => b.startedAt.localeCompare(a.startedAt));
 		});
+		this._register(sessionsProvidersService.onDidChangeProviders(() => this.queueMigration()));
+		this.queueMigration();
 	}
 
 	getAutomation(id: string): IAutomation | undefined {
@@ -94,6 +101,10 @@ export class ProviderAutomationService extends Disposable implements IAutomation
 		await Promise.all(this.getStores().map(entry => entry.store.markStaleRunsFailed(reason)));
 	}
 
+	waitForMigrationForTesting(): Promise<void> {
+		return this.migrationPromise;
+	}
+
 	private getStores(): IAutomationStoreEntry[] {
 		const providerStores = this.sessionsProvidersService.getProviders()
 			.filter(provider => provider.automations)
@@ -127,4 +138,45 @@ export class ProviderAutomationService extends Disposable implements IAutomation
 	private findRunStore(runId: string): ISessionsProviderAutomations | undefined {
 		return this.getStores().find(entry => entry.store.runs.get().some(run => run.id === runId))?.store;
 	}
+
+	private queueMigration(): void {
+		this.migrationPromise = this.migrationSequencer.queue(() => this.migrateLegacyAutomations()).catch(error => {
+			this.logService.error('[ProviderAutomationService] Failed to migrate legacy Automations.', error);
+		});
+	}
+
+	private async migrateLegacyAutomations(): Promise<void> {
+		for (const automation of [...this.legacyStore.automations.get()]) {
+			const providerId = automation.target.providerId;
+			if (!providerId) {
+				continue;
+			}
+			const provider = this.sessionsProvidersService.getProvider(providerId);
+			if (!provider?.automations || !provider.automationConfiguration) {
+				continue;
+			}
+			const configuration = automation.configuration
+				?? legacyAutomationConfiguration(automation);
+			const migrated: IAutomation = {
+				...automation,
+				configuration: provider.automationConfiguration.validateAutomationConfiguration(automation.target.sessionTypeId ?? '', configuration),
+				modelId: undefined,
+				mode: undefined,
+				permissionLevel: undefined,
+			};
+			await provider.automations.importAutomation(migrated, this.legacyStore.runsFor(automation.id).get());
+			await this.legacyStore.removeAutomationForMigration(automation.id);
+		}
+	}
+}
+
+function legacyAutomationConfiguration(automation: IAutomation): IAutomationConfiguration {
+	return {
+		version: 1,
+		value: {
+			...(automation.modelId ? { modelId: automation.modelId } : {}),
+			...(automation.mode ? { modeId: automation.mode } : {}),
+			...(automation.permissionLevel ? { permissionLevel: automation.permissionLevel } : {}),
+		},
+	};
 }

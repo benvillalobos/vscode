@@ -126,12 +126,18 @@ export interface IAutomation {
 	/** Explicit workspace-backed or workspace-less execution target. */
 	readonly target: AutomationTarget;
 
+	/** Opaque, versioned configuration owned by the target provider. */
+	readonly configuration?: IAutomationConfiguration;
+
+	/** @deprecated Migrated into {@link configuration}. */
 	/** Optional language model identifier to seed the new session with. */
 	readonly modelId?: string;
 
+	/** @deprecated Migrated into {@link configuration}. */
 	/** Optional chat mode (`agent`/`ask`/`edit`). Defaults to provider's default; custom modes unsupported. */
 	readonly mode?: string;
 
+	/** @deprecated Migrated into {@link configuration}. */
 	/** Optional permission level (`default`/`autoApprove`/`autopilot`). Overrides only for scheduled runs; defaults to provider's default. */
 	readonly permissionLevel?: string;
 

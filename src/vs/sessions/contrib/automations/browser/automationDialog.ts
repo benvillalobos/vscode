@@ -41,7 +41,7 @@ import { MobileSessionTypePicker } from '../../chat/browser/mobile/mobileSession
 import { isMobilePickerSheetTarget } from '../../../browser/parts/mobile/mobilePickerSheet.js';
 import { ISession, ISessionWorkspaceBrowseAction, SESSION_WORKSPACE_GROUP_LOCAL } from '../../../services/sessions/common/session.js';
 import { IGitRepository, IGitService } from '../../../../workbench/contrib/git/common/gitService.js';
-import { AutomationInterval } from '../../../../workbench/contrib/chat/common/automations/automation.js';
+import { AutomationInterval, IAutomationConfiguration } from '../../../../workbench/contrib/chat/common/automations/automation.js';
 import { DAYS_OF_WEEK } from '../../../../workbench/contrib/chat/common/automations/schedule.js';
 import { ChatContextKeys } from '../../../../workbench/contrib/chat/common/actions/chatContextKeys.js';
 import { ILanguageModelsService } from '../../../../workbench/contrib/chat/common/languageModels.js';
@@ -193,6 +193,7 @@ interface IRenderFormHandle {
 	readonly getMode: () => string | undefined;
 	readonly getPermissionLevel: () => string | undefined;
 	readonly getModelId: () => string | undefined;
+	readonly getConfiguration: () => Promise<IAutomationConfiguration | undefined>;
 	readonly getBranch: () => string | undefined;
 	readonly waitForAutomationSessionSync: () => Promise<void>;
 	readonly getFocusableElements: () => readonly HTMLElement[];
@@ -220,6 +221,7 @@ export class AutomationSessionDraftSynchronizer extends Disposable {
 		private readonly sessionsManagementService: AutomationSessionDraftService,
 		private readonly canSelectWorkspace: (folderUri: URI, preferredProviderId: string | undefined) => Promise<boolean>,
 		private readonly onError: (error: unknown) => void,
+		private readonly configureSession?: (session: ISession) => Promise<void>,
 	) {
 		super();
 	}
@@ -280,6 +282,7 @@ export class AutomationSessionDraftSynchronizer extends Disposable {
 					providerId: target.providerId,
 					sessionTypeId: target.sessionTypeId,
 				});
+			await this.configureSession?.(this.session);
 			this.appliedTarget = target;
 		} catch (error) {
 			if (!this.disposed && generation === this.generation) {
@@ -812,6 +815,7 @@ export function renderForm(
 	initialMode: string | undefined,
 	initialPermissionLevel: string | undefined,
 	initialModelId: string | undefined,
+	initialConfiguration: IAutomationConfiguration | undefined,
 ): IRenderFormHandle {
 	const nameRow = DOM.append(form, $('.automation-form-row'));
 	DOM.append(nameRow, $('span.automation-form-label', undefined, localize('automation.form.name', "Name")));
@@ -936,10 +940,18 @@ export function renderForm(
 	workspacePicker.setTargetModel(isolationModel);
 	workspacePicker.setLayoutService(layoutService);
 
+	let pendingInitialConfiguration = initialConfiguration;
 	const automationSessionDraftSynchronizer = disposables.add(new AutomationSessionDraftSynchronizer(
 		sessionsManagementService,
 		(folderUri, preferredProviderId) => canSelectAutomationWorkspace(folderUri, preferredProviderId, sessionsManagementService, workspaceTrustRequestService),
 		error => logService.error('[AutomationDialog] Failed to synchronize the automation session draft.', error),
+		async session => {
+			if (pendingInitialConfiguration) {
+				const configuration = sessionsManagementService.validateAutomationConfiguration(session.providerId, session.sessionType, pendingInitialConfiguration);
+				await sessionsManagementService.applyAutomationConfiguration(session, configuration);
+				pendingInitialConfiguration = undefined;
+			}
+		},
 	));
 	const updateAutomationSessionTarget = () => {
 		const folderUri = isolationModel.folderUriObs.get();
@@ -1193,6 +1205,18 @@ export function renderForm(
 		getMode: () => chatInput.currentModeObs.get().id,
 		getPermissionLevel: () => chatInput.currentPermissionLevelObs.get(),
 		getModelId: () => chatInput.selectedLanguageModel.get()?.identifier,
+		getConfiguration: async () => {
+			updateAutomationSessionTarget();
+			await automationSessionDraftSynchronizer.waitForSync();
+			const session = sessionsManagementService.automationSession.get();
+			if (!session) {
+				return undefined;
+			}
+			const supportsAutomations = sessionsManagementService.getAutomationSessionTypes().some(candidate =>
+				candidate.providerId === session.providerId && candidate.sessionType.id === session.sessionType
+			);
+			return supportsAutomations ? sessionsManagementService.captureAutomationConfiguration(session) : undefined;
+		},
 		getBranch: () => isolationModel.persistedBranch,
 		waitForAutomationSessionSync: () => {
 			updateAutomationSessionTarget();

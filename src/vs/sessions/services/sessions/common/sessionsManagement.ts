@@ -99,6 +99,7 @@ export interface ICreateNewSessionOptions {
 	 * programmatic session creation and is not surfaced in the new-session UI.
 	 */
 	readonly worktreeBranchTrack?: boolean;
+	readonly automationConfiguration?: ISessionAutomationConfiguration;
 }
 
 /**
