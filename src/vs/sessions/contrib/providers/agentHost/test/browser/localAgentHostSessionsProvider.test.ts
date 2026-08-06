@@ -5,6 +5,7 @@
 
 import assert from 'assert';
 import { DeferredPromise, raceTimeout, timeout } from '../../../../../../base/common/async.js';
+import { CancellationToken } from '../../../../../../base/common/cancellation.js';
 import { Emitter, Event } from '../../../../../../base/common/event.js';
 import { DisposableStore, ImmortalReference, toDisposable, type IReference } from '../../../../../../base/common/lifecycle.js';
 import { autorun, constObservable, ISettableObservable, observableValue, type IObservable } from '../../../../../../base/common/observable.js';
@@ -585,6 +586,23 @@ suite('LocalAgentHostSessionsProvider', () => {
 		// local and remote hosts and the standalone Copilot CLI provider.
 		assert.strictEqual(provider.sessionTypes[0].id, 'copilotcli');
 		assert.strictEqual(provider.sessionTypes[0].label, 'Copilot');
+	});
+
+	test('round-trips provider-owned Automation model configuration', async () => {
+		const provider = createProvider(disposables, agentHost);
+		const session = provider.createNewSession(URI.parse('file:///home/user/project'), provider.sessionTypes[0].id);
+		const configuration = {
+			version: 1,
+			value: { modelId: 'agent-host-copilotcli:test-model' },
+		};
+
+		await provider.applyConfiguration(session.sessionId, configuration, CancellationToken.None);
+
+		assert.deepStrictEqual({
+			captured: provider.captureConfiguration(session.sessionId),
+		}, {
+			captured: configuration,
+		});
 	});
 
 	test('session types update when the local host advertises additional agents', () => {

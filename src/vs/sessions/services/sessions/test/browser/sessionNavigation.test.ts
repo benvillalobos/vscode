@@ -4,6 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import assert from 'assert';
+import { CancellationToken } from '../../../../../base/common/cancellation.js';
 import { DisposableStore } from '../../../../../base/common/lifecycle.js';
 import { constObservable, IObservable, observableValue } from '../../../../../base/common/observable.js';
 import { URI } from '../../../../../base/common/uri.js';
@@ -17,7 +18,7 @@ import { ChatInteractivity, IChat, ISession, ISessionType, ISessionWorkspace, IS
 import { SessionsNavigation } from '../../browser/sessionNavigation.js';
 import { SessionsRecencyHistory } from '../../browser/sessionsRecencyHistory.js';
 import { Event } from '../../../../../base/common/event.js';
-import { ISendRequestOptions } from '../../common/sessionsProvider.js';
+import { ISendRequestOptions, ISessionAutomationConfiguration } from '../../common/sessionsProvider.js';
 
 const stubChat = {
 	resource: URI.parse('test:///chat'),
@@ -173,6 +174,10 @@ class MockSessionStore implements ISessionsManagementService {
 	getAllProviderSessionTypes(): IProviderSessionType[] { return []; }
 	getSessionTypesForFolder(_folderUri: URI): IProviderSessionType[] { return []; }
 	getQuickChatSessionTypes(): IProviderSessionType[] { return []; }
+	getAutomationSessionTypes(): IProviderSessionType[] { return []; }
+	captureAutomationConfiguration(_session: ISession): ISessionAutomationConfiguration { throw new Error('not implemented'); }
+	validateAutomationConfiguration(_providerId: string, _sessionTypeId: string, _configuration: ISessionAutomationConfiguration): ISessionAutomationConfiguration { throw new Error('not implemented'); }
+	applyAutomationConfiguration(_session: ISession, _configuration: ISessionAutomationConfiguration, _token?: CancellationToken): Promise<void> { throw new Error('not implemented'); }
 	isNewSessionTargetAvailable(_folderUri: URI, _options?: ICreateNewSessionOptions): boolean { return false; }
 	isQuickChatTargetAvailable(_options?: ICreateNewSessionOptions): boolean { return false; }
 	resolveWorkspace(_folderUri: URI): { providerId: string; workspace: ISessionWorkspace } | undefined { return undefined; }
