@@ -733,7 +733,7 @@ suite('AutomationService', () => {
 		});
 	});
 
-	test('migrates valid schema v1 records to v3 while dropping malformed targets', async () => {
+	test('migrates valid schema v1 records to v4 while dropping malformed targets', async () => {
 		const storage = teardown.add(new InMemoryStorageService());
 		const ledger = {
 			schemaVersion: 1,
@@ -770,13 +770,13 @@ suite('AutomationService', () => {
 			automationIds: migrated.automations.map((automation: { id: string }) => automation.id),
 			runIds: migrated.runs.map((run: { id: string }) => run.id),
 		}, {
-			schemaVersion: 3,
+			schemaVersion: 4,
 			automationIds: ['keep', 'quick'],
 			runIds: ['r-keep', 'r-quick'],
 		});
 	});
 
-	test('migrates schema v2 flat targets to schema v3 target unions', async () => {
+	test('migrates schema v2 flat targets to schema v4 target unions', async () => {
 		const storage = teardown.add(new InMemoryStorageService());
 		const common = {
 			prompt: 'p',
@@ -804,7 +804,7 @@ suite('AutomationService', () => {
 
 		await service.updateAutomation('workspace', { name: 'Updated' });
 		const migrated = JSON.parse(storage.get('chat.automations.ledger', -1)!);
-		assert.strictEqual(migrated.schemaVersion, 3);
+		assert.strictEqual(migrated.schemaVersion, 4);
 	});
 
 	test('round-trips a folderUri through persistence', async () => {

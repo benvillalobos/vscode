@@ -144,7 +144,7 @@ suite('ProviderAutomationService', () => {
 				startedAt: '2026-01-01T00:00:00.000Z',
 				leaderWindowId: 1,
 			}],
-			legacy: { schemaVersion: 3, revision: 2, automations: [], runs: [] },
+			legacy: { schemaVersion: 4, revision: 2, automations: [], runs: [] },
 		});
 	});
 });

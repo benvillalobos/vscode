@@ -32,8 +32,8 @@ import { computeNextRunAt } from '../../../../workbench/contrib/chat/common/auto
 import { ChatPermissionLevel, isChatPermissionLevel } from '../../../../workbench/contrib/chat/common/constants.js';
 import { AUTOMATION_STORAGE_KEY, IAutomationStorageService } from '../common/automationStorageService.js';
 
-const LEGACY_SCHEMA_VERSIONS = new Set([1, 2]);
-const CURRENT_SCHEMA_VERSION = 3;
+const LEGACY_SCHEMA_VERSIONS = new Set([1, 2, 3]);
+const CURRENT_SCHEMA_VERSION = 4;
 
 const MAX_RUNS_PER_AUTOMATION = 50;
 
@@ -81,8 +81,15 @@ interface ILegacySerializedAutomation extends ISerializedAutomationBase {
 }
 
 interface ISerializedLedger {
-	readonly schemaVersion: 3;
+	readonly schemaVersion: 4;
 	// Optimistic-concurrency counter. 0 for legacy blobs without this field.
+	readonly revision?: number;
+	readonly automations: readonly ISerializedAutomation[];
+	readonly runs: readonly IAutomationRun[];
+}
+
+interface ISchema3SerializedLedger {
+	readonly schemaVersion: 3;
 	readonly revision?: number;
 	readonly automations: readonly ISerializedAutomation[];
 	readonly runs: readonly IAutomationRun[];
@@ -480,7 +487,7 @@ export class AutomationStore extends Disposable implements Omit<IAutomationServi
 			return { kind: 'ledger', ledger: EMPTY_LEDGER, revision: 0 };
 		}
 		try {
-			const parsed = JSON.parse(raw) as ISerializedLedger | ILegacySerializedLedger;
+			const parsed = JSON.parse(raw) as ISerializedLedger | ISchema3SerializedLedger | ILegacySerializedLedger;
 			if (typeof parsed?.schemaVersion === 'number' && parsed.schemaVersion > CURRENT_SCHEMA_VERSION) {
 				this.logService.warn(`[AutomationService] Ledger has schema v${parsed.schemaVersion}; this build only supports v${CURRENT_SCHEMA_VERSION}. Entering read-only mode.`);
 				return { kind: 'unsupportedSchema' };
@@ -490,7 +497,7 @@ export class AutomationStore extends Disposable implements Omit<IAutomationServi
 				return { kind: 'ledger', ledger: EMPTY_LEDGER, revision: 0 };
 			}
 			const automations: IAutomation[] = [];
-			if (parsed.schemaVersion === CURRENT_SCHEMA_VERSION) {
+			if (parsed.schemaVersion === CURRENT_SCHEMA_VERSION || parsed.schemaVersion === 3) {
 				const entries = Array.isArray(parsed.automations) ? parsed.automations : [];
 				for (const entry of entries) {
 					try {
