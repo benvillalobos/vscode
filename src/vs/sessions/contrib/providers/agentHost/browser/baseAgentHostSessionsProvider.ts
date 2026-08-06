@@ -7,6 +7,7 @@ import { disposableTimeout, raceCancellationError } from '../../../../../base/co
 import { CancellationToken, CancellationTokenSource } from '../../../../../base/common/cancellation.js';
 import { Codicon } from '../../../../../base/common/codicons.js';
 import { arrayEquals, structuralEquals } from '../../../../../base/common/equals.js';
+import { CancellationError } from '../../../../../base/common/errors.js';
 import { Emitter, Event } from '../../../../../base/common/event.js';
 import { IMarkdownString, MarkdownString, markdownStringEqual } from '../../../../../base/common/htmlContent.js';
 import { Disposable, DisposableMap, DisposableStore, IDisposable, IReference, MutableDisposable, toDisposable } from '../../../../../base/common/lifecycle.js';
@@ -44,12 +45,13 @@ import { ChatAgentLocation, ChatConfiguration, ChatModeKind, ChatPermissionLevel
 import { isAutoApprovePolicyRestricted, normalizeSessionConfigValue } from '../../../../../workbench/contrib/chat/common/agentHostConfigPolicy.js';
 import { ILanguageModelChatMetadata, ILanguageModelsService } from '../../../../../workbench/contrib/chat/common/languageModels.js';
 import { getRegisteredLanguageModels, resolveConfiguredModel, resolveModelIdentifier, resolveModelIdentifierFromLanguageModels } from '../../../../../workbench/contrib/chat/common/modelSelection.js';
+import { isAutomationConfigurationObject, toAutomationConfigurationValue } from '../../../../../workbench/contrib/chat/common/automations/automation.js';
 import { buildMutableConfigSchema, IAgentHostMcpServer, IAgentHostSessionsProvider, resolvedConfigsEqual } from '../../../../common/agentHostSessionsProvider.js';
 import { agentHostSessionWorkspaceKey } from '../../../../common/agentHostSessionWorkspace.js';
 import { isSessionConfigComplete } from '../../../../common/sessionConfig.js';
 import { ChatInteractivity, ChatOriginKind, DEFAULT_CHAT_CAPABILITIES, effectiveChatInteractivity, IChat, IChatCapabilities, IGitHubInfo, IGitHubIssueRef, IGitHubPullRequestRef, ISession, ISessionAgentRef, ISessionCapabilities, ISessionChangeset, ISessionChangesSummary, ISessionFile, ISessionFileChange, ISessionTurnFileChange, ISessionType, ISessionWorkspace, ISessionWorkspaceBrowseAction, ISideChatSelection, sessionFileChangesEqual, SessionStatus, SessionTypeAuthRequirement, toSessionId } from '../../../../services/sessions/common/session.js';
 import { ISessionsService } from '../../../../services/sessions/browser/sessionsService.js';
-import { IDeleteChatOptions, ISendRequestOptions, ISessionChangeEvent, ISessionModelPickerOptions, ISessionModelsSnapshot } from '../../../../services/sessions/common/sessionsProvider.js';
+import { IDeleteChatOptions, ISendRequestOptions, ISessionAutomationConfiguration, ISessionAutomationConfigurationValue, ISessionChangeEvent, ISessionModelPickerOptions, ISessionModelsSnapshot, ISessionsProviderAutomationCapability } from '../../../../services/sessions/common/sessionsProvider.js';
 import { IGitHubService } from '../../../github/browser/githubService.js';
 import { computeSessionPullRequestIcon } from '../../../github/browser/pullRequestIconStatus.js';
 import { IPullRequestIconCache } from '../../../github/browser/pullRequestIconCache.js';
@@ -1718,6 +1720,13 @@ class NewSession extends Disposable {
 
 	getConfig(): ResolveSessionConfigResult | undefined { return this._config; }
 	getConfigValues(): Record<string, unknown> | undefined { return this._config?.values; }
+	replaceConfigValues(values: Record<string, unknown>): void {
+		this._config = {
+			schema: this._config?.schema ?? { type: 'object', properties: {} },
+			values: { ...values },
+		};
+		this._syncWorktreePending();
+	}
 
 	trackConfigResolution(promise: Promise<void>): Promise<void> {
 		this._configResolution = promise;
@@ -2002,7 +2011,7 @@ class NewSession extends Disposable {
  * URI-scheme mapping for session metadata, the agent-provider lookup, and
  * the browse UI.
  */
-export abstract class BaseAgentHostSessionsProvider extends Disposable implements IAgentHostSessionsProvider {
+export abstract class BaseAgentHostSessionsProvider extends Disposable implements IAgentHostSessionsProvider, ISessionsProviderAutomationCapability {
 
 	abstract readonly id: string;
 	abstract readonly label: string;
@@ -2010,6 +2019,7 @@ export abstract class BaseAgentHostSessionsProvider extends Disposable implement
 	abstract readonly browseActions: readonly ISessionWorkspaceBrowseAction[];
 
 	get order(): number { return 0; }
+	readonly automations = this;
 
 	get sessionTypes(): readonly ISessionType[] { return this._sessionTypes; }
 	protected _sessionTypes: ISessionType[] = [];
@@ -3073,6 +3083,87 @@ export abstract class BaseAgentHostSessionsProvider extends Disposable implement
 
 	getCreateSessionConfig(sessionId: string): Record<string, unknown> | undefined {
 		return this._getNewSession(sessionId)?.getConfigValues();
+	}
+
+	captureConfiguration(sessionId: string): ISessionAutomationConfiguration {
+		const session = this._getNewSession(sessionId);
+		if (!session) {
+			throw new Error(`Automation configuration is unavailable for session '${sessionId}'.`);
+		}
+		const value: { [key: string]: ISessionAutomationConfigurationValue } = {};
+		const modelId = session.getSelectedModelId();
+		const sessionConfig = session.getConfigValues();
+		if (modelId) {
+			value.modelId = modelId;
+		}
+		if (sessionConfig && Object.keys(sessionConfig).length > 0) {
+			value.sessionConfig = toAutomationConfigurationValue(sessionConfig);
+		}
+		return { version: 1, value };
+	}
+
+	validateAutomationConfiguration(_sessionTypeId: string, configuration: ISessionAutomationConfiguration): ISessionAutomationConfiguration {
+		if (configuration.version !== 1 || !isAutomationConfigurationObject(configuration.value)) {
+			throw new Error('Unsupported Automation configuration.');
+		}
+		const modelId = configuration.value.modelId;
+		let sessionConfig = configuration.value.sessionConfig;
+		if (modelId !== undefined && typeof modelId !== 'string') {
+			throw new Error('Automation configuration property \'modelId\' must be a string.');
+		}
+		if (sessionConfig !== undefined && !isAutomationConfigurationObject(sessionConfig)) {
+			throw new Error('Automation configuration property \'sessionConfig\' must be an object.');
+		}
+		const modeId = configuration.value.modeId;
+		const permissionLevel = configuration.value.permissionLevel;
+		if (modeId !== undefined && typeof modeId !== 'string') {
+			throw new Error('Automation configuration property \'modeId\' must be a string.');
+		}
+		if (permissionLevel !== undefined && typeof permissionLevel !== 'string') {
+			throw new Error('Automation configuration property \'permissionLevel\' must be a string.');
+		}
+		if (typeof modeId === 'string' || typeof permissionLevel === 'string') {
+			sessionConfig = {
+				...(isAutomationConfigurationObject(sessionConfig) ? sessionConfig : {}),
+				...(typeof modeId === 'string' ? { [SessionConfigKey.Mode]: modeId } : {}),
+				...(typeof permissionLevel === 'string' ? { [SessionConfigKey.AutoApprove]: permissionLevel } : {}),
+			};
+		}
+		return {
+			version: 1,
+			value: {
+				...(typeof modelId === 'string' ? { modelId } : {}),
+				...(sessionConfig ? { sessionConfig } : {}),
+			},
+		};
+	}
+
+	async applyConfiguration(sessionId: string, configuration: ISessionAutomationConfiguration, token: CancellationToken): Promise<void> {
+		const session = this._getNewSession(sessionId);
+		if (!session) {
+			throw new Error(`Automation configuration is unavailable for session '${sessionId}'.`);
+		}
+		const resolved = this.validateAutomationConfiguration(session.session.sessionType, configuration);
+		if (token.isCancellationRequested) {
+			throw new CancellationError();
+		}
+		if (!isAutomationConfigurationObject(resolved.value)) {
+			throw new Error('Unsupported Automation configuration.');
+		}
+		const modelId = resolved.value.modelId;
+		if (typeof modelId === 'string') {
+			this.setModel(sessionId, modelId);
+		}
+		const sessionConfig = resolved.value.sessionConfig;
+		if (sessionConfig !== undefined) {
+			if (!isAutomationConfigurationObject(sessionConfig)) {
+				throw new Error('Automation configuration property \'sessionConfig\' must be an object.');
+			}
+			session.beginResolveConfigSync();
+			session.replaceConfigValues(sessionConfig);
+			this._onDidChangeSessionConfig.fire(sessionId);
+			await session.trackConfigResolution(this._refreshNewSessionConfig(session, { expected: sessionConfig }));
+		}
 	}
 
 	async setIsolationMode(sessionId: string, mode: string): Promise<void> {
