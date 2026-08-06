@@ -15,7 +15,7 @@ import { CancellationTokenSource } from '../../../../base/common/cancellation.js
 import { Codicon } from '../../../../base/common/codicons.js';
 import { Emitter, Event } from '../../../../base/common/event.js';
 import { KeyCode } from '../../../../base/common/keyCodes.js';
-import { DisposableStore, IDisposable, MutableDisposable } from '../../../../base/common/lifecycle.js';
+import { Disposable, DisposableStore, IDisposable, MutableDisposable } from '../../../../base/common/lifecycle.js';
 import { autorun, constObservable, derived, IObservable } from '../../../../base/common/observable.js';
 import { isEqual } from '../../../../base/common/resources.js';
 import { URI } from '../../../../base/common/uri.js';
@@ -41,7 +41,7 @@ import { ISession, ISessionWorkspaceBrowseAction, SESSION_WORKSPACE_GROUP_LOCAL 
 import { setActiveSessionContextKeys } from '../../../services/sessions/common/sessionContextKeys.js';
 import { VisibleSession } from '../../../services/sessions/browser/visibleSessions.js';
 import { IGitRepository, IGitService } from '../../../../workbench/contrib/git/common/gitService.js';
-import { AutomationInterval, IAutomationConfiguration, ScheduledPromptAutomationDefinitionId } from '../../../../workbench/contrib/chat/common/automations/automation.js';
+import { AutomationInterval, IAutomationConfiguration } from '../../../../workbench/contrib/chat/common/automations/automation.js';
 import { DAYS_OF_WEEK } from '../../../../workbench/contrib/chat/common/automations/schedule.js';
 import { ChatContextKeys } from '../../../../workbench/contrib/chat/common/actions/chatContextKeys.js';
 import { ILanguageModelsService } from '../../../../workbench/contrib/chat/common/languageModels.js';
@@ -186,11 +186,121 @@ export interface IValidationState {
 
 interface IRenderFormHandle {
 	readonly getPrompt: () => string;
-	readonly getDefinitionId: () => string | undefined;
 	readonly getConfiguration: () => Promise<IAutomationConfiguration | undefined>;
 	readonly getBranch: () => string | undefined;
 	readonly isLoading: () => boolean;
 	readonly getFocusableElements: () => readonly HTMLElement[];
+}
+
+export type AutomationSessionDraftTarget =
+	| { readonly kind: 'workspace'; readonly folderUri: URI; readonly providerId: string | undefined; readonly sessionTypeId: string }
+	| { readonly kind: 'quickChat'; readonly providerId: string; readonly sessionTypeId: string };
+
+type AutomationSessionDraftService = Pick<
+	ISessionsManagementService,
+	'automationSession' | 'createAutomationSession' | 'createAutomationQuickChat' | 'discardAutomationSession'
+>;
+
+export class AutomationSessionDraftSynchronizer extends Disposable {
+	private requestedTarget: AutomationSessionDraftTarget | undefined;
+	private appliedTarget: AutomationSessionDraftTarget | undefined;
+	private session: ISession | undefined;
+	private generation = 0;
+	private syncScheduled = false;
+	private syncPromise = Promise.resolve();
+	private disposed = false;
+
+	constructor(
+		private readonly sessionsManagementService: AutomationSessionDraftService,
+		private readonly canSelectWorkspace: (folderUri: URI, preferredProviderId: string | undefined) => Promise<boolean>,
+		private readonly onError: (error: unknown) => void,
+	) {
+		super();
+	}
+
+	update(target: AutomationSessionDraftTarget | undefined): void {
+		this.requestedTarget = target;
+		this.generation++;
+		this.scheduleSync();
+	}
+
+	async waitForSync(): Promise<void> {
+		let pendingSync: Promise<void>;
+		do {
+			pendingSync = this.syncPromise;
+			await pendingSync;
+		} while (pendingSync !== this.syncPromise);
+	}
+
+	private scheduleSync(): void {
+		if (this.syncScheduled) {
+			return;
+		}
+		this.syncScheduled = true;
+		this.syncPromise = Promise.resolve().then(() => {
+			this.syncScheduled = false;
+			return this.disposed ? undefined : this.sync(this.generation);
+		});
+	}
+
+	private async sync(generation: number): Promise<void> {
+		const target = this.requestedTarget;
+		if (!target) {
+			this.discardSession();
+			return;
+		}
+		if (this.matchesAppliedTarget(target)) {
+			return;
+		}
+		try {
+			if (target.kind === 'workspace' && !await this.canSelectWorkspace(target.folderUri, target.providerId)) {
+				if (generation === this.generation) {
+					this.discardSession();
+				}
+				return;
+			}
+			if (this.disposed || generation !== this.generation) {
+				return;
+			}
+			this.session = target.kind === 'quickChat'
+				? this.sessionsManagementService.createAutomationQuickChat({ providerId: target.providerId, sessionTypeId: target.sessionTypeId })
+				: this.sessionsManagementService.createAutomationSession(target.folderUri, { providerId: target.providerId, sessionTypeId: target.sessionTypeId });
+			this.appliedTarget = target;
+		} catch (error) {
+			if (!this.disposed && generation === this.generation) {
+				this.discardSession();
+				this.onError(error);
+			}
+		}
+	}
+
+	private matchesAppliedTarget(target: AutomationSessionDraftTarget): boolean {
+		if (!this.session
+			|| !this.appliedTarget
+			|| this.sessionsManagementService.automationSession.get()?.sessionId !== this.session.sessionId
+			|| this.appliedTarget.kind !== target.kind
+			|| this.appliedTarget.providerId !== target.providerId
+			|| this.appliedTarget.sessionTypeId !== target.sessionTypeId) {
+			return false;
+		}
+		return target.kind === 'quickChat'
+			|| (this.appliedTarget.kind === 'workspace' && isEqual(this.appliedTarget.folderUri, target.folderUri));
+	}
+
+	private discardSession(): void {
+		if (this.session) {
+			this.sessionsManagementService.discardAutomationSession(this.session);
+		}
+		this.session = undefined;
+		this.appliedTarget = undefined;
+	}
+
+	override dispose(): void {
+		this.disposed = true;
+		this.generation++;
+		this.discardSession();
+		super.dispose();
+	}
 }
 
 export function resolveAutomationModelIdentifier(
@@ -592,7 +702,6 @@ export function renderForm(
 	sessionsManagementService: ISessionsManagementService,
 	workspaceTrustRequestService: IWorkspaceTrustRequestService,
 	initialPrompt: string,
-	initialDefinitionId: string | undefined,
 	initialConfiguration: IAutomationConfiguration | undefined,
 ): IRenderFormHandle {
 	const nameRow = DOM.append(form, $('.automation-form-row'));
@@ -749,8 +858,8 @@ export function renderForm(
 				dialogAutomationSessionTarget = { kind: 'workspace', folderUri, providerId: pick.providerId, sessionTypeId: pick.sessionTypeId };
 			}
 			if (pendingInitialConfiguration) {
-				const definitionId = initialDefinitionId ?? ScheduledPromptAutomationDefinitionId;
-				await sessionsManagementService.applyAutomationConfiguration(dialogAutomationSession, definitionId, pendingInitialConfiguration);
+				const configuration = sessionsManagementService.validateAutomationConfiguration(dialogAutomationSession.providerId, dialogAutomationSession.sessionType, pendingInitialConfiguration);
+				await sessionsManagementService.applyAutomationConfiguration(dialogAutomationSession, configuration);
 				if (generation === automationSessionSyncGeneration) {
 					pendingInitialConfiguration = undefined;
 				}
@@ -915,17 +1024,6 @@ export function renderForm(
 
 	return {
 		getPrompt: () => newChatInputEditor.getValue(),
-		getDefinitionId: () => {
-			const pick = authoritativeSessionTypePicker.selectedPick;
-			if (!pick?.providerId) {
-				return undefined;
-			}
-			return sessionsManagementService.getAutomationDefinition(
-				pick.providerId,
-				pick.sessionTypeId,
-				initialDefinitionId ?? ScheduledPromptAutomationDefinitionId,
-			)?.definition.id;
-		},
 		getConfiguration: async () => {
 			let pendingSync: Promise<void>;
 			do {
@@ -933,8 +1031,7 @@ export function renderForm(
 				await pendingSync;
 			} while (pendingSync !== automationSessionSyncPromise);
 			const session = dialogAutomationSession;
-			const definitionId = initialDefinitionId ?? ScheduledPromptAutomationDefinitionId;
-			return session ? sessionsManagementService.captureAutomationConfiguration(session, definitionId) : undefined;
+			return session ? sessionsManagementService.captureAutomationConfiguration(session) : undefined;
 		},
 		getBranch: () => isolationModel.persistedBranch,
 		isLoading: () => automationSessionLoading.get(),

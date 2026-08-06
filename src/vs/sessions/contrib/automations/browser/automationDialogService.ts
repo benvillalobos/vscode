@@ -106,7 +106,6 @@ export class AutomationDialogService implements IAutomationDialogService {
 		let cancelButton: IButton | undefined;
 		let revalidate: () => void = () => { };
 		let getPrompt: () => string = () => initial?.prompt ?? '';
-		let getDefinitionId: () => string | undefined = () => initial?.definitionId;
 		let getConfiguration: () => Promise<IAutomationConfiguration | undefined> = async () => initial?.configuration;
 		let getBranch: () => string | undefined = () => initialWorkspaceTarget?.isolation.kind === 'worktree' ? initialWorkspaceTarget.isolation.branch : undefined;
 		let isLoading: () => boolean = () => false;
@@ -161,9 +160,8 @@ export class AutomationDialogService implements IAutomationDialogService {
 
 					const formPane = DOM.append(container, $('.automation-form-pane'));
 					const form = DOM.append(formPane, $('.automation-form'));
-					const handle = renderForm(form, state, disposables, validation, () => revalidate(), this.instantiationService, this.contextKeyService, this.contextViewService, this.configurationService, this.layoutService, this.logService, this.sessionsManagementService, this.workspaceTrustRequestService, initial?.prompt ?? '', initial?.definitionId, initial?.configuration);
+					const handle = renderForm(form, state, disposables, validation, () => revalidate(), this.instantiationService, this.contextKeyService, this.contextViewService, this.configurationService, this.layoutService, this.logService, this.sessionsManagementService, this.workspaceTrustRequestService, initial?.prompt ?? '', initial?.configuration);
 					getPrompt = handle.getPrompt;
-					getDefinitionId = handle.getDefinitionId;
 					getConfiguration = handle.getConfiguration;
 					getBranch = handle.getBranch;
 					isLoading = handle.isLoading;
@@ -211,11 +209,10 @@ export class AutomationDialogService implements IAutomationDialogService {
 			};
 
 			const prompt = getPrompt();
-			const definitionId = getDefinitionId();
 			const automationConfiguration = await getConfiguration();
 			const branch = getBranch();
 			const target = createAutomationTarget(state, branch);
-			if (!target || !definitionId || !automationConfiguration) {
+			if (!target || !automationConfiguration) {
 				return undefined;
 			}
 
@@ -225,7 +222,6 @@ export class AutomationDialogService implements IAutomationDialogService {
 					prompt,
 					schedule,
 					target,
-					definitionId,
 					configuration: automationConfiguration,
 					enabled: state.enabled,
 				};
@@ -237,7 +233,6 @@ export class AutomationDialogService implements IAutomationDialogService {
 				prompt,
 				schedule,
 				target,
-				definitionId,
 				configuration: automationConfiguration,
 				enabled: state.enabled,
 			};
