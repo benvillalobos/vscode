@@ -117,6 +117,8 @@ src/vs/sessions/contrib/providers/
 └── remoteAgentHost/      # Remote agent host provider (one instance per connection)
 ```
 
+Providers can expose `automationConfiguration` to capture, validate, and apply an opaque, versioned snapshot of their session-draft configuration. Sessions management only routes these snapshots by exact provider and session-type identity; it does not inspect provider-owned values.
+
 Providers can import from all layers below them (core, services, non-provider contribs). **Non-provider contribs must NOT import from providers.** Shared symbols should be extracted to `services/` or `common/`.
 
 Permission picker labels and descriptions use provider-neutral language and stay aligned across Copilot Chat and Agent Host providers. Agent Host mode and running-session permission pickers use provider-specific list options in both the workbench and Agents window so their descriptive text has a consistent minimum width. `chat.defaultConfiguration.approvals` sets the initial permission level for new sessions using `default`, `assisted`, or `allowAll`; the live session config continues to use the Agent Host protocol's `autoApprove` value.

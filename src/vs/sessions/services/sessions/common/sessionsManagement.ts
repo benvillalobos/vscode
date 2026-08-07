@@ -9,7 +9,7 @@ import { URI } from '../../../../base/common/uri.js';
 import { CancellationToken } from '../../../../base/common/cancellation.js';
 import { createDecorator } from '../../../../platform/instantiation/common/instantiation.js';
 import { IChat, ISession, ISessionType, ISessionWorkspace, ISideChatSelection } from './session.js';
-import { IDeleteChatOptions, ISendRequestOptions as ISessionsProviderSendRequestOptions } from './sessionsProvider.js';
+import { IDeleteChatOptions, ISendRequestOptions as ISessionsProviderSendRequestOptions, ISessionAutomationConfiguration } from './sessionsProvider.js';
 
 /** Raised when unattended session creation targets a workspace that requires trust. */
 export class WorkspaceNotTrustedError extends Error {
@@ -252,6 +252,18 @@ export interface ISessionsManagementService {
 	 * creating a quick chat.
 	 */
 	getQuickChatSessionTypes(): IProviderSessionType[];
+
+	/** Get every provider/session-type pair that supports Automations. */
+	getAutomationSessionTypes(): IProviderSessionType[];
+
+	/** Capture provider-owned configuration from a session draft. */
+	captureAutomationConfiguration(session: ISession): ISessionAutomationConfiguration;
+
+	/** Validate provider-owned configuration. */
+	validateAutomationConfiguration(providerId: string, sessionTypeId: string, configuration: ISessionAutomationConfiguration): ISessionAutomationConfiguration;
+
+	/** Apply provider-owned configuration to a session draft. */
+	applyAutomationConfiguration(session: ISession, configuration: ISessionAutomationConfiguration, token?: CancellationToken): Promise<void>;
 
 	/** Whether the requested workspace session target is currently advertised. */
 	isNewSessionTargetAvailable(folderUri: URI, options?: ICreateNewSessionOptions): boolean;

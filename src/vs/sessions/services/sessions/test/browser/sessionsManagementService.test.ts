@@ -31,7 +31,7 @@ import { PreferredGroup } from '../../../../../workbench/services/editor/common/
 import { nullExtensionDescription } from '../../../../../workbench/services/extensions/common/extensions.js';
 import { SessionTypeAuthRequirement, ChatInteractivity, ChatOriginKind, IChat, ISession, ISessionType, ISessionWorkspace, ISideChatSelection, SessionStatus } from '../../common/session.js';
 import { ILanguageModelChatMetadataAndIdentifier } from '../../../../../workbench/contrib/chat/common/languageModels.js';
-import { ISessionChangeEvent, ISendRequestOptions, ISessionModelsSnapshot, ISessionModelPickerOptions, ISessionsProvider } from '../../common/sessionsProvider.js';
+import { ISessionAutomationConfigurationCapability, ISessionChangeEvent, ISendRequestOptions, ISessionModelsSnapshot, ISessionModelPickerOptions, ISessionsProvider } from '../../common/sessionsProvider.js';
 import { SessionsManagementService } from '../../browser/sessionsManagementService.js';
 import { ISessionsManagementService, ICreateNewSessionOptions, inheritableSessionTarget, WorkspaceNotTrustedError } from '../../common/sessionsManagement.js';
 import { SessionsService } from '../../browser/sessionsService.js';
@@ -300,6 +300,59 @@ suite('SessionsManagementService', () => {
 			{ activeId: view.activeSession.get()?.sessionId, otherRead: other.isRead.get() },
 			{ activeId: undefined, otherRead: false },
 		);
+	});
+
+	test('preserves provider and session type identity when routing Automation configuration', async () => {
+		const session = stubSession({ sessionId: 'automation-definitions', providerId: 'test', sessionType: 'second' });
+		const calls: string[] = [];
+		const automationConfiguration: ISessionAutomationConfigurationCapability = {
+			captureConfiguration: sessionId => {
+				calls.push(`capture:${sessionId}`);
+				return { version: 1, value: { captured: true } };
+			},
+			validateAutomationConfiguration: (sessionTypeId, configuration) => {
+				calls.push(`resolve:${sessionTypeId}`);
+				return { ...configuration, value: { resolved: true } };
+			},
+			applyConfiguration: async (sessionId, _configuration, token) => {
+				calls.push(`apply:${sessionId}:${token.isCancellationRequested}`);
+			},
+		};
+		const provider = new class extends TestSessionsProvider {
+			override readonly automationConfiguration = automationConfiguration;
+			override readonly sessionTypes: readonly ISessionType[] = [
+				{ authRequirement: SessionTypeAuthRequirement.GitHub, id: 'first', label: 'First', icon: Codicon.vm, supportsWorktreeConfiguration: true },
+				{ authRequirement: SessionTypeAuthRequirement.GitHub, id: 'second', label: 'Second', icon: Codicon.vm, supportsWorktreeConfiguration: true },
+			];
+		}(session);
+		const { service } = createSessionsManagementService(session, disposables, provider);
+		const configuration = { version: 1, value: { original: true } };
+
+		const captured = service.captureAutomationConfiguration(session);
+		const resolvedConfiguration = service.validateAutomationConfiguration('test', 'second', configuration);
+		await service.applyAutomationConfiguration(session, configuration);
+
+		assert.deepStrictEqual({
+			automationSessionTypes: service.getAutomationSessionTypes().map(candidate => ({
+				providerId: candidate.providerId,
+				sessionTypeId: candidate.sessionType.id,
+			})),
+			captured,
+			resolvedConfiguration,
+			calls,
+		}, {
+			automationSessionTypes: [
+				{ providerId: 'test', sessionTypeId: 'first' },
+				{ providerId: 'test', sessionTypeId: 'second' },
+			],
+			captured: { version: 1, value: { captured: true } },
+			resolvedConfiguration: { version: 1, value: { resolved: true } },
+			calls: [
+				'capture:automation-definitions',
+				'resolve:second',
+				'apply:automation-definitions:false',
+			],
+		});
 	});
 
 	test('does not change active session when added session is not displayed in any widget', async () => {

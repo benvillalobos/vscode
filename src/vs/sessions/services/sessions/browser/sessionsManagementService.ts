@@ -23,7 +23,7 @@ import { IUriIdentityService } from '../../../../platform/uriIdentity/common/uri
 import { getSessionReferenceResource } from './sessionReference.js';
 import { ICreateNewChatInSessionOptions, ICreateNewSessionOptions, IProviderSessionType, ISendRequestOptions, ISendRequestSentEvent, ISessionsChangeEvent, ISessionsManagementService, WorkspaceNotTrustedError } from '../common/sessionsManagement.js';
 import { ISessionsProvidersChangeEvent, ISessionsProvidersService } from './sessionsProvidersService.js';
-import { IDeleteChatOptions, ISessionChangeEvent, ISessionsProvider } from '../common/sessionsProvider.js';
+import { IDeleteChatOptions, ISessionAutomationConfiguration, ISessionChangeEvent, ISessionsProvider } from '../common/sessionsProvider.js';
 import { IChat, ISession, ISessionWorkspace, ISideChatSelection, SessionStatus, ISessionType } from '../common/session.js';
 import { InstantiationType, registerSingleton } from '../../../../platform/instantiation/common/extensions.js';
 import { IStorageService, StorageScope, StorageTarget } from '../../../../platform/storage/common/storage.js';
@@ -305,6 +305,43 @@ export class SessionsManagementService extends Disposable implements ISessionsMa
 			}
 		}
 		return result;
+	}
+
+	getAutomationSessionTypes(): IProviderSessionType[] {
+		const result: IProviderSessionType[] = [];
+		for (const provider of this.sessionsProvidersService.getProviders()) {
+			if (!provider.automationConfiguration) {
+				continue;
+			}
+			for (const sessionType of provider.sessionTypes) {
+				result.push({ providerId: provider.id, sessionType });
+			}
+		}
+		return result;
+	}
+
+	captureAutomationConfiguration(session: ISession): ISessionAutomationConfiguration {
+		const automations = this._getAutomationCapability(session.providerId, session.sessionType);
+		return automations.captureConfiguration(session.sessionId);
+	}
+
+	validateAutomationConfiguration(providerId: string, sessionTypeId: string, configuration: ISessionAutomationConfiguration): ISessionAutomationConfiguration {
+		const automations = this._getAutomationCapability(providerId, sessionTypeId);
+		return automations.validateAutomationConfiguration(sessionTypeId, configuration);
+	}
+
+	applyAutomationConfiguration(session: ISession, configuration: ISessionAutomationConfiguration, token: CancellationToken = CancellationToken.None): Promise<void> {
+		const automations = this._getAutomationCapability(session.providerId, session.sessionType);
+		return automations.applyConfiguration(session.sessionId, configuration, token);
+	}
+
+	private _getAutomationCapability(providerId: string, sessionTypeId: string) {
+		const provider = this.sessionsProvidersService.getProvider(providerId);
+		const automationConfiguration = provider?.automationConfiguration;
+		if (!automationConfiguration || !provider.sessionTypes.some(sessionType => sessionType.id === sessionTypeId)) {
+			throw new Error(`Automations are unavailable for provider '${providerId}' and session type '${sessionTypeId}'.`);
+		}
+		return automationConfiguration;
 	}
 
 	isNewSessionTargetAvailable(folderUri: URI, options?: ICreateNewSessionOptions): boolean {
