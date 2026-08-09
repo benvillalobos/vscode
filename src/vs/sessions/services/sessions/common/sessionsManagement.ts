@@ -8,6 +8,7 @@ import { IObservable } from '../../../../base/common/observable.js';
 import { URI } from '../../../../base/common/uri.js';
 import { CancellationToken } from '../../../../base/common/cancellation.js';
 import { createDecorator } from '../../../../platform/instantiation/common/instantiation.js';
+import { IAutomationConfiguration } from '../../../../workbench/contrib/chat/common/automations/automation.js';
 import { IChat, ISession, ISessionType, ISessionWorkspace, ISideChatSelection } from './session.js';
 import { IDeleteChatOptions, ISendRequestOptions as ISessionsProviderSendRequestOptions } from './sessionsProvider.js';
 
@@ -63,6 +64,8 @@ export interface ICreateNewSessionOptions {
 	 * chosen provider advertises for the folder URI.
 	 */
 	readonly sessionTypeId?: string;
+	/** Provider-owned configuration to apply to the draft before its first turn. */
+	readonly automationConfiguration?: IAutomationConfiguration;
 	/**
 	 * Optional model identifier to apply to the new session via
 	 * {@link ISessionsProvider.setModel}. If the provider throws, the
@@ -252,6 +255,18 @@ export interface ISessionsManagementService {
 	 * creating a quick chat.
 	 */
 	getQuickChatSessionTypes(): IProviderSessionType[];
+
+	/** Get every provider/session-type pair that supports Automations. */
+	getAutomationSessionTypes(): IProviderSessionType[];
+
+	/** Capture provider-owned configuration from a session draft. */
+	captureAutomationConfiguration(session: ISession, token?: CancellationToken): Promise<IAutomationConfiguration>;
+
+	/** Validate provider-owned configuration. */
+	validateAutomationConfiguration(providerId: string, sessionTypeId: string, configuration: IAutomationConfiguration): IAutomationConfiguration;
+
+	/** Apply provider-owned configuration to a session draft. */
+	applyAutomationConfiguration(session: ISession, configuration: IAutomationConfiguration, token?: CancellationToken): Promise<void>;
 
 	/** Whether the requested workspace session target is currently advertised. */
 	isNewSessionTargetAvailable(folderUri: URI, options?: ICreateNewSessionOptions): boolean;

@@ -723,7 +723,7 @@ suite('AutomationService', () => {
 		});
 	});
 
-	test('migrates valid schema v1 records to v3 while dropping malformed targets', async () => {
+	test('migrates valid schema v1 records to v4 while dropping malformed targets', async () => {
 		const storage = teardown.add(new InMemoryStorageService());
 		const ledger = {
 			schemaVersion: 1,
@@ -760,13 +760,13 @@ suite('AutomationService', () => {
 			automationIds: migrated.automations.map((automation: { id: string }) => automation.id),
 			runIds: migrated.runs.map((run: { id: string }) => run.id),
 		}, {
-			schemaVersion: 3,
+			schemaVersion: 4,
 			automationIds: ['keep', 'quick'],
 			runIds: ['r-keep', 'r-quick'],
 		});
 	});
 
-	test('migrates schema v2 flat targets to schema v3 target unions', async () => {
+	test('migrates schema v2 flat targets to schema v4 target unions', async () => {
 		const storage = teardown.add(new InMemoryStorageService());
 		const common = {
 			prompt: 'p',
@@ -794,7 +794,126 @@ suite('AutomationService', () => {
 
 		await service.updateAutomation('workspace', { name: 'Updated' });
 		const migrated = JSON.parse(storage.get('chat.automations.ledger', -1)!);
-		assert.strictEqual(migrated.schemaVersion, 3);
+		assert.strictEqual(migrated.schemaVersion, 4);
+	});
+
+	test('round-trips provider-owned configuration in schema v4', async () => {
+		const storage = teardown.add(new InMemoryStorageService());
+		const service = teardown.add(createAutomationService(storage, new NullLogService(), NullTelemetryService));
+		const configuration = {
+			providerId: 'local-agent-host',
+			sessionTypeId: 'copilotcli',
+			version: 1,
+			value: { modelId: 'model', sessionConfig: { autoApprove: 'default' } },
+		};
+		const created = await service.createAutomation({
+			name: 'Configured',
+			prompt: 'p',
+			schedule: dailySchedule(),
+			target: { kind: 'workspace', folderUri: FOLDER, providerId: 'local-agent-host', sessionTypeId: 'copilotcli', isolation: { kind: 'default' } },
+			configuration,
+		});
+		const reloaded = teardown.add(createAutomationService(storage, new NullLogService(), NullTelemetryService)).getAutomation(created.id);
+		const persisted = JSON.parse(storage.get('chat.automations.ledger', StorageScope.APPLICATION)!);
+
+		assert.deepStrictEqual({
+			schemaVersion: persisted.schemaVersion,
+			configuration: reloaded?.configuration,
+		}, {
+			schemaVersion: 4,
+			configuration,
+		});
+	});
+
+	test('clears provider configuration when retargeting without a replacement snapshot', async () => {
+		const storage = teardown.add(new InMemoryStorageService());
+		const service = teardown.add(createAutomationService(storage, new NullLogService(), NullTelemetryService));
+		const created = await service.createAutomation({
+			name: 'Configured',
+			prompt: 'p',
+			schedule: dailySchedule(),
+			target: { kind: 'workspace', folderUri: FOLDER, providerId: 'local-agent-host', sessionTypeId: 'copilotcli', isolation: { kind: 'default' } },
+			configuration: {
+				providerId: 'local-agent-host',
+				sessionTypeId: 'copilotcli',
+				version: 1,
+				value: {},
+			},
+		});
+
+		const updated = await service.updateAutomation(created.id, {
+			target: { kind: 'workspace', folderUri: FOLDER, providerId: 'other-provider', sessionTypeId: 'other', isolation: { kind: 'default' } },
+		});
+
+		assert.strictEqual(updated.configuration, undefined);
+	});
+
+	test('rejects provider configuration that does not match the target', async () => {
+		const service = teardown.add(createAutomationService(teardown.add(new InMemoryStorageService()), new NullLogService(), NullTelemetryService));
+
+		await assert.rejects(service.createAutomation({
+			name: 'Configured',
+			prompt: 'p',
+			schedule: dailySchedule(),
+			target: { kind: 'workspace', folderUri: FOLDER, providerId: 'local-agent-host', sessionTypeId: 'copilotcli', isolation: { kind: 'default' } },
+			configuration: {
+				providerId: 'other-provider',
+				sessionTypeId: 'copilotcli',
+				version: 1,
+				value: {},
+			},
+		}), /belongs to/);
+	});
+
+	test('provider configuration clears legacy model, mode, and permission fields', async () => {
+		const service = teardown.add(createAutomationService(teardown.add(new InMemoryStorageService()), new NullLogService(), NullTelemetryService));
+		const created = await service.createAutomation({
+			name: 'Legacy',
+			prompt: 'p',
+			schedule: dailySchedule(),
+			target: { kind: 'workspace', folderUri: FOLDER, providerId: 'local-agent-host', sessionTypeId: 'copilotcli', isolation: { kind: 'default' } },
+			modelId: 'legacy-model',
+			mode: 'agent',
+			permissionLevel: 'autopilot',
+		});
+
+		const updated = await service.updateAutomation(created.id, {
+			configuration: {
+				providerId: 'local-agent-host',
+				sessionTypeId: 'copilotcli',
+				version: 1,
+				value: {},
+			},
+		});
+
+		assert.deepStrictEqual({
+			modelId: updated.modelId,
+			mode: updated.mode,
+			permissionLevel: updated.permissionLevel,
+		}, {
+			modelId: undefined,
+			mode: undefined,
+			permissionLevel: undefined,
+		});
+	});
+
+	test('reads schema v3 Automations without provider configuration', () => {
+		const storage = teardown.add(new InMemoryStorageService());
+		storage.store('chat.automations.ledger', JSON.stringify({
+			schemaVersion: 3,
+			revision: 1,
+			automations: [serializeLedgerAutomation('legacy-v3', 'Legacy v3')],
+			runs: [],
+		}), StorageScope.APPLICATION, StorageTarget.MACHINE);
+		const service = teardown.add(createAutomationService(storage, new NullLogService(), NullTelemetryService));
+
+		assert.deepStrictEqual({
+			id: service.automations.get()[0]?.id,
+			configuration: service.automations.get()[0]?.configuration,
+		}, {
+			id: 'legacy-v3',
+			configuration: undefined,
+		});
 	});
 
 	test('round-trips a folderUri through persistence', async () => {

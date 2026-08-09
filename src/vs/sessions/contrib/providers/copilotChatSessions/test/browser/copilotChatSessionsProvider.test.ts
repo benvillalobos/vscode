@@ -4,6 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import assert from 'assert';
+import { CancellationToken } from '../../../../../../base/common/cancellation.js';
 import { Codicon } from '../../../../../../base/common/codicons.js';
 import { Emitter, Event } from '../../../../../../base/common/event.js';
 import { timeout } from '../../../../../../base/common/async.js';
@@ -2037,6 +2038,51 @@ suite('CopilotChatSessionsProvider', () => {
 
 			assert.strictEqual(session?.permissionLevel.get(), ChatPermissionLevel.Default);
 		});
+	});
+
+	test('round-trips provider-owned Automation configuration', async () => {
+		const provider = createProviderForSendTests(disposables, model, () => new Promise(() => { }));
+		const session = provider.createNewSession(URI.file('/test/repo'), CopilotCLISessionType.id);
+		const configuration = {
+			providerId: provider.id,
+			sessionTypeId: CopilotCLISessionType.id,
+			version: 1,
+			value: {
+				modelId: 'test-model',
+				permissionLevel: ChatPermissionLevel.Autopilot,
+			},
+		};
+
+		await provider.applyAutomationConfiguration(session.sessionId, configuration, CancellationToken.None);
+
+		assert.deepStrictEqual(
+			await provider.captureAutomationConfiguration(session.sessionId, CancellationToken.None),
+			configuration,
+		);
+	});
+
+	test('round-trips Cloud Automation configuration without unsupported permissions', async () => {
+		const provider = createProvider(disposables, model, {
+			getOptionGroups: () => [{
+				id: 'models',
+				name: 'Models',
+				items: [{ id: 'cloud-model', name: 'Cloud Model' }],
+			}],
+		});
+		const session = provider.createNewSession(URI.from({ scheme: GITHUB_REMOTE_FILE_SCHEME, path: '/owner/repository' }), CopilotCloudSessionType.id);
+		const configuration = {
+			providerId: provider.id,
+			sessionTypeId: CopilotCloudSessionType.id,
+			version: 1,
+			value: { modelId: 'cloud-model' },
+		};
+
+		await provider.applyAutomationConfiguration(session.sessionId, configuration, CancellationToken.None);
+
+		assert.deepStrictEqual(
+			await provider.captureAutomationConfiguration(session.sessionId, CancellationToken.None),
+			configuration,
+		);
 	});
 
 	// ---- In-flight commit protection -------

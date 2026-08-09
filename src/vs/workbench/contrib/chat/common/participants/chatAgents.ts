@@ -155,6 +155,7 @@ export interface IChatAgentRequest {
 	acceptedConfirmationData?: unknown[];
 	rejectedConfirmationData?: unknown[];
 	agentHostSessionConfig?: Record<string, unknown>;
+	agentHostSessionConfigReplace?: boolean;
 	userSelectedModelId?: string;
 	modelConfiguration?: IStringDictionary<unknown>;
 	userSelectedTools?: UserSelectedTools;

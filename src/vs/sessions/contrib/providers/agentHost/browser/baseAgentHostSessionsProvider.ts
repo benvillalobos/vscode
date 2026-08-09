@@ -7,6 +7,7 @@ import { disposableTimeout, raceCancellationError } from '../../../../../base/co
 import { CancellationToken, CancellationTokenSource } from '../../../../../base/common/cancellation.js';
 import { Codicon } from '../../../../../base/common/codicons.js';
 import { arrayEquals, structuralEquals } from '../../../../../base/common/equals.js';
+import { CancellationError } from '../../../../../base/common/errors.js';
 import { Emitter, Event } from '../../../../../base/common/event.js';
 import { IMarkdownString, MarkdownString, markdownStringEqual } from '../../../../../base/common/htmlContent.js';
 import { Disposable, DisposableMap, DisposableStore, IDisposable, IReference, MutableDisposable, toDisposable } from '../../../../../base/common/lifecycle.js';
@@ -44,12 +45,13 @@ import { ChatAgentLocation, ChatConfiguration, ChatModeKind, ChatPermissionLevel
 import { isAutoApprovePolicyRestricted, normalizeSessionConfigValue } from '../../../../../workbench/contrib/chat/common/agentHostConfigPolicy.js';
 import { ILanguageModelChatMetadata, ILanguageModelsService } from '../../../../../workbench/contrib/chat/common/languageModels.js';
 import { getRegisteredLanguageModels, resolveConfiguredModel, resolveModelIdentifier, resolveModelIdentifierFromLanguageModels } from '../../../../../workbench/contrib/chat/common/modelSelection.js';
+import { AutomationConfigurationValue, IAutomationConfiguration, isAutomationConfigurationObject, toAutomationConfigurationValue } from '../../../../../workbench/contrib/chat/common/automations/automation.js';
 import { buildMutableConfigSchema, IAgentHostMcpServer, IAgentHostSessionsProvider, resolvedConfigsEqual } from '../../../../common/agentHostSessionsProvider.js';
 import { agentHostSessionWorkspaceKey } from '../../../../common/agentHostSessionWorkspace.js';
 import { isSessionConfigComplete } from '../../../../common/sessionConfig.js';
 import { ChatInteractivity, ChatOriginKind, DEFAULT_CHAT_CAPABILITIES, effectiveChatInteractivity, IChat, IChatCapabilities, IGitHubInfo, IGitHubIssueRef, IGitHubPullRequestRef, ISession, ISessionAgentRef, ISessionCapabilities, ISessionChangeset, ISessionChangesSummary, ISessionFile, ISessionFileChange, ISessionTurnFileChange, ISessionType, ISessionWorkspace, ISessionWorkspaceBrowseAction, ISideChatSelection, sessionFileChangesEqual, SessionStatus, SessionTypeAuthRequirement, toSessionId } from '../../../../services/sessions/common/session.js';
 import { ISessionsService } from '../../../../services/sessions/browser/sessionsService.js';
-import { IDeleteChatOptions, ISendRequestOptions, ISessionChangeEvent, ISessionModelPickerOptions, ISessionModelsSnapshot } from '../../../../services/sessions/common/sessionsProvider.js';
+import { IDeleteChatOptions, ISendRequestOptions, ISessionsProviderAutomationConfiguration, ISessionChangeEvent, ISessionModelPickerOptions, ISessionModelsSnapshot } from '../../../../services/sessions/common/sessionsProvider.js';
 import { IGitHubService } from '../../../github/browser/githubService.js';
 import { computeSessionPullRequestIcon } from '../../../github/browser/pullRequestIconStatus.js';
 import { IPullRequestIconCache } from '../../../github/browser/pullRequestIconCache.js';
@@ -1527,6 +1529,7 @@ class NewSession extends Disposable {
 	private readonly _mainChat: ISettableObservable<IChat>;
 	private _selectedModelId: string | undefined;
 	private _selectedAgent: ISessionAgentRef | undefined;
+	private _replaceConfigOnSend = false;
 
 	observeClientCustomAgents(customAgents: IObservable<readonly AgentCustomization[]>, onDidChange: () => void): void {
 		let previous = customAgents.get();
@@ -1697,6 +1700,8 @@ class NewSession extends Disposable {
 
 	getSelectedModelId(): string | undefined { return this._selectedModelId; }
 	clearSelectedModelId(): void { this._selectedModelId = undefined; }
+	markConfigForReplacementOnSend(): void { this._replaceConfigOnSend = true; }
+	get replaceConfigOnSend(): boolean { return this._replaceConfigOnSend; }
 	/** Untitled skeleton title used until the first request commits the session. */
 	get untitledTitle(): string { return this._kind.untitledTitle; }
 	setSelectedAgent(agent: ISessionAgentRef | undefined): void {
@@ -1718,6 +1723,13 @@ class NewSession extends Disposable {
 
 	getConfig(): ResolveSessionConfigResult | undefined { return this._config; }
 	getConfigValues(): Record<string, unknown> | undefined { return this._config?.values; }
+	replaceConfigValues(values: Record<string, unknown>): void {
+		this._config = {
+			schema: this._config?.schema ?? { type: 'object', properties: {} },
+			values: { ...values },
+		};
+		this._syncWorktreePending();
+	}
 
 	trackConfigResolution(promise: Promise<void>): Promise<void> {
 		this._configResolution = promise;
@@ -2002,7 +2014,7 @@ class NewSession extends Disposable {
  * URI-scheme mapping for session metadata, the agent-provider lookup, and
  * the browse UI.
  */
-export abstract class BaseAgentHostSessionsProvider extends Disposable implements IAgentHostSessionsProvider {
+export abstract class BaseAgentHostSessionsProvider extends Disposable implements IAgentHostSessionsProvider, ISessionsProviderAutomationConfiguration {
 
 	abstract readonly id: string;
 	abstract readonly label: string;
@@ -2010,6 +2022,7 @@ export abstract class BaseAgentHostSessionsProvider extends Disposable implement
 	abstract readonly browseActions: readonly ISessionWorkspaceBrowseAction[];
 
 	get order(): number { return 0; }
+	readonly automationConfiguration = this;
 
 	get sessionTypes(): readonly ISessionType[] { return this._sessionTypes; }
 	protected _sessionTypes: ISessionType[] = [];
@@ -3075,6 +3088,132 @@ export abstract class BaseAgentHostSessionsProvider extends Disposable implement
 		return this._getNewSession(sessionId)?.getConfigValues();
 	}
 
+	async captureAutomationConfiguration(sessionId: string, token: CancellationToken): Promise<IAutomationConfiguration> {
+		const session = this._getNewSession(sessionId);
+		if (!session) {
+			throw new Error(`Automation configuration is unavailable for session '${sessionId}'.`);
+		}
+		await raceCancellationError(session.waitForConfigResolution(), token);
+		if (token.isCancellationRequested) {
+			throw new CancellationError();
+		}
+		if (this._getNewSession(sessionId) !== session || session.session.status.get() !== SessionStatus.Untitled) {
+			throw new Error(`Automation configuration is unavailable for session '${sessionId}'.`);
+		}
+		const value: { [key: string]: AutomationConfigurationValue } = {};
+		const modelId = session.getSelectedModelId();
+		const sessionConfig = session.getConfigValues();
+		if (modelId) {
+			value.modelId = modelId;
+		}
+		if (sessionConfig && Object.keys(sessionConfig).length > 0) {
+			value.sessionConfig = toAutomationConfigurationValue(sessionConfig);
+		}
+		return {
+			providerId: this.id,
+			sessionTypeId: session.session.sessionType,
+			version: 1,
+			value,
+		};
+	}
+
+	validateAutomationConfiguration(sessionTypeId: string, configuration: IAutomationConfiguration): IAutomationConfiguration {
+		if (configuration.providerId !== this.id || configuration.sessionTypeId !== sessionTypeId) {
+			throw new Error(`Automation configuration belongs to '${configuration.providerId}/${configuration.sessionTypeId}', not '${this.id}/${sessionTypeId}'.`);
+		}
+		const value = toAutomationConfigurationValue(configuration.value);
+		if (configuration.version !== 1 || !isAutomationConfigurationObject(value)) {
+			throw new Error('Unsupported Automation configuration.');
+		}
+		const modelId = value.modelId;
+		const sessionConfig = value.sessionConfig;
+		if (modelId !== undefined && typeof modelId !== 'string') {
+			throw new Error('Automation configuration property \'modelId\' must be a string.');
+		}
+		if (sessionConfig !== undefined && !isAutomationConfigurationObject(sessionConfig)) {
+			throw new Error('Automation configuration property \'sessionConfig\' must be an object.');
+		}
+		const normalizedSessionConfig: { [key: string]: AutomationConfigurationValue } = {};
+		if (isAutomationConfigurationObject(sessionConfig)) {
+			const policyRestricted = isAutoApprovePolicyRestricted(this._baseConfigurationService);
+			for (const [property, propertyValue] of Object.entries(sessionConfig)) {
+				const normalized = normalizeSessionConfigValue(property, propertyValue, policyRestricted);
+				if (normalized !== undefined) {
+					normalizedSessionConfig[property] = toAutomationConfigurationValue(normalized);
+				}
+			}
+		}
+		return {
+			providerId: this.id,
+			sessionTypeId,
+			version: 1,
+			value: {
+				...(typeof modelId === 'string' ? { modelId } : {}),
+				sessionConfig: normalizedSessionConfig,
+			},
+		};
+	}
+
+	async applyAutomationConfiguration(sessionId: string, configuration: IAutomationConfiguration, token: CancellationToken): Promise<void> {
+		const session = this._getNewSession(sessionId);
+		if (!session) {
+			throw new Error(`Automation configuration is unavailable for session '${sessionId}'.`);
+		}
+		await raceCancellationError(session.waitForConfigResolution(), token);
+		if (this._getNewSession(sessionId) !== session || session.session.status.get() !== SessionStatus.Untitled) {
+			throw new Error(`Automation configuration is unavailable for session '${sessionId}'.`);
+		}
+		const resolved = this.validateAutomationConfiguration(session.session.sessionType, configuration);
+		if (token.isCancellationRequested) {
+			throw new CancellationError();
+		}
+		if (!isAutomationConfigurationObject(resolved.value)) {
+			throw new Error('Unsupported Automation configuration.');
+		}
+		const previousModelId = session.getSelectedModelId();
+		const previousConfigValue = toAutomationConfigurationValue(session.getConfigValues() ?? {});
+		if (!isAutomationConfigurationObject(previousConfigValue)) {
+			throw new Error('Automation configuration property \'sessionConfig\' must be an object.');
+		}
+		const modelId = resolved.value.modelId;
+		const sessionConfig = resolved.value.sessionConfig;
+		if (!isAutomationConfigurationObject(sessionConfig)) {
+			throw new Error('Automation configuration property \'sessionConfig\' must be an object.');
+		}
+		try {
+			if (typeof modelId === 'string') {
+				this.setModel(sessionId, modelId);
+			} else {
+				session.clearSelectedModelId();
+			}
+			session.beginResolveConfigSync();
+			session.replaceConfigValues(sessionConfig);
+			session.markConfigForReplacementOnSend();
+			this._onDidChangeSessionConfig.fire(sessionId);
+			await raceCancellationError(session.trackConfigResolution(this._refreshNewSessionConfig(session, { expected: sessionConfig })), token);
+			if (this._getNewSession(sessionId) !== session || session.session.status.get() !== SessionStatus.Untitled) {
+				throw new Error(`Automation configuration is unavailable for session '${sessionId}'.`);
+			}
+		} catch (error) {
+			if (this._getNewSession(sessionId) === session && session.session.status.get() === SessionStatus.Untitled) {
+				if (previousModelId) {
+					this.setModel(sessionId, previousModelId);
+				} else {
+					session.clearSelectedModelId();
+				}
+				session.beginResolveConfigSync();
+				session.replaceConfigValues(previousConfigValue);
+				this._onDidChangeSessionConfig.fire(sessionId);
+				try {
+					await session.trackConfigResolution(this._refreshNewSessionConfig(session, { expected: previousConfigValue }));
+				} catch (rollbackError) {
+					throw new AggregateError([error, rollbackError], `Failed to apply and roll back Automation configuration for session '${sessionId}'.`);
+				}
+			}
+			throw error;
+		}
+	}
+
 	async setIsolationMode(sessionId: string, mode: string): Promise<void> {
 		const policyRestricted = isAutoApprovePolicyRestricted(this._baseConfigurationService);
 		const value = normalizeSessionConfigValue(
@@ -3925,6 +4064,7 @@ export abstract class BaseAgentHostSessionsProvider extends Disposable implement
 			agentIdSilent: contribution?.type,
 			attachedContext,
 			agentHostSessionConfig: this.getCreateSessionConfig(chatId),
+			agentHostSessionConfigReplace: newSession.replaceConfigOnSend,
 		};
 
 		// Chat session model was already created by createNewChat and

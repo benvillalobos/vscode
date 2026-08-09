@@ -3,13 +3,14 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import { CancellationToken } from '../../../../base/common/cancellation.js';
 import { Event } from '../../../../base/common/event.js';
 import { ThemeIcon } from '../../../../base/common/themables.js';
 import { URI } from '../../../../base/common/uri.js';
 import { IChatRequestVariableEntry } from '../../../../workbench/contrib/chat/common/attachments/chatVariableEntries.js';
 import { ILanguageModelChatMetadataAndIdentifier } from '../../../../workbench/contrib/chat/common/languageModels.js';
 import { ModelIdentifierResolution } from '../../../../workbench/contrib/chat/common/modelSelection.js';
-import { IAutomation, IAutomationRun } from '../../../../workbench/contrib/chat/common/automations/automation.js';
+import { IAutomation, IAutomationConfiguration, IAutomationRun } from '../../../../workbench/contrib/chat/common/automations/automation.js';
 import { IAutomationStore } from '../../../../workbench/contrib/chat/common/automations/automationService.js';
 import { IChat, ISession, ISessionType, ISessionWorkspace, ISessionWorkspaceBrowseAction, ISideChatSelection } from './session.js';
 
@@ -89,6 +90,15 @@ export interface ISessionsProviderAutomations extends IAutomationStore {
 	upsertAutomationSnapshot(snapshot: IAutomationSnapshot): Promise<void>;
 	/** Removes a snapshot only when the currently stored Automation and runs still match it. */
 	removeAutomationSnapshotIfUnchanged(expected: IAutomationSnapshot): Promise<IGuardedAutomationSnapshotRemovalResult>;
+}
+
+export interface ISessionsProviderAutomationConfiguration {
+	/** Captures a settled configuration snapshot from an untitled session draft. */
+	captureAutomationConfiguration(sessionId: string, token: CancellationToken): Promise<IAutomationConfiguration>;
+	/** Validates and canonicalizes a snapshot for one exact provider session type. */
+	validateAutomationConfiguration(sessionTypeId: string, configuration: IAutomationConfiguration): IAutomationConfiguration;
+	/** Fully replaces provider-owned draft configuration with the validated snapshot. */
+	applyAutomationConfiguration(sessionId: string, configuration: IAutomationConfiguration, token: CancellationToken): Promise<void>;
 }
 
 /**
@@ -190,6 +200,9 @@ export interface ISessionsProvider {
 
 	/** Provider-owned Automation entities, persistence, and run history. */
 	readonly automations?: ISessionsProviderAutomations;
+
+	/** Provider-specific session configuration used by Automations. */
+	readonly automationConfiguration?: ISessionsProviderAutomationConfiguration;
 
 	/**
 	 * Resolve a workspace for the given repository URI.

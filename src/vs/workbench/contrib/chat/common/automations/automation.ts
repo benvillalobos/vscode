@@ -5,6 +5,79 @@
 
 import { URI } from '../../../../../base/common/uri.js';
 
+export type AutomationConfigurationValue =
+	| null
+	| boolean
+	| number
+	| string
+	| readonly AutomationConfigurationValue[]
+	| { readonly [key: string]: AutomationConfigurationValue };
+
+export interface IAutomationConfiguration {
+	readonly providerId: string;
+	readonly sessionTypeId: string;
+	readonly version: number;
+	readonly value: AutomationConfigurationValue;
+}
+
+export function isAutomationConfigurationObject(value: AutomationConfigurationValue): value is { readonly [key: string]: AutomationConfigurationValue } {
+	return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+export function toAutomationConfigurationValue(value: unknown): AutomationConfigurationValue {
+	const seen = new Set<object>();
+	const convert = (candidate: unknown): AutomationConfigurationValue => {
+		if (candidate === null || typeof candidate === 'boolean' || typeof candidate === 'string') {
+			return candidate;
+		}
+		if (typeof candidate === 'number') {
+			if (!Number.isFinite(candidate)) {
+				throw new Error('Automation configuration numbers must be finite.');
+			}
+			return candidate;
+		}
+		if (typeof candidate !== 'object') {
+			throw new Error('Automation configuration must be JSON-compatible.');
+		}
+		if (seen.has(candidate)) {
+			throw new Error('Automation configuration cannot contain cycles.');
+		}
+		if (!Array.isArray(candidate)) {
+			const prototype = Object.getPrototypeOf(candidate);
+			if (prototype !== Object.prototype && prototype !== null) {
+				throw new Error('Automation configuration objects must be plain objects.');
+			}
+		}
+
+		seen.add(candidate);
+		try {
+			if (Array.isArray(candidate)) {
+				return Array.from({ length: candidate.length }, (_, index) => {
+					if (!Object.hasOwn(candidate, index)) {
+						throw new Error('Automation configuration arrays cannot be sparse.');
+					}
+					return convert(candidate[index]);
+				});
+			}
+			const result: { [key: string]: AutomationConfigurationValue } = {};
+			for (const [key, child] of Object.entries(candidate)) {
+				if (child !== undefined) {
+					Object.defineProperty(result, key, {
+						value: convert(child),
+						enumerable: true,
+						configurable: true,
+						writable: true,
+					});
+				}
+			}
+			return result;
+		} finally {
+			seen.delete(candidate);
+		}
+	};
+	return convert(value);
+}
+
 /**
  * How often an automation runs. `hourly` fires every hour from creation/update;
  * `daily`/`weekly` fire at the configured local-time hour/minute (and day-of-week).
@@ -64,6 +137,9 @@ export interface IAutomation {
 
 	/** Explicit workspace-backed or workspace-less execution target. */
 	readonly target: AutomationTarget;
+
+	/** Opaque, versioned configuration owned by the target provider and session type. */
+	readonly configuration?: IAutomationConfiguration;
 
 	/** Optional language model identifier to seed the new session with. */
 	readonly modelId?: string;

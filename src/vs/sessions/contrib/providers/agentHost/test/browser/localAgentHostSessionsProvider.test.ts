@@ -5,6 +5,7 @@
 
 import assert from 'assert';
 import { DeferredPromise, raceTimeout, timeout } from '../../../../../../base/common/async.js';
+import { CancellationToken, CancellationTokenSource } from '../../../../../../base/common/cancellation.js';
 import { Emitter, Event } from '../../../../../../base/common/event.js';
 import { DisposableStore, ImmortalReference, toDisposable, type IReference } from '../../../../../../base/common/lifecycle.js';
 import { autorun, constObservable, ISettableObservable, observableValue, type IObservable } from '../../../../../../base/common/observable.js';
@@ -80,6 +81,7 @@ class MockAgentHostService extends mock<IAgentHostService>() {
 	public dispatchedActions: { channel: string; action: SessionAction | ChatAction | TerminalAction | ClientAnnotationsAction | IRootConfigChangedAction; clientId: string; clientSeq: number }[] = [];
 	public failResolveSessionConfig = false;
 	public resolveSessionConfigResult: ResolveSessionConfigResult = { schema: { type: 'object', properties: {} }, values: { isolation: 'worktree' } };
+	public resolveSessionConfigFromRequest = false;
 	public resolveSessionConfigRequests: { config?: Record<string, unknown> }[] = [];
 	public resolveSessionConfigBarrier: DeferredPromise<void> | undefined;
 	get rootStateListenerCount(): number { return this._rootStateListenerCount; }
@@ -189,6 +191,12 @@ class MockAgentHostService extends mock<IAgentHostService>() {
 		await Promise.resolve();
 		if (this.failResolveSessionConfig) {
 			throw new Error('resolveSessionConfig unavailable');
+		}
+		if (this.resolveSessionConfigFromRequest) {
+			return {
+				schema: this.resolveSessionConfigResult.schema,
+				values: { ...request.config },
+			};
 		}
 		return this.resolveSessionConfigResult;
 	}
@@ -583,6 +591,135 @@ suite('LocalAgentHostSessionsProvider', () => {
 		// local and remote hosts and the standalone Copilot CLI provider.
 		assert.strictEqual(provider.sessionTypes[0].id, 'copilotcli');
 		assert.strictEqual(provider.sessionTypes[0].label, 'Copilot');
+	});
+
+	test('round-trips provider-owned Automation model configuration', async () => {
+		const provider = createProvider(disposables, agentHost);
+		const session = provider.createNewSession(URI.parse('file:///home/user/project'), provider.sessionTypes[0].id);
+		await waitForSessionConfig(provider, session.sessionId, config => config?.values.isolation === 'worktree');
+		agentHost.resolveSessionConfigResult = {
+			schema: { type: 'object', properties: {} },
+			values: { customSetting: 'saved' },
+		};
+		const configuration = {
+			providerId: provider.id,
+			sessionTypeId: provider.sessionTypes[0].id,
+			version: 1,
+			value: {
+				modelId: 'agent-host-copilotcli:test-model',
+				sessionConfig: { customSetting: 'saved' },
+			},
+		};
+
+		await provider.applyAutomationConfiguration(session.sessionId, configuration, CancellationToken.None);
+
+		assert.deepStrictEqual({
+			captured: await provider.captureAutomationConfiguration(session.sessionId, CancellationToken.None),
+		}, {
+			captured: configuration,
+		});
+	});
+
+	test('waits for draft configuration resolution before capture', async () => {
+		const barrier = agentHost.resolveSessionConfigBarrier = new DeferredPromise<void>();
+		const provider = createProvider(disposables, agentHost);
+		const session = provider.createNewSession(URI.parse('file:///home/user/project'), provider.sessionTypes[0].id);
+		let captured = false;
+		const capture = provider.captureAutomationConfiguration(session.sessionId, CancellationToken.None).then(configuration => {
+			captured = true;
+			return configuration;
+		});
+		await Promise.resolve();
+		await Promise.resolve();
+
+		assert.strictEqual(captured, false);
+		await barrier.complete();
+		const configuration = await capture;
+		assert.deepStrictEqual(configuration.value, {
+			sessionConfig: { isolation: 'worktree' },
+		});
+	});
+
+	test('sends applied Automation configuration as a full replacement', async () => {
+		let sentOptions: IChatSendRequestOptions | undefined;
+		const provider = createProvider(disposables, agentHost, undefined, {
+			openSession: true,
+			sendRequest: async (_resource, _message, options): Promise<ChatSendResult> => {
+				sentOptions = options;
+				agentHost.addSession(createSession('automation-config-send', { summary: 'Automation Config' }));
+				return { kind: 'sent' as const, data: {} as ChatSendResult extends { kind: 'sent'; data: infer D } ? D : never };
+			},
+		});
+		const session = provider.createNewSession(URI.parse('file:///home/user/project'), provider.sessionTypes[0].id);
+		await waitForSessionConfig(provider, session.sessionId, config => config?.values.isolation === 'worktree');
+		agentHost.resolveSessionConfigResult = {
+			schema: { type: 'object', properties: {} },
+			values: { isolation: 'folder' },
+		};
+		await provider.applyAutomationConfiguration(session.sessionId, {
+			providerId: provider.id,
+			sessionTypeId: provider.sessionTypes[0].id,
+			version: 1,
+			value: { sessionConfig: { isolation: 'folder' } },
+		}, CancellationToken.None);
+		const chat = await provider.createNewChat(session.sessionId);
+
+		await provider.sendRequest(session.sessionId, chat.resource, { query: 'hello' });
+
+		assert.deepStrictEqual({
+			config: sentOptions?.agentHostSessionConfig,
+			replace: sentOptions?.agentHostSessionConfigReplace,
+		}, {
+			config: { isolation: 'folder' },
+			replace: true,
+		});
+	});
+
+	test('rolls back Automation configuration when application is cancelled', async () => {
+		agentHost.resolveSessionConfigFromRequest = true;
+		const initialBarrier = agentHost.resolveSessionConfigBarrier = new DeferredPromise<void>();
+		const provider = createProvider(disposables, agentHost);
+		const session = provider.createNewSession(URI.parse('file:///home/user/project'), provider.sessionTypes[0].id);
+		await initialBarrier.complete();
+		await provider.captureAutomationConfiguration(session.sessionId, CancellationToken.None);
+		const barrier = agentHost.resolveSessionConfigBarrier = new DeferredPromise<void>();
+		const cts = disposables.add(new CancellationTokenSource());
+		const apply = provider.applyAutomationConfiguration(session.sessionId, {
+			providerId: provider.id,
+			sessionTypeId: provider.sessionTypes[0].id,
+			version: 1,
+			value: { sessionConfig: { isolation: 'folder' } },
+		}, cts.token);
+		await waitForSessionConfig(provider, session.sessionId, config => config?.values.isolation === 'folder');
+		cts.cancel();
+		await barrier.complete();
+
+		await assert.rejects(apply, /Canceled/);
+		assert.deepStrictEqual(
+			await provider.captureAutomationConfiguration(session.sessionId, CancellationToken.None),
+			{
+				providerId: provider.id,
+				sessionTypeId: provider.sessionTypes[0].id,
+				version: 1,
+				value: {},
+			},
+		);
+	});
+
+	test('normalizes provider-owned Automation configuration against current policy', () => {
+		const provider = createProvider(disposables, agentHost, undefined, {
+			configurationService: createPolicyRestrictedConfigurationService(),
+		});
+		const configuration = provider.validateAutomationConfiguration(provider.sessionTypes[0].id, {
+			providerId: provider.id,
+			sessionTypeId: provider.sessionTypes[0].id,
+			version: 1,
+			value: { sessionConfig: { autoApprove: 'autoApprove' } },
+		});
+
+		assert.deepStrictEqual(configuration.value, {
+			sessionConfig: { autoApprove: 'default' },
+		});
 	});
 
 	test('session types update when the local host advertises additional agents', () => {

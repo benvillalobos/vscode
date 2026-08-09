@@ -16,7 +16,9 @@ import {
 	AutomationTarget,
 	AutomationWorkspaceIsolation,
 	IAutomation,
+	IAutomationConfiguration,
 	IAutomationRun,
+	toAutomationConfigurationValue,
 } from '../../../../workbench/contrib/chat/common/automations/automation.js';
 import {
 	type AutomationMutationGuard,
@@ -34,8 +36,8 @@ import { computeNextRunAt } from '../../../../workbench/contrib/chat/common/auto
 import { ChatPermissionLevel, isChatPermissionLevel } from '../../../../workbench/contrib/chat/common/constants.js';
 import { AUTOMATION_STORAGE_KEY, IAutomationStorageService } from '../common/automationStorageService.js';
 
-const LEGACY_SCHEMA_VERSIONS = new Set([1, 2]);
-const CURRENT_SCHEMA_VERSION = 3;
+const LEGACY_SCHEMA_VERSIONS = new Set([1, 2, 3]);
+const CURRENT_SCHEMA_VERSION = 4;
 
 const MAX_RUNS_PER_AUTOMATION = 50;
 
@@ -44,6 +46,7 @@ interface ISerializedAutomationBase {
 	readonly name: string;
 	readonly prompt: string;
 	readonly schedule: IAutomation['schedule'];
+	readonly configuration?: IAutomationConfiguration;
 	readonly modelId?: string;
 	readonly mode?: string;
 	readonly permissionLevel?: string;
@@ -82,8 +85,15 @@ interface ILegacySerializedAutomation extends ISerializedAutomationBase {
 }
 
 interface ISerializedLedger {
-	readonly schemaVersion: 3;
+	readonly schemaVersion: 4;
 	// Optimistic-concurrency counter. 0 for legacy blobs without this field.
+	readonly revision?: number;
+	readonly automations: readonly ISerializedAutomation[];
+	readonly runs: readonly IAutomationRun[];
+}
+
+interface ISchema3SerializedLedger {
+	readonly schemaVersion: 3;
 	readonly revision?: number;
 	readonly automations: readonly ISerializedAutomation[];
 	readonly runs: readonly IAutomationRun[];
@@ -177,6 +187,7 @@ export class AutomationStore extends Disposable implements IAutomationStore {
 			prompt: options.prompt,
 			schedule: options.schedule,
 			target: normalizeAutomationTarget(options.target),
+			configuration: normalizeAutomationConfiguration(options.configuration, options.target),
 			modelId: options.modelId,
 			mode: options.mode,
 			permissionLevel: isChatPermissionLevel(options.permissionLevel) ? options.permissionLevel : undefined,
@@ -521,7 +532,7 @@ export class AutomationStore extends Disposable implements IAutomationStore {
 			return { kind: 'ledger', ledger: EMPTY_LEDGER, revision: 0 };
 		}
 		try {
-			const parsed = JSON.parse(raw) as ISerializedLedger | ILegacySerializedLedger;
+			const parsed = JSON.parse(raw) as ISerializedLedger | ISchema3SerializedLedger | ILegacySerializedLedger;
 			if (typeof parsed?.schemaVersion === 'number' && parsed.schemaVersion > CURRENT_SCHEMA_VERSION) {
 				this.logService.warn(`[AutomationService] Ledger has schema v${parsed.schemaVersion}; this build only supports v${CURRENT_SCHEMA_VERSION}. Entering read-only mode.`);
 				return { kind: 'unsupportedSchema' };
@@ -531,7 +542,7 @@ export class AutomationStore extends Disposable implements IAutomationStore {
 				return { kind: 'ledger', ledger: EMPTY_LEDGER, revision: 0 };
 			}
 			const automations: IAutomation[] = [];
-			if (parsed.schemaVersion === CURRENT_SCHEMA_VERSION) {
+			if (parsed.schemaVersion === CURRENT_SCHEMA_VERSION || parsed.schemaVersion === 3) {
 				const entries = Array.isArray(parsed.automations) ? parsed.automations : [];
 				for (const entry of entries) {
 					try {
@@ -603,6 +614,7 @@ function serializeAutomation(a: IAutomation): ISerializedAutomation {
 		prompt: a.prompt,
 		schedule: a.schedule,
 		target: serializeAutomationTarget(a.target),
+		configuration: a.configuration,
 		modelId: a.modelId,
 		mode: a.mode,
 		permissionLevel: a.permissionLevel,
@@ -657,6 +669,7 @@ function createAutomationFromSerialized(s: ISerializedAutomationBase, target: Au
 		prompt: s.prompt,
 		schedule: s.schedule,
 		target,
+		configuration: normalizeAutomationConfiguration(s.configuration, target),
 		modelId: s.modelId,
 		mode: s.mode,
 		permissionLevel,
@@ -682,17 +695,45 @@ function updateAutomation(current: IAutomation, patch: IUpdateAutomationOptions,
 }
 
 function mergeAutomation(current: IAutomation, patch: IUpdateAutomationOptions): IAutomation {
+	const target = patch.target ? normalizeAutomationTarget(patch.target) : current.target;
+	const configuration = patch.configuration === null
+		? undefined
+		: patch.configuration
+			? normalizeAutomationConfiguration(patch.configuration, target)
+			: automationConfigurationMatchesTarget(current.configuration, target) ? current.configuration : undefined;
 	return {
 		...current,
 		name: patch.name ?? current.name,
 		prompt: patch.prompt ?? current.prompt,
 		schedule: patch.schedule ?? current.schedule,
-		target: patch.target ? normalizeAutomationTarget(patch.target) : current.target,
-		modelId: patch.modelId === null ? undefined : (patch.modelId ?? current.modelId),
-		mode: patch.mode === null ? undefined : (patch.mode ?? current.mode),
-		permissionLevel: patch.permissionLevel === null ? undefined : (patch.permissionLevel && isChatPermissionLevel(patch.permissionLevel) ? patch.permissionLevel : current.permissionLevel),
+		target,
+		configuration,
+		modelId: configuration ? undefined : patch.modelId === null ? undefined : (patch.modelId ?? current.modelId),
+		mode: configuration ? undefined : patch.mode === null ? undefined : (patch.mode ?? current.mode),
+		permissionLevel: configuration ? undefined : patch.permissionLevel === null ? undefined : (patch.permissionLevel && isChatPermissionLevel(patch.permissionLevel) ? patch.permissionLevel : current.permissionLevel),
 		enabled: patch.enabled ?? current.enabled,
 	};
+}
+
+function normalizeAutomationConfiguration(configuration: IAutomationConfiguration | undefined, target: AutomationTarget): IAutomationConfiguration | undefined {
+	if (!configuration) {
+		return undefined;
+	}
+	if (!automationConfigurationMatchesTarget(configuration, target)) {
+		throw new Error(`Automation configuration belongs to '${configuration.providerId}/${configuration.sessionTypeId}', not '${target.providerId ?? ''}/${target.sessionTypeId ?? ''}'.`);
+	}
+	return Object.freeze({
+		providerId: configuration.providerId,
+		sessionTypeId: configuration.sessionTypeId,
+		version: configuration.version,
+		value: toAutomationConfigurationValue(configuration.value),
+	});
+}
+
+function automationConfigurationMatchesTarget(configuration: IAutomationConfiguration | undefined, target: AutomationTarget): boolean {
+	return !!configuration
+		&& configuration.providerId === target.providerId
+		&& configuration.sessionTypeId === target.sessionTypeId;
 }
 
 function normalizeAutomationTarget(target: AutomationTarget): AutomationTarget {

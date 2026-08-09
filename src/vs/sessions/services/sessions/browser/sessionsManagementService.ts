@@ -18,6 +18,7 @@ import { ChatAgentLocation } from '../../../../workbench/contrib/chat/common/con
 import { IChatWidgetHistoryService } from '../../../../workbench/contrib/chat/common/widget/chatWidgetHistoryService.js';
 import { buildHostLocalEventsPath, COPILOT_CLI_EH_SCHEME, COPILOT_CLI_LOCAL_AH_SCHEME, getCopilotCliSessionRawId } from '../../../../workbench/contrib/chat/browser/copilotCliEventsUri.js';
 import { IChatRequestVariableEntry } from '../../../../workbench/contrib/chat/common/attachments/chatVariableEntries.js';
+import { IAutomationConfiguration } from '../../../../workbench/contrib/chat/common/automations/automation.js';
 import { IPathService } from '../../../../workbench/services/path/common/pathService.js';
 import { IUriIdentityService } from '../../../../platform/uriIdentity/common/uriIdentity.js';
 import { getSessionReferenceResource } from './sessionReference.js';
@@ -305,6 +306,49 @@ export class SessionsManagementService extends Disposable implements ISessionsMa
 			}
 		}
 		return result;
+	}
+
+	getAutomationSessionTypes(): IProviderSessionType[] {
+		const result: IProviderSessionType[] = [];
+		for (const provider of this.sessionsProvidersService.getProviders()) {
+			if (!provider.automationConfiguration) {
+				continue;
+			}
+			for (const sessionType of provider.sessionTypes) {
+				result.push({ providerId: provider.id, sessionType });
+			}
+		}
+		return result;
+	}
+
+	captureAutomationConfiguration(session: ISession, token: CancellationToken = CancellationToken.None): Promise<IAutomationConfiguration> {
+		const automations = this._getAutomationCapability(session.providerId, session.sessionType);
+		return automations.captureAutomationConfiguration(session.sessionId, token);
+	}
+
+	validateAutomationConfiguration(providerId: string, sessionTypeId: string, configuration: IAutomationConfiguration): IAutomationConfiguration {
+		if (configuration.providerId !== providerId || configuration.sessionTypeId !== sessionTypeId) {
+			throw new Error(`Automation configuration belongs to '${configuration.providerId}/${configuration.sessionTypeId}', not '${providerId}/${sessionTypeId}'.`);
+		}
+		const automations = this._getAutomationCapability(providerId, sessionTypeId);
+		return automations.validateAutomationConfiguration(sessionTypeId, configuration);
+	}
+
+	applyAutomationConfiguration(session: ISession, configuration: IAutomationConfiguration, token: CancellationToken = CancellationToken.None): Promise<void> {
+		if (configuration.providerId !== session.providerId || configuration.sessionTypeId !== session.sessionType) {
+			throw new Error(`Automation configuration belongs to '${configuration.providerId}/${configuration.sessionTypeId}', not '${session.providerId}/${session.sessionType}'.`);
+		}
+		const automations = this._getAutomationCapability(session.providerId, session.sessionType);
+		return automations.applyAutomationConfiguration(session.sessionId, configuration, token);
+	}
+
+	private _getAutomationCapability(providerId: string, sessionTypeId: string) {
+		const provider = this.sessionsProvidersService.getProvider(providerId);
+		const automationConfiguration = provider?.automationConfiguration;
+		if (!automationConfiguration || !provider.sessionTypes.some(sessionType => sessionType.id === sessionTypeId)) {
+			throw new Error(`Automation configuration is unavailable for provider '${providerId}' and session type '${sessionTypeId}'.`);
+		}
+		return automationConfiguration;
 	}
 
 	isNewSessionTargetAvailable(folderUri: URI, options?: ICreateNewSessionOptions): boolean {
@@ -759,6 +803,9 @@ export class SessionsManagementService extends Disposable implements ISessionsMa
 			}
 			if (createOptions?.permissionLevel) {
 				provider.setPermissionLevel?.(session.sessionId, createOptions.permissionLevel);
+			}
+			if (createOptions?.automationConfiguration) {
+				await raceCancellationError(this.applyAutomationConfiguration(session, createOptions.automationConfiguration, token), token);
 			}
 			if (supportsWorktreeConfiguration && (createOptions?.isolationMode || createOptions?.worktreeBranchTrack !== undefined || createOptions?.branch)) {
 				if (createOptions.isolationMode && provider.setIsolationMode) {

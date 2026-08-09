@@ -1009,7 +1009,7 @@ function createByokLanguageModelTestData(groupName?: string): { languageModels: 
 	};
 }
 
-function makeRequest(overrides: Partial<{ message: string; sessionResource: URI; variables: IChatAgentRequest['variables']; userSelectedModelId: string; modelConfiguration: Record<string, unknown>; agentHostSessionConfig: Record<string, string>; agentId: string; requestId: string }> = {}): IChatAgentRequest {
+function makeRequest(overrides: Partial<{ message: string; sessionResource: URI; variables: IChatAgentRequest['variables']; userSelectedModelId: string; modelConfiguration: Record<string, unknown>; agentHostSessionConfig: Record<string, string>; agentHostSessionConfigReplace: boolean; agentId: string; requestId: string }> = {}): IChatAgentRequest {
 	return upcastPartial<IChatAgentRequest>({
 		sessionResource: overrides.sessionResource ?? URI.from({ scheme: 'untitled', path: '/chat-1' }),
 		requestId: overrides.requestId ?? 'req-1',
@@ -1020,6 +1020,7 @@ function makeRequest(overrides: Partial<{ message: string; sessionResource: URI;
 		userSelectedModelId: overrides.userSelectedModelId,
 		modelConfiguration: overrides.modelConfiguration,
 		agentHostSessionConfig: overrides.agentHostSessionConfig,
+		agentHostSessionConfigReplace: overrides.agentHostSessionConfigReplace,
 	});
 }
 
@@ -8860,7 +8861,7 @@ suite('AgentHostChatContribution', () => {
 			const registered = chatAgentService.registeredAgents.get('agent-host-copilot')!;
 			const config = { isolation: 'worktree', branch: 'main' };
 			const turnPromise = registered.impl.invoke(
-				makeRequest({ message: 'Fix worktree branch hint propagation', sessionResource, agentHostSessionConfig: config }),
+				makeRequest({ message: 'Fix worktree branch hint propagation', sessionResource, agentHostSessionConfig: config, agentHostSessionConfigReplace: true }),
 				() => { }, [], CancellationToken.None,
 			);
 			await timeout(10);
@@ -8872,7 +8873,11 @@ suite('AgentHostChatContribution', () => {
 
 			const configChanged = agentHostService.dispatchedActions.find(d => d.action.type === ActionType.SessionConfigChanged);
 			assert.ok(configChanged, 'expected a SessionConfigChanged dispatch');
-			assert.deepStrictEqual((configChanged!.action as { config: Record<string, unknown> }).config, config);
+			assert.deepStrictEqual(configChanged!.action, {
+				type: ActionType.SessionConfigChanged,
+				config,
+				replace: true,
+			});
 		}));
 
 		test('handler resolves authentication before sending to an eager-created session', async () => {

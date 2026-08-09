@@ -200,6 +200,7 @@ suite('ProviderAutomationService', () => {
 			prompt: 'prompt',
 			schedule: { interval: 'manual', scheduleHour: 0, scheduleMinute: 0, scheduleDay: 0 },
 			target: { kind: 'workspace', folderUri: FOLDER, providerId: PROVIDER_ID, sessionTypeId: SESSION_TYPE_ID, isolation: { kind: 'default' } },
+			configuration: undefined,
 			modelId: 'model',
 			mode: 'agent',
 			permissionLevel: 'autopilot',
@@ -430,6 +431,7 @@ suite('ProviderAutomationService', () => {
 				prompt: 'prompt',
 				schedule: { interval: 'manual', scheduleHour: 0, scheduleMinute: 0, scheduleDay: 0 },
 				target: { kind: 'workspace', folderUri: FOLDER, providerId: PROVIDER_ID, sessionTypeId: SESSION_TYPE_ID, isolation: { kind: 'default' } },
+				configuration: undefined,
 				modelId: 'model',
 				mode: 'agent',
 				permissionLevel: 'autopilot',
@@ -440,7 +442,7 @@ suite('ProviderAutomationService', () => {
 				nextRunAt: undefined,
 			},
 			runIds: ['run-1'],
-			legacy: { schemaVersion: 3, revision: 2, automations: [], runs: [] },
+			legacy: { schemaVersion: 4, revision: 2, automations: [], runs: [] },
 		});
 	});
 

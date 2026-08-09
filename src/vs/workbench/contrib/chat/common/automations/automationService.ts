@@ -6,7 +6,7 @@
 import { IObservable } from '../../../../../base/common/observable.js';
 import { createDecorator } from '../../../../../platform/instantiation/common/instantiation.js';
 import { ChatPermissionLevel } from '../constants.js';
-import { IAutomation, IAutomationRun, AutomationRunTrigger, IAutomationSchedule, AutomationTarget } from './automation.js';
+import { IAutomation, IAutomationConfiguration, IAutomationRun, AutomationRunTrigger, IAutomationSchedule, AutomationTarget } from './automation.js';
 
 export const IAutomationService = createDecorator<IAutomationService>('automationService');
 export const ConfigureAutomationToolReferenceName = 'configureAutomation';
@@ -23,6 +23,7 @@ export interface ICreateAutomationOptions {
 	readonly prompt: string;
 	readonly schedule: IAutomationSchedule;
 	readonly target: AutomationTarget;
+	readonly configuration?: IAutomationConfiguration;
 	readonly modelId?: string;
 	readonly mode?: string;
 	readonly permissionLevel?: string;
@@ -38,6 +39,7 @@ export interface IUpdateAutomationOptions {
 	readonly prompt?: string;
 	readonly schedule?: IAutomationSchedule;
 	readonly target?: AutomationTarget;
+	readonly configuration?: IAutomationConfiguration | null;
 	readonly modelId?: string | null;
 	readonly mode?: string | null;
 	readonly permissionLevel?: string | null;
@@ -83,6 +85,7 @@ export function serializeAutomationEditableState(automation: IAutomation): strin
 			scheduleDay: automation.schedule.scheduleDay,
 		},
 		target,
+		configuration: automation.configuration,
 		modelId: automation.modelId,
 		mode: automation.mode,
 		permissionLevel: automation.permissionLevel ?? ChatPermissionLevel.Default,

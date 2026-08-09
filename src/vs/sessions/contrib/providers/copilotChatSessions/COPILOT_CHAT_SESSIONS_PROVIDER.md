@@ -127,6 +127,8 @@ This provider returns a model snapshot from `getModelsSnapshot` based on the act
 
 `getModelPickerOptions` returns grouped models with featured models shown and no "Manage Models" action (that action is offered only by the local provider).
 
+Automation configuration snapshots capture and fully restore the untitled session's model, mode, and permission level. The snapshot is versioned and bound to this provider's exact session type; validation canonicalizes the opaque JSON value before application, and omitted fields reset to provider defaults rather than inheriting mutable draft state.
+
 ### Context Key Gating
 
 Each picker action uses a `when` clause to show only for the correct session type:

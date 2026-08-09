@@ -1861,6 +1861,7 @@ export interface IChatSendRequestOptions {
 	attachedContext?: IChatRequestVariableEntry[];
 	resolvedVariables?: IChatRequestVariableEntry[];
 	agentHostSessionConfig?: Record<string, unknown>;
+	agentHostSessionConfigReplace?: boolean;
 
 	/** The target agent ID can be specified with this property instead of using @ in 'message' */
 	agentId?: string;

@@ -1555,6 +1555,7 @@ export class AgentHostSessionHandler extends Disposable implements IChatSessionC
 					this._dispatchAction(resolvedSession, {
 						type: ActionType.SessionConfigChanged,
 						config: request.agentHostSessionConfig,
+						replace: request.agentHostSessionConfigReplace,
 					});
 				}
 			}

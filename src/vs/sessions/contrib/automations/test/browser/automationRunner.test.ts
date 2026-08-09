@@ -516,6 +516,40 @@ suite('AutomationRunner', () => {
 		});
 	});
 
+	test('uses provider configuration instead of legacy model, mode, and permission fields', async () => {
+		const { service, sessionsMgmt, runner } = setup();
+		sessionsMgmt.nextSession = fakeSession('s1');
+		const configuration = {
+			providerId: 'local-agent-host',
+			sessionTypeId: 'copilotcli',
+			version: 1,
+			value: { modelId: 'configured-model', sessionConfig: { autoApprove: 'default' } },
+		};
+		const automation = await service.createAutomation({
+			name: 'Configured',
+			prompt: 'p',
+			schedule: hourly(),
+			target: workspaceTarget(FOLDER_A, { providerId: 'local-agent-host', sessionTypeId: 'copilotcli' }),
+			configuration,
+			modelId: 'legacy-model',
+			mode: 'legacy-mode',
+			permissionLevel: 'autopilot',
+		});
+
+		await runner.runOnce(automation, 'schedule', 1).whenCompleted;
+
+		assert.deepStrictEqual(sessionsMgmt.calls[0].createOptions, {
+			providerId: 'local-agent-host',
+			sessionTypeId: 'copilotcli',
+			automationConfiguration: configuration,
+			modelId: undefined,
+			modeId: undefined,
+			permissionLevel: undefined,
+			isolationMode: undefined,
+			branch: undefined,
+		});
+	});
+
 	test('passes a branch only for Worktree isolation', async () => {
 		const { service, sessionsMgmt, runner } = setup();
 		sessionsMgmt.nextSession = fakeSession('s1');
