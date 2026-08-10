@@ -360,7 +360,7 @@ suite('AutomationsCardsWidget', () => {
 
 		assert.deepStrictEqual({
 			schedule: widget.element.querySelector('.automations-card-meta-item')?.textContent,
-			runLabel: widget.element.querySelector('.automations-run-card-main')?.getAttribute('aria-label'),
+			runLabel: widget.element.querySelector('.automations-run-card')?.getAttribute('aria-label'),
 		}, {
 			schedule: `Daily at ${scheduleTime.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit', timeZone: 'UTC' })}`,
 			runLabel: `Daily review, workspace, Completed, ${runTime}, Unread`,
@@ -481,18 +481,25 @@ suite('AutomationsCardsWidget', () => {
 		});
 	});
 
-	test('run card opens with Space and becomes read only after open succeeds', async () => {
+	test('run session button opens with Space and becomes read only after open succeeds', async () => {
 		const { automationService, sessionsManagementService, sessionsService, widget } = setup();
 		automationService.setAutomations([automation()]);
 		automationService.setRuns([run()]);
-		const card = widget.element.querySelector<HTMLElement>('.automations-run-card-main');
+		const openButton = widget.element.querySelector<HTMLElement>('.automations-run-card-open-button');
+		const card = widget.element.querySelector<HTMLElement>('.automations-run-card');
+		const main = widget.element.querySelector<HTMLElement>('.automations-run-card-main');
 
-		assert.ok(card);
-		dispatchKeydown(card, { key: ' ', code: 'Space', keyCode: 32 });
+		assert.ok(openButton);
+		main?.click();
+		dispatchKeydown(openButton, { key: ' ', code: 'Space', keyCode: 32 });
 		assert.deepStrictEqual({
+			cardClickable: card?.classList.contains('clickable'),
+			mainRole: main?.getAttribute('role'),
 			openCalls: sessionsService.openCalls,
 			readBeforeOpen: sessionsManagementService.isRead.get(),
 		}, {
+			cardClickable: false,
+			mainRole: null,
 			openCalls: 1,
 			readBeforeOpen: false,
 		});
@@ -503,10 +510,10 @@ suite('AutomationsCardsWidget', () => {
 
 		assert.deepStrictEqual({
 			isRead: sessionsManagementService.isRead.get(),
-			label: widget.element.querySelector('.automations-run-card-main')?.getAttribute('aria-label'),
+			label: widget.element.querySelector('.automations-run-card')?.getAttribute('aria-label'),
 		}, {
 			isRead: true,
-			label: card?.getAttribute('aria-label')?.replace(', Unread', ''),
+			label: widget.element.querySelector('.automations-run-card')?.getAttribute('aria-label')?.replace(', Unread', ''),
 		});
 	});
 
@@ -515,15 +522,15 @@ suite('AutomationsCardsWidget', () => {
 		automationService.setAutomations([automation()]);
 		automationService.setRuns([run()]);
 		sessionsService.error = new Error('open failed');
-		const unreadLabel = widget.element.querySelector('.automations-run-card-main')?.getAttribute('aria-label');
+		const unreadLabel = widget.element.querySelector('.automations-run-card')?.getAttribute('aria-label');
 
-		widget.element.querySelector<HTMLElement>('.automations-run-card-main')?.click();
+		widget.element.querySelector<HTMLElement>('.automations-run-card-open-button')?.click();
 		sessionsService.openGate.complete();
 		await dialogService.errorCalled.p;
 
 		assert.deepStrictEqual({
 			isRead: sessionsManagementService.isRead.get(),
-			label: widget.element.querySelector('.automations-run-card-main')?.getAttribute('aria-label'),
+			label: widget.element.querySelector('.automations-run-card')?.getAttribute('aria-label'),
 			error: dialogService.errors,
 		}, {
 			isRead: false,
@@ -537,9 +544,9 @@ suite('AutomationsCardsWidget', () => {
 		automationService.setAutomations([automation()]);
 		automationService.setRuns([run()]);
 
-		const unreadLabel = widget.element.querySelector('.automations-run-card-main')?.getAttribute('aria-label');
+		const unreadLabel = widget.element.querySelector('.automations-run-card')?.getAttribute('aria-label');
 		sessionsManagementService.setRead(true);
-		const readLabel = widget.element.querySelector('.automations-run-card-main')?.getAttribute('aria-label');
+		const readLabel = widget.element.querySelector('.automations-run-card')?.getAttribute('aria-label');
 
 		assert.deepStrictEqual({
 			unreadLabel,
@@ -608,13 +615,13 @@ suite('AutomationsCardsWidget', () => {
 
 		assert.deepStrictEqual({
 			role: card?.getAttribute('role'),
-			openButton: !!card?.querySelector('.automations-run-card-main[role="button"]'),
+			openButtonDisabled: card?.querySelector('.automations-run-card-open-button')?.classList.contains('disabled'),
 			deleteButton: !!card?.querySelector('.automations-run-card-delete-button'),
 			deleteLabel: card?.querySelector('.automations-run-card-delete-button')?.getAttribute('aria-label'),
 			label: card?.getAttribute('aria-label'),
 		}, {
 			role: 'group',
-			openButton: false,
+			openButtonDisabled: true,
 			deleteButton: true,
 			deleteLabel: 'Delete run for Daily review from history',
 			label: `Daily review, workspace, Completed, ${runTime}`,
@@ -629,16 +636,20 @@ suite('AutomationsCardsWidget', () => {
 
 		const deleteButton = widget.element.querySelector<HTMLElement>('.automations-run-card-delete-button');
 		assert.ok(deleteButton);
+		const actionOrder = Array.from(widget.element.querySelectorAll('.automations-run-card-action-button'))
+			.map(button => button.classList.contains('automations-run-card-open-button') ? 'open' : 'delete');
 		deleteButton.click();
 		await Promise.resolve();
 		await Promise.resolve();
 
 		assert.deepStrictEqual({
+			actionOrder,
 			confirmation: dialogService.confirmations[0],
 			deleteSessionCalls: sessionsManagementService.deleteSessionCalls,
 			deleteRunCalls: automationService.deleteRunCalls,
 			historyItemStillVisible: !!widget.element.querySelector('.automations-run-card'),
 		}, {
+			actionOrder: ['open', 'delete'],
 			confirmation: {
 				message: 'Delete this run from history?',
 				detail: 'This will permanently remove the run for "Daily review" from history. This action cannot be undone.',
@@ -655,7 +666,13 @@ suite('AutomationsCardsWidget', () => {
 		automationService.setAutomations([automation()]);
 		automationService.setRuns([run({ status: 'running', sessionResource: undefined })]);
 
-		assert.strictEqual(widget.element.querySelector('.automations-run-card-delete-button'), null);
+		assert.deepStrictEqual({
+			openButtonDisabled: widget.element.querySelector('.automations-run-card-open-button')?.classList.contains('disabled'),
+			deleteButton: widget.element.querySelector('.automations-run-card-delete-button'),
+		}, {
+			openButtonDisabled: true,
+			deleteButton: null,
+		});
 	});
 
 	test('does not expose session deletion for an active run', () => {
@@ -712,7 +729,7 @@ suite('AutomationsCardsWidget', () => {
 		deleteButton.click();
 		await Promise.resolve();
 		await Promise.resolve();
-		const remainingOpenButton = widget.element.querySelector<HTMLElement>('.automations-run-card-main[role="button"]');
+		const remainingOpenButton = widget.element.querySelector<HTMLElement>('.automations-run-card-open-button');
 
 		assert.deepStrictEqual({
 			historyItemCount: widget.element.querySelectorAll('.automations-run-card').length,

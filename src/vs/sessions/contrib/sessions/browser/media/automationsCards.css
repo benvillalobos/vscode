@@ -343,14 +343,6 @@
 	overflow: hidden;
 }
 
-.automations-run-card.clickable {
-	cursor: pointer;
-}
-
-.automations-run-card.clickable:hover {
-	background-color: var(--vscode-list-hoverBackground);
-}
-
 .automations-run-card-main {
 	display: flex;
 	flex: 1;
@@ -368,16 +360,9 @@
 	text-align: left;
 }
 
-.automations-run-card.clickable .automations-run-card-main {
-	cursor: pointer;
-}
-
-.automations-run-card-main:focus-visible {
-	outline: var(--vscode-strokeThickness) solid var(--vscode-focusBorder);
-	outline-offset: -1px;
-}
-
 .automations-run-card-actions {
+	display: flex;
+	gap: var(--vscode-spacing-size40);
 	flex: 0 0 auto;
 	padding-right: var(--vscode-spacing-size80);
 	opacity: 0;
@@ -388,7 +373,7 @@
 	opacity: 1;
 }
 
-.automations-run-card-actions .monaco-button.automations-run-card-delete-button {
+.automations-run-card-actions .monaco-button.automations-run-card-action-button {
 	display: inline-flex;
 	align-items: center;
 	justify-content: center;
@@ -403,11 +388,11 @@
 	font-size: var(--vscode-codiconFontSize);
 }
 
-.automations-run-card-actions .monaco-button.automations-run-card-delete-button:hover:not(.disabled) {
+.automations-run-card-actions .monaco-button.automations-run-card-action-button:hover:not(.disabled) {
 	background-color: var(--vscode-toolbar-hoverBackground);
 }
 
-.automations-run-card-actions .monaco-button.automations-run-card-delete-button:focus-visible {
+.automations-run-card-actions .monaco-button.automations-run-card-action-button:focus-visible {
 	outline: var(--vscode-strokeThickness) solid var(--vscode-focusBorder);
 	outline-offset: -1px;
 }
