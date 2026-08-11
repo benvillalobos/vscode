@@ -8,7 +8,7 @@ import { CancellationToken } from '../../../../../base/common/cancellation.js';
 import { DisposableStore } from '../../../../../base/common/lifecycle.js';
 import { constObservable, IObservable, observableValue } from '../../../../../base/common/observable.js';
 import { URI } from '../../../../../base/common/uri.js';
-import { IAutomationConfiguration } from '../../../../../workbench/contrib/chat/common/automations/automation.js';
+import { IAutomationConfiguration, ILegacyAutomationConfiguration } from '../../../../../workbench/contrib/chat/common/automations/automation.js';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
 import { Codicon } from '../../../../../base/common/codicons.js';
 import { NullLogService } from '../../../../../platform/log/common/log.js';
@@ -179,6 +179,7 @@ class MockSessionStore implements ISessionsManagementService {
 	getAutomationSessionTypes(): IProviderSessionType[] { return []; }
 	captureAutomationConfiguration(_session: ISession, _token?: CancellationToken): Promise<IAutomationConfiguration> { throw new Error('not implemented'); }
 	validateAutomationConfiguration(_providerId: string, _sessionTypeId: string, _configuration: IAutomationConfiguration): IAutomationConfiguration { throw new Error('not implemented'); }
+	migrateLegacyAutomationConfiguration(_providerId: string, _sessionTypeId: string, _configuration: ILegacyAutomationConfiguration): IAutomationConfiguration { throw new Error('not implemented'); }
 	applyAutomationConfiguration(_session: ISession, _configuration: IAutomationConfiguration, _token?: CancellationToken): Promise<void> { throw new Error('not implemented'); }
 	isNewSessionTargetAvailable(_folderUri: URI, _options?: ICreateNewSessionOptions): boolean { return false; }
 	isQuickChatTargetAvailable(_options?: ICreateNewSessionOptions): boolean { return false; }

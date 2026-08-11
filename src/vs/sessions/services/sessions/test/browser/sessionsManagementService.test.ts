@@ -314,6 +314,12 @@ suite('SessionsManagementService', () => {
 				calls.push(`resolve:${sessionTypeId}`);
 				return { ...configuration, value: { resolved: true } };
 			},
+			migrateLegacyAutomationConfiguration: (sessionTypeId, configuration) => ({
+				providerId: 'test',
+				sessionTypeId,
+				version: 1,
+				value: { ...configuration },
+			}),
 			applyAutomationConfiguration: async (sessionId, _configuration, token) => {
 				calls.push(`apply:${sessionId}:${token.isCancellationRequested}`);
 			},
@@ -1391,6 +1397,12 @@ suite('SessionsManagementService', () => {
 			override readonly automationConfiguration: ISessionsProviderAutomationConfiguration = {
 				captureAutomationConfiguration: async () => { throw new Error('not used'); },
 				validateAutomationConfiguration: (_sessionTypeId, configuration) => configuration,
+				migrateLegacyAutomationConfiguration: (sessionTypeId, configuration) => ({
+					providerId: 'test',
+					sessionTypeId,
+					version: 1,
+					value: { ...configuration },
+				}),
 				applyAutomationConfiguration: async (_sessionId, _configuration, token) => {
 					calls.push(`applyAutomationConfiguration:${token.isCancellationRequested}`);
 				},

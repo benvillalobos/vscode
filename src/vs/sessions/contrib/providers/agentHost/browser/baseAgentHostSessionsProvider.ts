@@ -45,7 +45,7 @@ import { ChatAgentLocation, ChatConfiguration, ChatModeKind, ChatPermissionLevel
 import { isAutoApprovePolicyRestricted, normalizeSessionConfigValue } from '../../../../../workbench/contrib/chat/common/agentHostConfigPolicy.js';
 import { ILanguageModelChatMetadata, ILanguageModelsService } from '../../../../../workbench/contrib/chat/common/languageModels.js';
 import { getRegisteredLanguageModels, resolveConfiguredModel, resolveModelIdentifier, resolveModelIdentifierFromLanguageModels } from '../../../../../workbench/contrib/chat/common/modelSelection.js';
-import { AutomationConfigurationValue, IAutomationConfiguration, isAutomationConfigurationObject, toAutomationConfigurationValue } from '../../../../../workbench/contrib/chat/common/automations/automation.js';
+import { AutomationConfigurationValue, IAutomationConfiguration, ILegacyAutomationConfiguration, isAutomationConfigurationObject, toAutomationConfigurationValue } from '../../../../../workbench/contrib/chat/common/automations/automation.js';
 import { buildMutableConfigSchema, IAgentHostMcpServer, IAgentHostSessionsProvider, resolvedConfigsEqual } from '../../../../common/agentHostSessionsProvider.js';
 import { agentHostSessionWorkspaceKey } from '../../../../common/agentHostSessionWorkspace.js';
 import { isSessionConfigComplete } from '../../../../common/sessionConfig.js';
@@ -3152,6 +3152,25 @@ export abstract class BaseAgentHostSessionsProvider extends Disposable implement
 				sessionConfig: normalizedSessionConfig,
 			},
 		};
+	}
+
+	migrateLegacyAutomationConfiguration(sessionTypeId: string, configuration: ILegacyAutomationConfiguration): IAutomationConfiguration {
+		const sessionConfig: { [key: string]: AutomationConfigurationValue } = {};
+		if (configuration.mode) {
+			sessionConfig[SessionConfigKey.Mode] = configuration.mode;
+		}
+		if (configuration.permissionLevel) {
+			sessionConfig[SessionConfigKey.AutoApprove] = configuration.permissionLevel;
+		}
+		return this.validateAutomationConfiguration(sessionTypeId, {
+			providerId: this.id,
+			sessionTypeId,
+			version: 1,
+			value: {
+				...(configuration.modelId ? { modelId: configuration.modelId } : {}),
+				sessionConfig,
+			},
+		});
 	}
 
 	async applyAutomationConfiguration(sessionId: string, configuration: IAutomationConfiguration, token: CancellationToken): Promise<void> {

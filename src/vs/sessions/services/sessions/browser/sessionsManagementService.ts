@@ -18,7 +18,7 @@ import { ChatAgentLocation } from '../../../../workbench/contrib/chat/common/con
 import { IChatWidgetHistoryService } from '../../../../workbench/contrib/chat/common/widget/chatWidgetHistoryService.js';
 import { buildHostLocalEventsPath, COPILOT_CLI_EH_SCHEME, COPILOT_CLI_LOCAL_AH_SCHEME, getCopilotCliSessionRawId } from '../../../../workbench/contrib/chat/browser/copilotCliEventsUri.js';
 import { IChatRequestVariableEntry } from '../../../../workbench/contrib/chat/common/attachments/chatVariableEntries.js';
-import { IAutomationConfiguration } from '../../../../workbench/contrib/chat/common/automations/automation.js';
+import { IAutomationConfiguration, ILegacyAutomationConfiguration } from '../../../../workbench/contrib/chat/common/automations/automation.js';
 import { IPathService } from '../../../../workbench/services/path/common/pathService.js';
 import { IUriIdentityService } from '../../../../platform/uriIdentity/common/uriIdentity.js';
 import { getSessionReferenceResource } from './sessionReference.js';
@@ -332,6 +332,11 @@ export class SessionsManagementService extends Disposable implements ISessionsMa
 		}
 		const automations = this._getAutomationCapability(providerId, sessionTypeId);
 		return automations.validateAutomationConfiguration(sessionTypeId, configuration);
+	}
+
+	migrateLegacyAutomationConfiguration(providerId: string, sessionTypeId: string, configuration: ILegacyAutomationConfiguration): IAutomationConfiguration {
+		const automations = this._getAutomationCapability(providerId, sessionTypeId);
+		return automations.migrateLegacyAutomationConfiguration(sessionTypeId, configuration);
 	}
 
 	applyAutomationConfiguration(session: ISession, configuration: IAutomationConfiguration, token: CancellationToken = CancellationToken.None): Promise<void> {

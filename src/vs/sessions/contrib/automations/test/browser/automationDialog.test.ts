@@ -21,11 +21,10 @@ import { IListAccessibilityProvider } from '../../../../../base/browser/ui/list/
 import { TestInstantiationService } from '../../../../../platform/instantiation/test/common/instantiationServiceMock.js';
 import { ILogService, NullLogService } from '../../../../../platform/log/common/log.js';
 import { IWorkspaceTrustRequestService, ResourceTrustRequestOptions } from '../../../../../platform/workspace/common/workspaceTrust.js';
-import { ILanguageModelChatMetadata, ILanguageModelsService } from '../../../../../workbench/contrib/chat/common/languageModels.js';
 import { GitRefType, IGitRepository, IGitService } from '../../../../../workbench/contrib/git/common/gitService.js';
 import { ISession, ISessionWorkspace, SessionTypeAuthRequirement } from '../../../../services/sessions/common/session.js';
 import { ISessionsManagementService } from '../../../../services/sessions/common/sessionsManagement.js';
-import { AutomationIsolationGroupActionViewItem, AutomationSessionDraftSynchronizer, canSelectAutomationWorkspace, IFormState, IValidationState, isAutomationDialogPopupTarget, registerAutomationDialogKeyboardNavigation, resolveAutomationModelIdentifier, updateSaveButtonState } from '../../browser/automationDialog.js';
+import { AutomationIsolationGroupActionViewItem, AutomationSessionDraftSynchronizer, canSelectAutomationWorkspace, IFormState, IValidationState, isAutomationDialogPopupTarget, registerAutomationDialogKeyboardNavigation, updateSaveButtonState } from '../../browser/automationDialog.js';
 import { AutomationIsolationModel } from '../../common/isolationGroupModel.js';
 
 const FOLDER = URI.file('/workspace');
@@ -161,7 +160,13 @@ suite('Automation session draft synchronization', () => {
 	test('tracks target changes without recreating an equal workspace target', async () => {
 		const { service, created, discarded } = createAutomationDraftService();
 		let errorCount = 0;
-		const synchronizer = disposables.add(new AutomationSessionDraftSynchronizer(service, async () => true, () => errorCount++));
+		const configured: string[] = [];
+		const synchronizer = disposables.add(new AutomationSessionDraftSynchronizer(
+			service,
+			async () => true,
+			() => errorCount++,
+			async session => { configured.push(session.sessionId); },
+		));
 
 		synchronizer.update({ kind: 'workspace', folderUri: URI.parse('file:///workspace'), providerId: 'provider-a', sessionTypeId: 'type-a' });
 		await synchronizer.waitForSync();
@@ -180,6 +185,7 @@ suite('Automation session draft synchronization', () => {
 		assert.deepStrictEqual({
 			created,
 			discarded,
+			configured,
 			currentSession: service.automationSession.get()?.sessionId,
 			errorCount,
 		}, {
@@ -190,8 +196,35 @@ suite('Automation session draft synchronization', () => {
 				{ kind: 'quickChat', providerId: 'provider-b', sessionTypeId: 'type-b', folderUri: undefined },
 			],
 			discarded: ['automation-1', 'automation-2', 'automation-3', 'automation-4'],
+			configured: ['automation-1', 'automation-2', 'automation-3', 'automation-4'],
 			currentSession: undefined,
 			errorCount: 0,
+		});
+	});
+
+	test('discards a draft when provider configuration cannot be applied', async () => {
+		const { service, created, discarded } = createAutomationDraftService();
+		let errorCount = 0;
+		const synchronizer = disposables.add(new AutomationSessionDraftSynchronizer(
+			service,
+			async () => true,
+			() => errorCount++,
+			async () => { throw new Error('configuration failed'); },
+		));
+
+		synchronizer.update({ kind: 'workspace', folderUri: URI.parse('file:///workspace'), providerId: 'provider', sessionTypeId: 'type' });
+		await synchronizer.waitForSync();
+
+		assert.deepStrictEqual({
+			created,
+			discarded,
+			currentSession: service.automationSession.get(),
+			errorCount,
+		}, {
+			created: [{ kind: 'workspace', providerId: 'provider', sessionTypeId: 'type', folderUri: 'file:///workspace' }],
+			discarded: ['automation-1'],
+			currentSession: undefined,
+			errorCount: 1,
 		});
 	});
 
@@ -872,36 +905,6 @@ suite('Automation branch picker', () => {
 		assert.strictEqual(isAutomationDialogPopupTarget(item), true);
 	});
 
-	test('resolves a legacy model identifier to the selected concrete target', () => {
-		const legacyIdentifier = 'copilotcli/gpt-5.6-sol';
-		const concreteIdentifier = 'agent-host-copilotcli:gpt-5.6-sol';
-		const unrelatedIdentifier = 'other/gpt-5.6-sol';
-		const modelIds = [legacyIdentifier, unrelatedIdentifier];
-		const models = new Map<string, ILanguageModelChatMetadata>([
-			[legacyIdentifier, upcastPartial<ILanguageModelChatMetadata>({ id: 'gpt-5.6-sol', targetChatSessionType: 'copilotcli' })],
-			[concreteIdentifier, upcastPartial<ILanguageModelChatMetadata>({ id: 'gpt-5.6-sol', targetChatSessionType: 'agent-host-copilotcli' })],
-			[unrelatedIdentifier, upcastPartial<ILanguageModelChatMetadata>({ id: 'gpt-5.6-sol', targetChatSessionType: 'other' })],
-		]);
-		const languageModelsService = upcastPartial<ILanguageModelsService>({
-			getLanguageModelIds: () => modelIds,
-			lookupLanguageModel: identifier => models.get(identifier),
-		});
-
-		const beforeConcreteTargetArrives = resolveAutomationModelIdentifier(languageModelsService, legacyIdentifier, 'copilotcli', 'agent-host-copilotcli');
-		modelIds.push(concreteIdentifier);
-
-		assert.deepStrictEqual({
-			beforeConcreteTargetArrives,
-			afterConcreteTargetArrives: resolveAutomationModelIdentifier(languageModelsService, legacyIdentifier, 'copilotcli', 'agent-host-copilotcli'),
-			alreadyConcrete: resolveAutomationModelIdentifier(languageModelsService, concreteIdentifier, 'copilotcli', 'agent-host-copilotcli'),
-			unrelated: resolveAutomationModelIdentifier(languageModelsService, unrelatedIdentifier, 'copilotcli', 'agent-host-copilotcli'),
-		}, {
-			beforeConcreteTargetArrives: legacyIdentifier,
-			afterConcreteTargetArrives: concreteIdentifier,
-			alreadyConcrete: concreteIdentifier,
-			unrelated: unrelatedIdentifier,
-		});
-	});
 });
 
 suite('Automation dialog keyboard navigation', () => {

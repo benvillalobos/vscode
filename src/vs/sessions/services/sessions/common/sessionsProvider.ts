@@ -10,7 +10,7 @@ import { URI } from '../../../../base/common/uri.js';
 import { IChatRequestVariableEntry } from '../../../../workbench/contrib/chat/common/attachments/chatVariableEntries.js';
 import { ILanguageModelChatMetadataAndIdentifier } from '../../../../workbench/contrib/chat/common/languageModels.js';
 import { ModelIdentifierResolution } from '../../../../workbench/contrib/chat/common/modelSelection.js';
-import { IAutomation, IAutomationConfiguration, IAutomationRun } from '../../../../workbench/contrib/chat/common/automations/automation.js';
+import { IAutomation, IAutomationConfiguration, ILegacyAutomationConfiguration, IAutomationRun } from '../../../../workbench/contrib/chat/common/automations/automation.js';
 import { IAutomationStore } from '../../../../workbench/contrib/chat/common/automations/automationService.js';
 import { IChat, ISession, ISessionType, ISessionWorkspace, ISessionWorkspaceBrowseAction, ISideChatSelection } from './session.js';
 
@@ -97,6 +97,8 @@ export interface ISessionsProviderAutomationConfiguration {
 	captureAutomationConfiguration(sessionId: string, token: CancellationToken): Promise<IAutomationConfiguration>;
 	/** Validates and canonicalizes a snapshot for one exact provider session type. */
 	validateAutomationConfiguration(sessionTypeId: string, configuration: IAutomationConfiguration): IAutomationConfiguration;
+	/** Translates schema-v3 generic fields into this provider's current snapshot shape. */
+	migrateLegacyAutomationConfiguration(sessionTypeId: string, configuration: ILegacyAutomationConfiguration): IAutomationConfiguration;
 	/** Fully replaces provider-owned draft configuration with the validated snapshot. */
 	applyAutomationConfiguration(sessionId: string, configuration: IAutomationConfiguration, token: CancellationToken): Promise<void>;
 }

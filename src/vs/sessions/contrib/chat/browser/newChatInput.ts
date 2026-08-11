@@ -370,10 +370,12 @@ export class NewChatInputWidget extends Disposable implements IHistoryNavigation
 			hasAdditionalSendContent?: IObservable<boolean>;
 			loading: IObservable<boolean>;
 			historyKey?: IObservable<string | undefined>;
+			usePersistedDraftState?: boolean;
 			minEditorHeight?: number;
 			placeholder?: string;
 			renderSessionTypePickerInControls?: boolean;
 			renderSendButton?: boolean;
+			renderAttachments?: boolean;
 			sessionTypePickerOptions?: ISessionTypePickerOptions;
 			supportsBackground?: boolean;
 			getInputOnboardingTipContainer?: () => HTMLElement | undefined;
@@ -502,12 +504,14 @@ export class NewChatInputWidget extends Disposable implements IHistoryNavigation
 		const inputAreaWrapper = dom.append(chatInputContainer, dom.$('.new-chat-input-area-wrapper'));
 		const inputArea = dom.append(inputAreaWrapper, dom.$('.new-chat-input-area'));
 
-		// Attachments row (pills only) inside input area, above editor
-		const attachRow = dom.append(inputArea, dom.$('.sessions-chat-attach-row'));
-		const attachedContextContainer = dom.append(attachRow, dom.$('.sessions-chat-attached-context'));
-		this._contextAttachments.renderAttachedContext(attachedContextContainer);
-		this._contextAttachments.registerDropTarget(root);
-		this._contextAttachments.registerPasteHandler(inputArea);
+		if (this.options.renderAttachments !== false) {
+			// Attachments row (pills only) inside input area, above editor
+			const attachRow = dom.append(inputArea, dom.$('.sessions-chat-attach-row'));
+			const attachedContextContainer = dom.append(attachRow, dom.$('.sessions-chat-attached-context'));
+			this._contextAttachments.renderAttachedContext(attachedContextContainer);
+			this._contextAttachments.registerDropTarget(root);
+			this._contextAttachments.registerPasteHandler(inputArea);
+		}
 
 		this._createEditor(inputArea, editorOverflowWidgetsDomNode);
 		const inputHasContent = observableFromEvent(this, this._editor.onDidChangeModelContent, () => this._editor.getValue().length > 0);
@@ -553,8 +557,9 @@ export class NewChatInputWidget extends Disposable implements IHistoryNavigation
 			},
 		}));
 
-		// Restore draft input state from storage
-		this._restoreState();
+		if (this.options.usePersistedDraftState !== false) {
+			this._restoreState();
+		}
 
 		// Layout editor after the input slot fade-in animation completes
 		this._register(dom.addDisposableListener(chatInputContainer, 'animationend', () => {
@@ -816,7 +821,9 @@ export class NewChatInputWidget extends Disposable implements IHistoryNavigation
 			toolbar.classList.toggle('sessions-chat-voice-input-actions-multiple', Number(dictationActionVisible) + voiceActionCount > 1);
 		};
 
-		this._createAttachButton(toolbar);
+		if (this.options.renderAttachments !== false) {
+			this._createAttachButton(toolbar);
+		}
 
 		// Session config pickers (such as model) — rendered via MenuWorkbenchToolBar
 		// Visibility controlled by context keys (isActiveSessionBackgroundProvider, isNewChatSession)
@@ -1269,7 +1276,7 @@ export class NewChatInputWidget extends Disposable implements IHistoryNavigation
 	}
 
 	saveState(): void {
-		if (this._draftState) {
+		if (this.options.usePersistedDraftState !== false && this._draftState) {
 			const state = {
 				...this._draftState,
 				attachments: this._draftState.attachments.map(IChatRequestVariableEntry.toExport),

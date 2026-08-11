@@ -20,6 +20,12 @@ export interface IAutomationConfiguration {
 	readonly value: AutomationConfigurationValue;
 }
 
+export interface ILegacyAutomationConfiguration {
+	readonly modelId?: string;
+	readonly mode?: string;
+	readonly permissionLevel?: string;
+}
+
 export function isAutomationConfigurationObject(value: AutomationConfigurationValue): value is { readonly [key: string]: AutomationConfigurationValue } {
 	return typeof value === 'object' && value !== null && !Array.isArray(value);
 }

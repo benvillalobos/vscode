@@ -25,7 +25,7 @@ import { IChatResponseModel } from '../../../../../workbench/contrib/chat/common
 import { ChatSessionStatus, IChatSessionsService, IChatSessionProviderOptionGroup, IChatSessionProviderOptionItem, SessionType } from '../../../../../workbench/contrib/chat/common/chatSessionsService.js';
 import { ISession, IChat, ISessionGitRepository, ISessionFolder, ISessionWorkspace, ISideChatSelection, SessionStatus, GITHUB_REMOTE_FILE_SCHEME, IGitHubInfo, ISessionType, ISessionWorkspaceBrowseAction, ISessionFileChange, sessionFileChangesEqual, gitHubInfoEqual, sessionWorkspaceEqual, toSessionId, SESSION_WORKSPACE_GROUP_LOCAL, ISessionChangeset, IChatCheckpoints, ChatInteractivity, SessionTypeAuthRequirement } from '../../../../services/sessions/common/session.js';
 import { ChatAgentLocation, ChatConfiguration, ChatModeKind, ChatPermissionLevel, isChatPermissionLevel } from '../../../../../workbench/contrib/chat/common/constants.js';
-import { AutomationConfigurationValue, IAutomationConfiguration, isAutomationConfigurationObject, toAutomationConfigurationValue } from '../../../../../workbench/contrib/chat/common/automations/automation.js';
+import { AutomationConfigurationValue, IAutomationConfiguration, ILegacyAutomationConfiguration, isAutomationConfigurationObject, toAutomationConfigurationValue } from '../../../../../workbench/contrib/chat/common/automations/automation.js';
 import { basename, dirname, isEqual } from '../../../../../base/common/resources.js';
 import { IDeleteChatOptions, ISendRequestOptions, ISessionChangeEvent, ISessionModelPickerOptions, ISessionModelsSnapshot, ISessionsProvider, ISessionsProviderAutomationConfiguration } from '../../../../services/sessions/common/sessionsProvider.js';
 import { ISessionOptionGroup } from '../../../chat/browser/newSession.js';
@@ -1908,6 +1908,19 @@ export class CopilotChatSessionsProvider extends Disposable implements ISessions
 				...(typeof permissionLevel === 'string' ? { permissionLevel } : {}),
 			},
 		};
+	}
+
+	migrateLegacyAutomationConfiguration(sessionTypeId: string, configuration: ILegacyAutomationConfiguration): IAutomationConfiguration {
+		return this.validateAutomationConfiguration(sessionTypeId, {
+			providerId: this.id,
+			sessionTypeId,
+			version: 1,
+			value: {
+				...(configuration.modelId ? { modelId: configuration.modelId } : {}),
+				...(configuration.mode ? { modeId: configuration.mode } : {}),
+				...(configuration.permissionLevel ? { permissionLevel: configuration.permissionLevel } : {}),
+			},
+		});
 	}
 
 	async applyAutomationConfiguration(sessionId: string, configuration: IAutomationConfiguration, token: CancellationToken): Promise<void> {

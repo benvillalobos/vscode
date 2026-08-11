@@ -8,7 +8,7 @@ import { IObservable } from '../../../../base/common/observable.js';
 import { URI } from '../../../../base/common/uri.js';
 import { CancellationToken } from '../../../../base/common/cancellation.js';
 import { createDecorator } from '../../../../platform/instantiation/common/instantiation.js';
-import { IAutomationConfiguration } from '../../../../workbench/contrib/chat/common/automations/automation.js';
+import { IAutomationConfiguration, ILegacyAutomationConfiguration } from '../../../../workbench/contrib/chat/common/automations/automation.js';
 import { IChat, ISession, ISessionType, ISessionWorkspace, ISideChatSelection } from './session.js';
 import { IDeleteChatOptions, ISendRequestOptions as ISessionsProviderSendRequestOptions } from './sessionsProvider.js';
 
@@ -264,6 +264,9 @@ export interface ISessionsManagementService {
 
 	/** Validate provider-owned configuration. */
 	validateAutomationConfiguration(providerId: string, sessionTypeId: string, configuration: IAutomationConfiguration): IAutomationConfiguration;
+
+	/** Translate schema-v3 generic fields into provider-owned configuration. */
+	migrateLegacyAutomationConfiguration(providerId: string, sessionTypeId: string, configuration: ILegacyAutomationConfiguration): IAutomationConfiguration;
 
 	/** Apply provider-owned configuration to a session draft. */
 	applyAutomationConfiguration(session: ISession, configuration: IAutomationConfiguration, token?: CancellationToken): Promise<void>;
