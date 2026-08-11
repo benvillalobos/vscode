@@ -27,6 +27,7 @@ export interface ICreateAutomationOptions {
 	readonly mode?: string;
 	readonly permissionLevel?: string;
 	readonly enabled?: boolean;
+	readonly reuseSession?: boolean;
 }
 
 /**
@@ -42,6 +43,8 @@ export interface IUpdateAutomationOptions {
 	readonly mode?: string | null;
 	readonly permissionLevel?: string | null;
 	readonly enabled?: boolean;
+	readonly reuseSession?: boolean;
+	readonly lastSessionResource?: string | null;
 }
 
 /**

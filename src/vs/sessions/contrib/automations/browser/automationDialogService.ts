@@ -102,6 +102,7 @@ export class AutomationDialogService implements IAutomationDialogService {
 				: initialWorkspaceTarget?.isolation.kind === 'worktree' ? 'worktree' : 'workspace',
 			branch: initialWorkspaceTarget?.isolation.kind === 'worktree' ? initialWorkspaceTarget.isolation.branch : undefined,
 			enabled: initial?.enabled ?? true,
+			reuseSession: initial?.reuseSession ?? false,
 		};
 
 		const validation: IValidationState = { nameError: undefined, promptError: undefined, folderError: undefined, sessionTypeError: undefined, branchError: undefined };
@@ -237,6 +238,7 @@ export class AutomationDialogService implements IAutomationDialogService {
 					mode: mode ?? null,
 					permissionLevel: permissionLevel ?? null,
 					enabled: state.enabled,
+					reuseSession: state.reuseSession,
 				};
 				return { kind: 'update', id: initial.id, value: patch };
 			}
@@ -250,6 +252,7 @@ export class AutomationDialogService implements IAutomationDialogService {
 				mode,
 				permissionLevel,
 				enabled: state.enabled,
+				reuseSession: state.reuseSession,
 			};
 			return { kind: 'create', value: create };
 		} finally {

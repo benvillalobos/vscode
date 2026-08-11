@@ -76,6 +76,12 @@ export interface IAutomation {
 
 	readonly enabled: boolean;
 
+	/** When true, subsequent runs reuse the same session instead of creating a new one. */
+	readonly reuseSession?: boolean;
+
+	/** Session resource URI from the most recent run, used when `reuseSession` is true. */
+	readonly lastSessionResource?: string;
+
 	/** ISO-8601 UTC timestamp. */
 	readonly createdAt: string;
 	readonly updatedAt: string;

@@ -178,6 +178,7 @@ export interface IFormState {
 	isolationMode: string | undefined;
 	branch: string | undefined;
 	enabled: boolean;
+	reuseSession: boolean;
 }
 
 export interface IValidationState {
@@ -1187,6 +1188,19 @@ export function renderForm(
 	}));
 	disposables.add(DOM.addStandardDisposableListener(enabledLabel, 'click', () => {
 		setEnabled(!enabledCheckbox.checked);
+	}));
+
+	const reuseRow = DOM.append(form, $('.automation-form-row.automation-form-checkbox-row'));
+	const reuseLabelText = localize('automation.form.reuseSession', "Reuse session (send each run to the same session)");
+	const reuseCheckbox = disposables.add(new Checkbox(reuseLabelText, state.reuseSession, defaultCheckboxStyles));
+	DOM.append(reuseRow, reuseCheckbox.domNode);
+	const reuseLabel = DOM.append(reuseRow, $('span.automation-form-checkbox-label', undefined, reuseLabelText));
+	disposables.add(reuseCheckbox.onChange(() => {
+		state.reuseSession = reuseCheckbox.checked;
+	}));
+	disposables.add(DOM.addStandardDisposableListener(reuseLabel, 'click', () => {
+		reuseCheckbox.checked = !reuseCheckbox.checked;
+		state.reuseSession = reuseCheckbox.checked;
 	}));
 
 	return {

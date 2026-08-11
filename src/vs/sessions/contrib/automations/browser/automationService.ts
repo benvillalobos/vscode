@@ -48,6 +48,8 @@ interface ISerializedAutomationBase {
 	readonly mode?: string;
 	readonly permissionLevel?: string;
 	readonly enabled: boolean;
+	readonly reuseSession?: boolean;
+	readonly lastSessionResource?: string;
 	readonly createdAt: string;
 	readonly updatedAt: string;
 	readonly lastRunAt?: string;
@@ -181,6 +183,7 @@ export class AutomationStore extends Disposable implements IAutomationStore {
 			mode: options.mode,
 			permissionLevel: isChatPermissionLevel(options.permissionLevel) ? options.permissionLevel : undefined,
 			enabled: options.enabled ?? true,
+			reuseSession: options.reuseSession ?? false,
 			createdAt: nowIso,
 			updatedAt: nowIso,
 			lastRunAt: undefined,
@@ -607,6 +610,8 @@ function serializeAutomation(a: IAutomation): ISerializedAutomation {
 		mode: a.mode,
 		permissionLevel: a.permissionLevel,
 		enabled: a.enabled,
+		reuseSession: a.reuseSession,
+		lastSessionResource: a.lastSessionResource,
 		createdAt: a.createdAt,
 		updatedAt: a.updatedAt,
 		lastRunAt: a.lastRunAt,
@@ -661,6 +666,8 @@ function createAutomationFromSerialized(s: ISerializedAutomationBase, target: Au
 		mode: s.mode,
 		permissionLevel,
 		enabled: s.enabled,
+		reuseSession: s.reuseSession,
+		lastSessionResource: s.lastSessionResource,
 		createdAt: s.createdAt,
 		updatedAt: s.updatedAt,
 		lastRunAt: s.lastRunAt,
@@ -692,6 +699,8 @@ function mergeAutomation(current: IAutomation, patch: IUpdateAutomationOptions):
 		mode: patch.mode === null ? undefined : (patch.mode ?? current.mode),
 		permissionLevel: patch.permissionLevel === null ? undefined : (patch.permissionLevel && isChatPermissionLevel(patch.permissionLevel) ? patch.permissionLevel : current.permissionLevel),
 		enabled: patch.enabled ?? current.enabled,
+		reuseSession: patch.reuseSession ?? current.reuseSession,
+		lastSessionResource: patch.lastSessionResource === null ? undefined : (patch.lastSessionResource ?? current.lastSessionResource),
 	};
 }
 

@@ -105,6 +105,7 @@ function createFormState(overrides?: Partial<IFormState>): IFormState {
 		isolationMode: 'worktree',
 		branch: undefined,
 		enabled: true,
+		reuseSession: false,
 		...overrides,
 	};
 }

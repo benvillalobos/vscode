@@ -3,32 +3,52 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { DeferredPromise } from '../../../../base/common/async.js';
-import { CancellationToken } from '../../../../base/common/cancellation.js';
-import { derived, waitForState } from '../../../../base/common/observable.js';
-import { localize } from '../../../../nls.js';
-import { ILogService } from '../../../../platform/log/common/log.js';
-import { INotificationService } from '../../../../platform/notification/common/notification.js';
-import { ITelemetryService } from '../../../../platform/telemetry/common/telemetry.js';
-import { AutomationRunTrigger, IAutomation, IAutomationRun } from '../../../../workbench/contrib/chat/common/automations/automation.js';
-import { IAutomationRunDispatch, IAutomationRunner, IAutomationRunOperation } from '../../../../workbench/contrib/chat/common/automations/automationRunner.js';
-import { IAutomationService } from '../../../../workbench/contrib/chat/common/automations/automationService.js';
-import { publishAutomationRun, publishAutomationRunError } from '../../../../workbench/contrib/chat/common/automations/automationTelemetry.js';
-import { ISession, SessionStatus } from '../../../services/sessions/common/session.js';
-import { ICreateNewSessionOptions, ISendRequestOptions, ISessionsManagementService } from '../../../services/sessions/common/sessionsManagement.js';
+import { DeferredPromise } from "../../../../base/common/async.js";
+import { CancellationToken } from "../../../../base/common/cancellation.js";
+import { derived, waitForState } from "../../../../base/common/observable.js";
+import { URI } from "../../../../base/common/uri.js";
+import { localize } from "../../../../nls.js";
+import { ILogService } from "../../../../platform/log/common/log.js";
+import { INotificationService } from "../../../../platform/notification/common/notification.js";
+import { ITelemetryService } from "../../../../platform/telemetry/common/telemetry.js";
+import {
+	AutomationRunTrigger,
+	IAutomation,
+	IAutomationRun,
+} from "../../../../workbench/contrib/chat/common/automations/automation.js";
+import {
+	IAutomationRunDispatch,
+	IAutomationRunner,
+	IAutomationRunOperation,
+} from "../../../../workbench/contrib/chat/common/automations/automationRunner.js";
+import { IAutomationService } from "../../../../workbench/contrib/chat/common/automations/automationService.js";
+import {
+	publishAutomationRun,
+	publishAutomationRunError,
+} from "../../../../workbench/contrib/chat/common/automations/automationTelemetry.js";
+import {
+	ISession,
+	SessionStatus,
+} from "../../../services/sessions/common/session.js";
+import {
+	ICreateNewSessionOptions,
+	ISendRequestOptions,
+	ISessionsManagementService,
+} from "../../../services/sessions/common/sessionsManagement.js";
 
 /** Sessions-layer runner. Never throws; failures are recorded on the run row. */
 export class AutomationRunner implements IAutomationRunner {
-
 	declare readonly _serviceBrand: undefined;
 
 	constructor(
 		@IAutomationService private readonly automationService: IAutomationService,
-		@ISessionsManagementService private readonly sessionsManagementService: ISessionsManagementService,
+		@ISessionsManagementService
+		private readonly sessionsManagementService: ISessionsManagementService,
 		@ILogService private readonly logService: ILogService,
 		@ITelemetryService private readonly telemetryService: ITelemetryService,
-		@INotificationService private readonly notificationService: INotificationService,
-	) { }
+		@INotificationService
+		private readonly notificationService: INotificationService,
+	) {}
 
 	runOnce(
 		automation: IAutomation,
@@ -39,7 +59,13 @@ export class AutomationRunner implements IAutomationRunner {
 		const dispatched = new DeferredPromise<IAutomationRunDispatch>();
 		return {
 			whenDispatched: dispatched.p,
-			whenCompleted: this._runOnce(automation, trigger, leaderWindowId, token, dispatched),
+			whenCompleted: this._runOnce(
+				automation,
+				trigger,
+				leaderWindowId,
+				token,
+				dispatched,
+			),
 		};
 	}
 
@@ -52,12 +78,21 @@ export class AutomationRunner implements IAutomationRunner {
 	): Promise<void> {
 		// Must not throw per IAutomationRunner contract. Unexpected errors are swallowed here.
 		try {
-			await this._runOnceInner(automation, trigger, leaderWindowId, token, dispatched);
+			await this._runOnceInner(
+				automation,
+				trigger,
+				leaderWindowId,
+				token,
+				dispatched,
+			);
 		} catch (err) {
-			this.logService.error(`[AutomationRunner] unexpected error in runOnce for ${automation.id}`, err);
+			this.logService.error(
+				`[AutomationRunner] unexpected error in runOnce for ${automation.id}`,
+				err,
+			);
 		} finally {
 			// No-op once an exit path above has already reported its outcome.
-			await dispatched.complete({ kind: 'notStarted', reason: 'error' });
+			await dispatched.complete({ kind: "notStarted", reason: "error" });
 		}
 	}
 
@@ -72,54 +107,104 @@ export class AutomationRunner implements IAutomationRunner {
 		let runId: string | undefined;
 		try {
 			if (!this.automationService.getAutomation(automation.id)) {
-				this.logService.trace(`[AutomationRunner] skipping ${automation.id}: automation was deleted.`);
-				await dispatched.complete({ kind: 'notStarted', reason: 'deleted' });
+				this.logService.trace(
+					`[AutomationRunner] skipping ${automation.id}: automation was deleted.`,
+				);
+				await dispatched.complete({ kind: "notStarted", reason: "deleted" });
 				return;
 			}
 
 			const target = automation.target;
-			const isolationMode = target.kind === 'workspace'
-				? target.isolation.kind === 'folder' ? 'workspace' : target.isolation.kind === 'worktree' ? 'worktree' : undefined
-				: undefined;
-			const branch = target.kind === 'workspace' && target.isolation.kind === 'worktree' ? target.isolation.branch : undefined;
+			const isolationMode =
+				target.kind === "workspace"
+					? target.isolation.kind === "folder"
+						? "workspace"
+						: target.isolation.kind === "worktree"
+							? "worktree"
+							: undefined
+					: undefined;
+			const branch =
+				target.kind === "workspace" && target.isolation.kind === "worktree"
+					? target.isolation.branch
+					: undefined;
 
-			const createOptions: ICreateNewSessionOptions | undefined = target.providerId !== undefined || target.sessionTypeId !== undefined || automation.modelId !== undefined || automation.mode !== undefined || automation.permissionLevel !== undefined || isolationMode !== undefined || branch !== undefined
-				? {
-					providerId: target.providerId,
-					sessionTypeId: target.sessionTypeId,
-					modelId: automation.modelId,
-					modeId: automation.mode,
-					permissionLevel: automation.permissionLevel,
-					isolationMode,
-					branch,
-				}
-				: undefined;
+			const createOptions: ICreateNewSessionOptions | undefined =
+				target.providerId !== undefined ||
+				target.sessionTypeId !== undefined ||
+				automation.modelId !== undefined ||
+				automation.mode !== undefined ||
+				automation.permissionLevel !== undefined ||
+				isolationMode !== undefined ||
+				branch !== undefined
+					? {
+							providerId: target.providerId,
+							sessionTypeId: target.sessionTypeId,
+							modelId: automation.modelId,
+							modeId: automation.mode,
+							permissionLevel: automation.permissionLevel,
+							isolationMode,
+							branch,
+						}
+					: undefined;
 
-			const targetAvailable = target.kind === 'quickChat'
-				? this.sessionsManagementService.isQuickChatTargetAvailable(createOptions)
-				: this.sessionsManagementService.isNewSessionTargetAvailable(target.folderUri, createOptions);
+			const targetAvailable =
+				target.kind === "quickChat"
+					? this.sessionsManagementService.isQuickChatTargetAvailable(
+							createOptions,
+						)
+					: this.sessionsManagementService.isNewSessionTargetAvailable(
+							target.folderUri,
+							createOptions,
+						);
 			if (!targetAvailable) {
-				this.logService.trace(`[AutomationRunner] deferring ${automation.id}: target is not yet advertised.`);
-				if (trigger === 'manual') {
-					this.notificationService.info(localize('automationTargetUnavailable', "Automation '{0}' cannot start until its agent becomes available.", automation.name));
+				this.logService.trace(
+					`[AutomationRunner] deferring ${automation.id}: target is not yet advertised.`,
+				);
+				if (trigger === "manual") {
+					this.notificationService.info(
+						localize(
+							"automationTargetUnavailable",
+							"Automation '{0}' cannot start until its agent becomes available.",
+							automation.name,
+						),
+					);
 				}
-				await dispatched.complete({ kind: 'notStarted', reason: 'targetUnavailable' });
+				await dispatched.complete({
+					kind: "notStarted",
+					reason: "targetUnavailable",
+				});
 				return;
 			}
 
 			// Atomically claims the automation's single active-run slot; a losing racer
 			// gets the winner's run back instead of dispatching a duplicate session.
-			const claim = await this.automationService.recordRunStart(automation.id, trigger, leaderWindowId);
+			const claim = await this.automationService.recordRunStart(
+				automation.id,
+				trigger,
+				leaderWindowId,
+			);
 			if (!claim.claimed) {
-				this.logService.trace(`[AutomationRunner] skipping ${automation.id}: active run already exists.`);
-				await dispatched.complete({ kind: 'alreadyRunning', activeRun: claim.run });
+				this.logService.trace(
+					`[AutomationRunner] skipping ${automation.id}: active run already exists.`,
+				);
+				await dispatched.complete({
+					kind: "alreadyRunning",
+					activeRun: claim.run,
+				});
 				return;
 			}
 			runId = claim.run.id;
-			const run = await this.automationService.updateRun(runId, { status: 'running' }) ?? claim.run;
+			const run =
+				(await this.automationService.updateRun(runId, {
+					status: "running",
+				})) ?? claim.run;
 
 			if (token.isCancellationRequested) {
-				await dispatched.complete({ kind: 'notStarted', reason: 'cancelled', run });
+				await dispatched.complete({
+					kind: "notStarted",
+					reason: "cancelled",
+					run,
+				});
 				await this._markCancelled(runId, trigger, automation, startTimeMs);
 				return;
 			}
@@ -130,22 +215,93 @@ export class AutomationRunner implements IAutomationRunner {
 				title: automation.name?.substring(0, 100),
 			};
 
-			this.logService.trace(`[AutomationRunner] running ${automation.id}: target=${target.kind}, provider=${createOptions?.providerId ?? '(default)'}, sessionType=${createOptions?.sessionTypeId ?? '(default)'}, model=${createOptions?.modelId ?? '(default)'}, mode=${createOptions?.modeId ?? '(default)'}, permissionLevel=${createOptions?.permissionLevel ?? '(default)'}`);
+			this.logService.trace(
+				`[AutomationRunner] running ${automation.id}: target=${target.kind}, provider=${createOptions?.providerId ?? "(default)"}, sessionType=${createOptions?.sessionTypeId ?? "(default)"}, model=${createOptions?.modelId ?? "(default)"}, mode=${createOptions?.modeId ?? "(default)"}, permissionLevel=${createOptions?.permissionLevel ?? "(default)"}`,
+			);
 
 			let session: ISession | undefined;
-			if (target.kind === 'quickChat') {
-				session = await this.sessionsManagementService.createAndSendQuickChatRequest(options, createOptions, token);
-			} else {
-				session = await this.sessionsManagementService.createAndSendNewChatRequest(target.folderUri, options, createOptions, token);
+			let reused = false;
+
+			// Session reuse: if enabled, try to send to the existing session.
+			if (automation.reuseSession && automation.lastSessionResource) {
+				this.logService.trace(
+					`[AutomationRunner] attempting session reuse for ${automation.id}, lastSessionResource=${automation.lastSessionResource}`,
+				);
+				session = this.sessionsManagementService.getSession(
+					URI.parse(automation.lastSessionResource),
+				);
+				if (session) {
+					const chat = session.mainChat.get();
+					await this.sessionsManagementService.sendRequest(
+						session,
+						chat,
+						options,
+					);
+					reused = true;
+					this.logService.trace(
+						`[AutomationRunner] reused session for ${automation.id}, sessionResource=${automation.lastSessionResource}`,
+					);
+				} else {
+					this.logService.error(
+						`[AutomationRunner] session reuse failed for ${automation.id}: session not found at ${automation.lastSessionResource}`,
+					);
+					this.notificationService.warn(
+						localize(
+							"automationSessionNotFound",
+							"Could not find session for '{0}', creating a new session.",
+							automation.name,
+						),
+					);
+				}
+			}
+
+			// Create a new session when reuse was not attempted or the session was not found.
+			if (!session) {
+				if (target.kind === "quickChat") {
+					session =
+						await this.sessionsManagementService.createAndSendQuickChatRequest(
+							options,
+							createOptions,
+							token,
+						);
+				} else {
+					session =
+						await this.sessionsManagementService.createAndSendNewChatRequest(
+							target.folderUri,
+							options,
+							createOptions,
+							token,
+						);
+				}
 			}
 
 			if (session) {
 				const sessionResource = session.resource.toString();
-				const dispatchedRun = await this.automationService.updateRun(runId, { sessionResource }) ?? run;
-				await dispatched.complete({ kind: 'started', run: dispatchedRun, sessionResource });
+				const dispatchedRun =
+					(await this.automationService.updateRun(runId, {
+						sessionResource,
+					})) ?? run;
+				await dispatched.complete({
+					kind: "started",
+					run: dispatchedRun,
+					sessionResource,
+				});
+				// Persist session resource on the automation for future reuse.
+				if (automation.reuseSession && !reused) {
+					this.logService.trace(
+						`[AutomationRunner] storing lastSessionResource for ${automation.id}: ${sessionResource}`,
+					);
+					await this.automationService.updateAutomation(automation.id, {
+						lastSessionResource: sessionResource,
+					});
+				}
 			} else {
 				// Dispatch ended without a session, e.g. the sessions service was disposed mid-send.
-				await dispatched.complete({ kind: 'notStarted', reason: token.isCancellationRequested ? 'cancelled' : 'error', run });
+				await dispatched.complete({
+					kind: "notStarted",
+					reason: token.isCancellationRequested ? "cancelled" : "error",
+					run,
+				});
 			}
 
 			if (token.isCancellationRequested) {
@@ -155,11 +311,15 @@ export class AutomationRunner implements IAutomationRunner {
 
 			const terminalStatus = session
 				? await waitForState(
-					derived(reader => session.mainChat.read(reader).status.read(reader)),
-					status => status === SessionStatus.Completed || status === SessionStatus.Error,
-					undefined,
-					token,
-				)
+						derived((reader) =>
+							session.mainChat.read(reader).status.read(reader),
+						),
+						(status) =>
+							status === SessionStatus.Completed ||
+							status === SessionStatus.Error,
+						undefined,
+						token,
+					)
 				: SessionStatus.Completed;
 
 			if (token.isCancellationRequested) {
@@ -168,54 +328,99 @@ export class AutomationRunner implements IAutomationRunner {
 			}
 
 			if (terminalStatus === SessionStatus.Error) {
-				throw new Error(localize('automationRunner.sessionFailed', "Agent session failed."));
+				throw new Error(
+					localize("automationRunner.sessionFailed", "Agent session failed."),
+				);
 			}
 
 			await this.automationService.updateRun(runId, {
-				status: 'completed',
+				status: "completed",
 				completedAt: new Date().toISOString(),
 			});
-			publishAutomationRun(this.telemetryService, { trigger, automation, success: true, durationMs: Date.now() - startTimeMs });
+			publishAutomationRun(this.telemetryService, {
+				trigger,
+				automation,
+				success: true,
+				durationMs: Date.now() - startTimeMs,
+			});
 		} catch (err) {
 			if (runId && token.isCancellationRequested) {
-				await dispatched.complete({ kind: 'notStarted', reason: 'cancelled' });
+				await dispatched.complete({ kind: "notStarted", reason: "cancelled" });
 				await this._markCancelled(runId, trigger, automation, startTimeMs);
 				return;
 			}
-			this.logService.error(`[AutomationRunner] run for ${automation.id} failed`, err);
+			this.logService.error(
+				`[AutomationRunner] run for ${automation.id} failed`,
+				err,
+			);
 			try {
 				const errorMessage = err instanceof Error ? err.message : String(err);
-				this.notificationService.error(localize('automationRunFailed', "Automation '{0}' failed: {1}", automation.name, errorMessage));
+				this.notificationService.error(
+					localize(
+						"automationRunFailed",
+						"Automation '{0}' failed: {1}",
+						automation.name,
+						errorMessage,
+					),
+				);
 				let failedRun: IAutomationRun | undefined;
 				if (runId) {
 					failedRun = await this.automationService.updateRun(runId, {
-						status: 'failed',
+						status: "failed",
 						completedAt: new Date().toISOString(),
 						errorMessage,
 					});
 				}
 				// No-op when the session was already dispatched and failed later in its lifecycle.
-				await dispatched.complete({ kind: 'notStarted', reason: 'error', run: failedRun });
-				publishAutomationRun(this.telemetryService, { trigger, automation, success: false, durationMs: Date.now() - startTimeMs });
-				publishAutomationRunError(this.telemetryService, { trigger, automation });
+				await dispatched.complete({
+					kind: "notStarted",
+					reason: "error",
+					run: failedRun,
+				});
+				publishAutomationRun(this.telemetryService, {
+					trigger,
+					automation,
+					success: false,
+					durationMs: Date.now() - startTimeMs,
+				});
+				publishAutomationRunError(this.telemetryService, {
+					trigger,
+					automation,
+				});
 			} catch (innerErr) {
-				this.logService.error(`[AutomationRunner] error recording failure for ${automation.id}`, innerErr);
+				this.logService.error(
+					`[AutomationRunner] error recording failure for ${automation.id}`,
+					innerErr,
+				);
 			}
 		}
 	}
 
-	private async _markCancelled(runId: string, trigger: AutomationRunTrigger, automation: IAutomation, startTimeMs: number): Promise<void> {
+	private async _markCancelled(
+		runId: string,
+		trigger: AutomationRunTrigger,
+		automation: IAutomation,
+		startTimeMs: number,
+	): Promise<void> {
 		try {
 			if (this.automationService.getActiveRunFor(automation.id)?.id === runId) {
 				await this.automationService.updateRun(runId, {
-					status: 'failed',
+					status: "failed",
 					completedAt: new Date().toISOString(),
-					errorMessage: localize('automationRunner.cancelled', "Cancelled"),
+					errorMessage: localize("automationRunner.cancelled", "Cancelled"),
 				});
 			}
-			publishAutomationRun(this.telemetryService, { trigger, automation, success: false, durationMs: Date.now() - startTimeMs });
+			publishAutomationRun(this.telemetryService, {
+				trigger,
+				automation,
+				success: false,
+				durationMs: Date.now() - startTimeMs,
+			});
 		} catch (err) {
-			this.logService.error(`[AutomationRunner] error recording cancellation for ${automation.id}`, err);
+			this.logService.error(
+				`[AutomationRunner] error recording cancellation for ${automation.id}`,
+				err,
+			);
 		}
 	}
 }
