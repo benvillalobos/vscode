@@ -5,8 +5,10 @@
 
 import './media/automationDialog.css';
 import * as DOM from '../../../../base/browser/dom.js';
+import { renderIcon } from '../../../../base/browser/ui/iconLabel/iconLabels.js';
 import { IButton } from '../../../../base/browser/ui/button/button.js';
 import { Dialog } from '../../../../base/browser/ui/dialog/dialog.js';
+import { Codicon } from '../../../../base/common/codicons.js';
 import { DisposableStore, toDisposable } from '../../../../base/common/lifecycle.js';
 import { localize } from '../../../../nls.js';
 import { IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
@@ -26,6 +28,8 @@ import { ILanguageModelsService } from '../../../../workbench/contrib/chat/commo
 import { IHostService } from '../../../../workbench/services/host/browser/host.js';
 import { IWorkbenchLayoutService } from '../../../../workbench/services/layout/browser/layoutService.js';
 import { ISessionsManagementService } from '../../../services/sessions/common/sessionsManagement.js';
+import { ISessionsPartService } from '../../../services/sessions/browser/sessionsPartService.js';
+import { ISessionsService } from '../../../services/sessions/browser/sessionsService.js';
 import { IFormState, IValidationState, isAutomationDialogPopupTarget, registerAutomationDialogKeyboardNavigation, renderForm, updateSaveButtonState } from './automationDialog.js';
 
 const $ = DOM.$;
@@ -77,7 +81,33 @@ export class AutomationDialogService implements IAutomationDialogService {
 		@IHostService private readonly hostService: IHostService,
 		@ISessionsManagementService private readonly sessionsManagementService: ISessionsManagementService,
 		@IWorkspaceTrustRequestService private readonly workspaceTrustRequestService: IWorkspaceTrustRequestService,
+		@ISessionsService private readonly sessionsService: ISessionsService,
+		@ISessionsPartService private readonly sessionsPartService: ISessionsPartService,
 	) { }
+
+	private _openAiAssistedCreation(currentPrompt: string): void {
+		const activeSession = this.sessionsService.openQuickChat();
+		if (!activeSession) {
+			this.logService.warn('[AutomationDialog] Could not open quick chat for AI-assisted creation');
+			return;
+		}
+
+		const prefillParts = [
+			'I want to create an automation.',
+			'Help me flesh out the details: what the prompt should be, how often it should run (manual, hourly, daily, weekly), which model to use, and whether it should target a workspace folder or run as a quick chat.',
+			'Once we agree on the setup, use the configureAutomation tool to create it.',
+			'Before creating, show me a summary of what will be configured and ask for confirmation.',
+		];
+		if (currentPrompt.trim()) {
+			prefillParts.splice(1, 0, `Here is my initial idea: "${currentPrompt.trim()}"`);
+		}
+		const prefillText = prefillParts.join(' ');
+
+		const sessionView = this.sessionsPartService.getSessionView(activeSession.sessionId);
+		if (sessionView) {
+			sessionView.prefillInput(prefillText);
+		}
+	}
 
 	async showAutomationDialog(options: IShowAutomationDialogOptions): Promise<IAutomationDialogResult | undefined> {
 		const disposables = new DisposableStore();
@@ -157,7 +187,28 @@ export class AutomationDialogService implements IAutomationDialogService {
 
 					const titlebar = DOM.append(container, $('.automation-titlebar'));
 					titlebar.setAttribute('aria-hidden', 'true');
-					titlebar.textContent = title;
+					DOM.append(titlebar, document.createTextNode(title));
+
+					const aiAssistButton = DOM.append(titlebar, $('.automation-ai-assist-button'));
+					aiAssistButton.setAttribute('role', 'button');
+					aiAssistButton.setAttribute('tabindex', '0');
+					aiAssistButton.setAttribute('aria-label', localize('automation.dialog.aiAssist', "Help me create with AI"));
+					aiAssistButton.title = localize('automation.dialog.aiAssist', "Help me create with AI");
+					DOM.append(aiAssistButton, renderIcon(Codicon.sparkle));
+					DOM.append(aiAssistButton, document.createTextNode(localize('automation.dialog.aiAssistLabel', "Help me create")));
+					const onAiAssist = () => {
+						const currentPrompt = getPrompt();
+						// Dismiss the dialog by clicking Cancel, then open AI-assisted creation
+						cancelButton?.element.click();
+						this._openAiAssistedCreation(currentPrompt);
+					};
+					disposables.add(DOM.addDisposableListener(aiAssistButton, DOM.EventType.CLICK, onAiAssist));
+					disposables.add(DOM.addDisposableListener(aiAssistButton, DOM.EventType.KEY_DOWN, (e: KeyboardEvent) => {
+						if (e.key === 'Enter' || e.key === ' ') {
+							e.preventDefault();
+							onAiAssist();
+						}
+					}));
 
 					const description = DOM.append(container, $('.automation-description'));
 					description.textContent = isEdit

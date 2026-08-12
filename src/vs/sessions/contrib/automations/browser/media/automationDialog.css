@@ -139,6 +139,9 @@
 	position: sticky;
 	top: 0;
 	z-index: 1;
+	display: flex;
+	align-items: center;
+	gap: 8px;
 	/* Right padding reserves room for the floating close-X chip. */
 	padding: 8px 36px 8px 14px;
 	text-align: left;
@@ -146,6 +149,32 @@
 	font-size: var(--vscode-agents-fontSize-heading2);
 	color: var(--vscode-editorWidget-foreground);
 	background-color: var(--vscode-editorWidget-background);
+}
+
+.automation-ai-assist-button {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	margin-left: auto;
+	padding: 2px 8px;
+	border-radius: 4px;
+	cursor: pointer;
+	font-size: var(--vscode-agents-fontSize-body2, 12px);
+	font-weight: normal;
+	color: var(--vscode-textLink-foreground);
+	background: transparent;
+	border: 1px solid var(--vscode-textLink-foreground);
+	white-space: nowrap;
+}
+
+.automation-ai-assist-button:hover {
+	background: var(--vscode-textLink-foreground);
+	color: var(--vscode-editor-background);
+}
+
+.automation-ai-assist-button:focus-visible {
+	outline: 1px solid var(--vscode-focusBorder);
+	outline-offset: 1px;
 }
 
 .automation-description {
