@@ -285,6 +285,71 @@
 	font-size: 12px;
 }
 
+/* Templates */
+.automations-templates-section {
+	width: 100%;
+	max-width: 600px;
+	margin-top: 24px;
+	text-align: left;
+}
+
+.automations-templates-header {
+	font-size: 12px;
+	font-weight: 600;
+	color: var(--vscode-descriptionForeground);
+	text-transform: uppercase;
+	letter-spacing: 0.5px;
+	margin: 0 0 12px;
+}
+
+.automations-templates-grid {
+	display: grid;
+	grid-template-columns: repeat(auto-fill, minmax(min(260px, 100%), 1fr));
+	gap: 8px;
+}
+
+.automations-template-card {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	padding: 12px 16px;
+	border: 1px solid var(--vscode-editorWidget-border);
+	border-radius: 6px;
+	background: transparent;
+	color: inherit;
+	font: inherit;
+	text-align: left;
+	cursor: pointer;
+}
+
+.automations-template-card:hover {
+	background-color: var(--vscode-list-hoverBackground);
+}
+
+.automations-template-card:focus-visible {
+	outline: 1px solid var(--vscode-focusBorder);
+	outline-offset: -1px;
+}
+
+.automations-template-card-name {
+	font-size: 13px;
+	font-weight: 600;
+	color: var(--vscode-foreground);
+}
+
+.automations-template-card-description {
+	font-size: 12px;
+	color: var(--vscode-descriptionForeground);
+	line-height: 1.4;
+}
+
+.automations-template-card-meta {
+	font-size: 11px;
+	color: var(--vscode-descriptionForeground);
+	opacity: 0.8;
+	margin-top: 4px;
+}
+
 /* Run History */
 .automations-history {
 	margin-top: 32px;

@@ -23,7 +23,7 @@ import type { IAutomationDescriptor, IAutomationRun, AutomationTarget } from '..
 import { IAutomationService } from '../../../../../workbench/contrib/chat/common/automations/automationService.js';
 import { CHAT_AUTOMATIONS_ENABLED_SETTING, ChatAutomationsEnabledContext } from '../../../../../workbench/contrib/chat/common/automations/automationsEnabled.js';
 import { IAutomationRunner } from '../../../../../workbench/contrib/chat/common/automations/automationRunner.js';
-import { IAutomationDialogService } from '../../../../../workbench/contrib/chat/common/automations/automationDialogService.js';
+import { IAutomationDialogService, IAutomationDialogSeedValues } from '../../../../../workbench/contrib/chat/common/automations/automationDialogService.js';
 import { DAYS_OF_WEEK } from '../../../../../workbench/contrib/chat/common/automations/schedule.js';
 import { AgentSessionApprovalModel } from '../../../../../workbench/contrib/chat/browser/agentSessions/agentSessionApprovalModel.js';
 import { basename } from '../../../../../base/common/resources.js';
@@ -91,6 +91,64 @@ interface IAutomationTemporaryRunRow extends IDisposable {
 	readonly element: HTMLElement;
 	readonly title: HTMLElement;
 }
+
+interface IAutomationTemplate {
+	readonly name: string;
+	readonly description: string;
+	readonly metaLabel: string;
+	readonly seed: IAutomationDialogSeedValues;
+}
+
+const AUTOMATION_TEMPLATES: IAutomationTemplate[] = [
+	{
+		name: localize('template.notificationTriage', "GitHub Notification Triage"),
+		description: localize('template.notificationTriageDesc', "Triage GitHub notifications from the last 24 hours, summarize action items, and flag anything urgent."),
+		metaLabel: localize('template.daily9am', "Daily at 9:00 AM"),
+		seed: {
+			name: localize('template.notificationTriage', "GitHub Notification Triage"),
+			prompt: 'Triage my GitHub notifications from the last 24 hours. Summarize what needs my attention, group by repository, and flag anything urgent.',
+			schedule: { interval: 'daily', scheduleHour: 9, scheduleMinute: 0 },
+			targetKind: 'quickChat',
+			mode: 'auto',
+		},
+	},
+	{
+		name: localize('template.standupDraft', "Standup Draft"),
+		description: localize('template.standupDraftDesc', "Draft a standup update from recent commits, PRs, and work in progress."),
+		metaLabel: localize('template.daily845am', "Daily at 8:45 AM"),
+		seed: {
+			name: localize('template.standupDraft', "Standup Draft"),
+			prompt: 'Draft my standup update. Look at my recent commits, open PRs, and any work in progress. Summarize what I did yesterday, what I plan to do today, and any blockers.',
+			schedule: { interval: 'daily', scheduleHour: 8, scheduleMinute: 45 },
+			targetKind: 'workspace',
+			mode: 'auto',
+		},
+	},
+	{
+		name: localize('template.codeHealthSweep', "Code Health Sweep"),
+		description: localize('template.codeHealthSweepDesc', "Scan for code smells, TODOs, and potential issues in recently changed files."),
+		metaLabel: localize('template.weeklyMonday', "Weekly on Monday at 10:00 AM"),
+		seed: {
+			name: localize('template.codeHealthSweep', "Code Health Sweep"),
+			prompt: 'Scan files changed in the last week for code smells, stale TODOs, missing error handling, and potential bugs. Summarize findings grouped by severity.',
+			schedule: { interval: 'weekly', scheduleHour: 10, scheduleMinute: 0, scheduleDay: 1 },
+			targetKind: 'workspace',
+			mode: 'auto',
+		},
+	},
+	{
+		name: localize('template.docsDriftCheck', "Docs Drift Check"),
+		description: localize('template.docsDriftCheckDesc', "Find documentation that has drifted out of sync with the code."),
+		metaLabel: localize('template.weeklyWednesday', "Weekly on Wednesday at 2:00 PM"),
+		seed: {
+			name: localize('template.docsDriftCheck', "Docs Drift Check"),
+			prompt: 'Check for documentation that may be out of sync with the code. Compare README files, inline docs, and API documentation against recent changes. Flag anything stale.',
+			schedule: { interval: 'weekly', scheduleHour: 14, scheduleMinute: 0, scheduleDay: 3 },
+			targetKind: 'workspace',
+			mode: 'auto',
+		},
+	},
+];
 
 /**
  * Card-style view of automations for the Agents window sessions grid.
@@ -424,13 +482,48 @@ class AutomationCardsSection extends Disposable {
 		createButton.label = localize('createAutomation', "Create Automation");
 		createButton.element.classList.add('automations-cards-create-button');
 		this.emptyStateDisposables.add(createButton.onDidClick(() => this.openCreateDialog()));
+
+		this.renderTemplates();
 	}
 
-	private async openCreateDialog(): Promise<void> {
+	private renderTemplates(): void {
+		const section = DOM.append(this.emptyContainer, $('.automations-templates-section'));
+
+		const header = DOM.append(section, $('h3.automations-templates-header'));
+		header.textContent = localize('automationTemplates', "Templates");
+
+		const grid = DOM.append(section, $('.automations-templates-grid'));
+
+		for (const template of AUTOMATION_TEMPLATES) {
+			this.renderTemplateCard(grid, template);
+		}
+	}
+
+	private renderTemplateCard(parent: HTMLElement, template: IAutomationTemplate): void {
+		const card = DOM.append(parent, $('button.automations-template-card', {
+			type: 'button',
+			'aria-label': localize('createFromTemplate', "Create automation from template: {0}", template.name),
+		}));
+
+		const nameEl = DOM.append(card, $('span.automations-template-card-name'));
+		nameEl.textContent = template.name;
+
+		const descEl = DOM.append(card, $('span.automations-template-card-description'));
+		descEl.textContent = template.description;
+
+		const metaEl = DOM.append(card, $('span.automations-template-card-meta'));
+		metaEl.textContent = template.metaLabel;
+
+		this.emptyStateDisposables.add(DOM.addDisposableListener(card, DOM.EventType.CLICK, () => {
+			this.openCreateDialog(template.seed);
+		}));
+	}
+
+	private async openCreateDialog(seed?: IAutomationDialogSeedValues): Promise<void> {
 		if (!await this.ensureEnabled()) {
 			return;
 		}
-		const result = await this.automationDialogService.showAutomationDialog({});
+		const result = await this.automationDialogService.showAutomationDialog({ seed });
 		if (!result || result.kind !== 'create') {
 			return;
 		}
