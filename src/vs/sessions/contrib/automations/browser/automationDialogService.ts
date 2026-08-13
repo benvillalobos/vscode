@@ -83,17 +83,18 @@ export class AutomationDialogService implements IAutomationDialogService {
 		const disposables = new DisposableStore();
 
 		const initial = options.existing;
+		const seed = options.seed;
 		const isEdit = !!initial;
 		const initialTarget = initial?.target;
 		const initialWorkspaceTarget = initialTarget?.kind === 'workspace' ? initialTarget : undefined;
 
 		const state: IFormState = {
-			name: initial?.name ?? '',
-			interval: initial?.schedule.interval ?? 'daily',
-			hour: initial?.schedule.scheduleHour ?? 9,
-			minute: initial?.schedule.scheduleMinute ?? 0,
-			day: initial?.schedule.scheduleDay ?? 1,
-			isQuickChat: initialTarget?.kind === 'quickChat',
+			name: initial?.name ?? seed?.name ?? '',
+			interval: initial?.schedule.interval ?? seed?.schedule?.interval ?? 'daily',
+			hour: initial?.schedule.scheduleHour ?? seed?.schedule?.scheduleHour ?? 9,
+			minute: initial?.schedule.scheduleMinute ?? seed?.schedule?.scheduleMinute ?? 0,
+			day: initial?.schedule.scheduleDay ?? seed?.schedule?.scheduleDay ?? 1,
+			isQuickChat: initialTarget?.kind === 'quickChat' || (!initial && seed?.targetKind === 'quickChat'),
 			folderUri: initialWorkspaceTarget?.folderUri,
 			providerId: initialTarget?.providerId,
 			sessionTypeId: initialTarget?.sessionTypeId,
@@ -109,7 +110,7 @@ export class AutomationDialogService implements IAutomationDialogService {
 		let saveButton: IButton | undefined;
 		let cancelButton: IButton | undefined;
 		let revalidate: () => void = () => { };
-		let getPrompt: () => string = () => initial?.prompt ?? '';
+		let getPrompt: () => string = () => initial?.prompt ?? seed?.prompt ?? '';
 		let getMode: () => string | undefined = () => initial?.mode;
 		let getPermissionLevel: () => string | undefined = () => initial?.permissionLevel;
 		let getModelId: () => string | undefined = () => initial?.modelId;
@@ -166,7 +167,7 @@ export class AutomationDialogService implements IAutomationDialogService {
 
 					const formPane = DOM.append(container, $('.automation-form-pane'));
 					const form = DOM.append(formPane, $('.automation-form'));
-					const handle = renderForm(form, state, disposables, validation, () => revalidate(), this.instantiationService, this.contextKeyService, this.contextViewService, this.configurationService, this.languageModelsService, this.layoutService, this.logService, this.productService, this.sessionsManagementService, this.workspaceTrustRequestService, initial?.prompt ?? '', initial?.mode, initial?.permissionLevel, initial?.modelId);
+					const handle = renderForm(form, state, disposables, validation, () => revalidate(), this.instantiationService, this.contextKeyService, this.contextViewService, this.configurationService, this.languageModelsService, this.layoutService, this.logService, this.productService, this.sessionsManagementService, this.workspaceTrustRequestService, initial?.prompt ?? seed?.prompt ?? '', initial?.mode, initial?.permissionLevel, initial?.modelId);
 					getPrompt = handle.getPrompt;
 					getMode = handle.getMode;
 					getPermissionLevel = handle.getPermissionLevel;

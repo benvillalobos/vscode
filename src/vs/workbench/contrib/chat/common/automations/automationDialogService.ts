@@ -4,11 +4,19 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { createDecorator } from '../../../../../platform/instantiation/common/instantiation.js';
-import { IAutomationDescriptor } from './automation.js';
+import { IAutomationDescriptor, IAutomationSchedule } from './automation.js';
 import { ICreateAutomationOptions, IUpdateAutomationOptions } from './automationService.js';
+
+export interface IAutomationDialogSeedValues {
+	readonly name?: string;
+	readonly prompt?: string;
+	readonly schedule?: Partial<IAutomationSchedule>;
+	readonly targetKind?: 'quickChat' | 'workspace';
+}
 
 export interface IShowAutomationDialogOptions {
 	readonly existing?: IAutomationDescriptor;
+	readonly seed?: IAutomationDialogSeedValues;
 }
 
 export type IAutomationDialogResult =

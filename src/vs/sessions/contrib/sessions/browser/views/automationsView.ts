@@ -21,11 +21,13 @@ import { IAutomationService } from '../../../../../workbench/contrib/chat/common
 import { CHAT_AUTOMATIONS_ENABLED_SETTING, ChatAutomationsEnabledContext } from '../../../../../workbench/contrib/chat/common/automations/automationsEnabled.js';
 import { IAutomationRunner } from '../../../../../workbench/contrib/chat/common/automations/automationRunner.js';
 import { IAutomationDialogService } from '../../../../../workbench/contrib/chat/common/automations/automationDialogService.js';
+import { validateAutomationFile } from '../../../../../workbench/contrib/chat/common/automations/automationImport.js';
 import { DAYS_OF_WEEK } from '../../../../../workbench/contrib/chat/common/automations/schedule.js';
 import { basename } from '../../../../../base/common/resources.js';
 import { CancellationToken } from '../../../../../base/common/cancellation.js';
 import { ILogService } from '../../../../../platform/log/common/log.js';
-import { IDialogService } from '../../../../../platform/dialogs/common/dialogs.js';
+import { IDialogService, IFileDialogService } from '../../../../../platform/dialogs/common/dialogs.js';
+import { IFileService } from '../../../../../platform/files/common/files.js';
 import { IConfigurationService } from '../../../../../platform/configuration/common/configuration.js';
 import { ContextKeyExpr, IContextKeyService } from '../../../../../platform/contextkey/common/contextkey.js';
 import { status } from '../../../../../base/browser/ui/aria/aria.js';
@@ -1029,6 +1031,102 @@ registerAction2(class NewAutomationAction extends Action2 {
 			});
 		} catch (err) {
 			logService.error('[Automations] Failed to create automation', err);
+			await dialogService.error(
+				localize('automationCreateFailed', "Failed to create automation."),
+				getErrorMessage(err),
+			);
+		}
+	}
+});
+
+registerAction2(class ImportAutomationAction extends Action2 {
+	constructor() {
+		super({
+			id: 'sessionsView.importAutomation',
+			title: localize2('importAutomation', "Import Automation..."),
+			icon: Codicon.folderOpened,
+			precondition: ChatAutomationsEnabledContext,
+			menu: [{ id: Menus.CustomViewAutomations, group: 'navigation', order: 2, when: ChatAutomationsEnabledContext }],
+		});
+	}
+	override async run(accessor: ServicesAccessor): Promise<void> {
+		const fileDialogService = accessor.get(IFileDialogService);
+		const fileService = accessor.get(IFileService);
+		const automationDialogService = accessor.get(IAutomationDialogService);
+		const automationService = accessor.get(IAutomationService);
+		const configurationService = accessor.get(IConfigurationService);
+		const dialogService = accessor.get(IDialogService);
+		const logService = accessor.get(ILogService);
+
+		const isEnabled = () => configurationService.getValue<boolean>(CHAT_AUTOMATIONS_ENABLED_SETTING) === true;
+		if (!isEnabled()) {
+			await showAutomationsDisabled(dialogService);
+			return;
+		}
+
+		const uris = await fileDialogService.showOpenDialog({
+			title: localize('importAutomation.dialogTitle', "Import Automation"),
+			canSelectFiles: true,
+			canSelectFolders: false,
+			canSelectMany: false,
+			filters: [{ name: localize('importAutomation.fileFilter', "Automation Files"), extensions: ['automation.md'] }],
+		});
+
+		if (!uris || uris.length === 0) {
+			return;
+		}
+
+		const fileUri = uris[0];
+		let content: string;
+		try {
+			const fileContent = await fileService.readFile(fileUri);
+			content = fileContent.value.toString();
+		} catch (err) {
+			logService.error('[Automations] Failed to read automation file', err);
+			await dialogService.error(
+				localize('importAutomation.readFailed', "Failed to read file."),
+				getErrorMessage(err),
+			);
+			return;
+		}
+
+		const validation = validateAutomationFile(content);
+		if (!validation.ok || !validation.draft) {
+			const issueMessages = validation.issues.map(i => i.message).join('\n');
+			await dialogService.error(
+				localize('importAutomation.validationFailed', "Invalid automation file"),
+				issueMessages,
+			);
+			return;
+		}
+
+		const { draft } = validation;
+		const result = await automationDialogService.showAutomationDialog({
+			seed: {
+				name: draft.name,
+				prompt: draft.prompt,
+				schedule: draft.schedule,
+				targetKind: draft.targetKind,
+			},
+		});
+
+		if (!result || result.kind !== 'create') {
+			return;
+		}
+
+		if (!isEnabled()) {
+			await showAutomationsDisabled(dialogService);
+			return;
+		}
+
+		try {
+			await automationService.createAutomation(result.value, () => {
+				if (!isEnabled()) {
+					throw new Error(localize('automationsDisabledBeforeSave', "Automations were disabled before the change could be saved."));
+				}
+			});
+		} catch (err) {
+			logService.error('[Automations] Failed to create automation from import', err);
 			await dialogService.error(
 				localize('automationCreateFailed', "Failed to create automation."),
 				getErrorMessage(err),
