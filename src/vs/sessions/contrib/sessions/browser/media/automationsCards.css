@@ -330,6 +330,17 @@
 	width: calc(100% - var(--vscode-spacing-size200));
 }
 
+.automations-history-pagination {
+	display: flex;
+	justify-content: center;
+	margin-top: var(--vscode-spacing-size80);
+}
+
+.automations-show-older-runs {
+	width: auto;
+	max-width: fit-content;
+}
+
 .hc-black .automations-card,
 .hc-light .automations-card {
 	border-color: var(--vscode-contrastBorder);

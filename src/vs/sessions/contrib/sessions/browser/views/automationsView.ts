@@ -55,6 +55,7 @@ import { AUTOMATIONS_CUSTOM_VIEW_ID } from '../automationsConstants.js';
 const $ = DOM.$;
 const STOP_AUTOMATION_RUN_SESSION_COMMAND_ID = 'sessions.automations.stopRunSession';
 const DELETE_AUTOMATION_RUN_SESSION_COMMAND_ID = 'sessions.automations.deleteRunSession';
+const AUTOMATION_HISTORY_PAGE_SIZE = 25;
 
 interface IAutomationCardEntry {
 	readonly element: HTMLElement;
@@ -536,6 +537,8 @@ class AutomationHistorySection extends Disposable {
 
 	private readonly container: HTMLElement;
 	private readonly groupsContainer: HTMLElement;
+	private readonly paginationContainer: HTMLElement;
+	private readonly showOlderButton: Button;
 	private readonly headerDisposables = this._register(new DisposableStore());
 	private readonly persistentGroups = new Map<string, IAutomationHistoryGroup>();
 	private readonly runFocusTargets = new Map<string, { readonly list: SessionsFlatList; readonly session: ISession }>();
@@ -545,6 +548,8 @@ class AutomationHistorySection extends Disposable {
 	private shouldRestoreFocus = false;
 	private headerRow: HTMLElement | undefined;
 	private markAllButton: Button | undefined;
+	private visibleRunLimit = AUTOMATION_HISTORY_PAGE_SIZE;
+	private allRuns: readonly IAutomationRun[] = [];
 	private readonly currentRuns = observableValue<readonly IAutomationRun[]>(this, []);
 	private readonly currentSessions = observableValue<ReadonlyMap<string, ISession>>(this, new Map());
 
@@ -568,15 +573,29 @@ class AutomationHistorySection extends Disposable {
 		this.container = DOM.append(parent, $('.automations-history'));
 		this.groupsContainer = DOM.append(this.container, $('.automations-history-groups'));
 		this.approvalModel = this._register(this.instantiationService.createInstance(AgentSessionApprovalModel));
+		this.paginationContainer = DOM.append(this.container, $('.automations-history-pagination'));
+		this.showOlderButton = this._register(new Button(this.paginationContainer, {
+			...defaultButtonStyles,
+			secondary: true,
+			title: localize('showOlderRuns', "Show older runs"),
+		}));
+		this.showOlderButton.label = localize('showOlderRuns', "Show older runs");
+		this.showOlderButton.element.classList.add('automations-show-older-runs');
+		this.paginationContainer.style.display = 'none';
+		this._register(this.showOlderButton.onDidClick(() => this.showOlderRuns()));
 	}
 
 	render(runs: readonly IAutomationRun[], sessions: ReadonlyMap<string, ISession>): void {
 		const sessionRuns = runs.filter(run => sessions.has(run.id));
+		const visibleSessionRunIds = new Set(sessionRuns.slice(0, this.visibleRunLimit).map(run => run.id));
 		const visibleRuns = runs.filter(run =>
-			sessions.has(run.id)
-			|| isTemporaryAutomationRun(run)
-			|| (!!run.sessionResource && !!this.sessionsManagementService.getSession(run.sessionResource))
+			visibleSessionRunIds.has(run.id)
+			|| (!sessions.has(run.id) && (
+				isTemporaryAutomationRun(run)
+				|| (!!run.sessionResource && !!this.sessionsManagementService.getSession(run.sessionResource))
+			))
 		);
+		this.allRuns = runs;
 		transaction(tx => {
 			this.currentRuns.set(sessionRuns, tx);
 			this.currentSessions.set(sessions, tx);
@@ -585,7 +604,9 @@ class AutomationHistorySection extends Disposable {
 		this.renderedFocusableRunIds = [];
 
 		if (visibleRuns.length === 0) {
+			this.visibleRunLimit = AUTOMATION_HISTORY_PAGE_SIZE;
 			this.container.style.display = 'none';
+			this.paginationContainer.style.display = 'none';
 			this.disposeAllGroups();
 			this.restoreFocusAfterRender();
 			return;
@@ -639,6 +660,7 @@ class AutomationHistorySection extends Disposable {
 			}
 		}
 
+		this.paginationContainer.style.display = visibleSessionRunIds.size < sessionRuns.length ? '' : 'none';
 		this.restoreFocusAfterRender();
 	}
 
@@ -678,6 +700,17 @@ class AutomationHistorySection extends Disposable {
 			this.markAllButton!.element.style.display = hasUnread ? '' : 'none';
 			this.markAllButton!.enabled = hasUnread && !isMarkingAllRead;
 		}));
+	}
+
+	private showOlderRuns(): void {
+		const firstNewRunId = this.currentRuns.get()[this.visibleRunLimit]?.id;
+		const shouldRestoreFocus = this.showOlderButton.hasFocus();
+		this.visibleRunLimit += AUTOMATION_HISTORY_PAGE_SIZE;
+		this.render(this.allRuns, this.currentSessions.get());
+		if (shouldRestoreFocus && this.paginationContainer.style.display === 'none') {
+			const target = firstNewRunId ? this.runFocusTargets.get(firstNewRunId) : undefined;
+			target?.list.focusSession(target.session);
+		}
 	}
 
 	private resolveSessionItems(runs: readonly IAutomationRun[], sessions: ReadonlyMap<string, ISession>): IAutomationHistoryItem[] {

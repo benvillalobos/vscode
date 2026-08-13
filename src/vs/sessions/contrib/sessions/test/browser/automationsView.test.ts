@@ -607,6 +607,46 @@ suite('AutomationsCardsWidget', () => {
 		});
 	});
 
+	test('shows resolved session history in pages of 25 without hiding temporary runs', () => {
+		const { automationService, sessionsManagementService, widget } = setup();
+		automationService.setAutomations([automation()]);
+		const sessionRuns = Array.from({ length: 30 }, (_, index) => {
+			if (index === 0) {
+				return run();
+			}
+			if (index === 1) {
+				return run({ id: 'run-2', sessionResource: SECOND_SESSION_RESOURCE });
+			}
+			const resource = URI.parse(`vscode-chat-session://test/session-${index + 1}`);
+			sessionsManagementService.addSession(resource, `Daily review ${index + 1}`);
+			return run({ id: `run-${index + 1}`, sessionResource: resource });
+		});
+		automationService.setRuns([
+			run({ id: 'run-starting', status: 'pending', sessionResource: undefined }),
+			...sessionRuns,
+		]);
+		const showOlderButton = widget.element.querySelector<HTMLElement>('.automations-show-older-runs');
+		assert.ok(showOlderButton);
+		const initialSessionRows = widget.element.querySelectorAll('.automations-run-session-list .session-item').length;
+		const initialTemporaryRows = widget.element.querySelectorAll('.automations-temporary-run').length;
+
+		showOlderButton.click();
+
+		assert.deepStrictEqual({
+			initialSessionRows,
+			initialTemporaryRows,
+			expandedSessionRows: widget.element.querySelectorAll('.automations-run-session-list .session-item').length,
+			expandedTemporaryRows: widget.element.querySelectorAll('.automations-temporary-run').length,
+			showOlderVisible: showOlderButton.parentElement?.style.display !== 'none',
+		}, {
+			initialSessionRows: 25,
+			initialTemporaryRows: 1,
+			expandedSessionRows: 30,
+			expandedTemporaryRows: 1,
+			showOlderVisible: false,
+		});
+	});
+
 	test('automation updates preserve card identity and focus', () => {
 		const { automationService, widget } = setup();
 		automationService.setAutomations([automation()]);
