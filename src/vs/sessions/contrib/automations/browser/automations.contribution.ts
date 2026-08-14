@@ -40,7 +40,7 @@ Registry.as<IConfigurationRegistry>(ConfigurationExtensions.Configuration).regis
 			default: false,
 			scope: ConfigurationScope.MACHINE,
 			tags: ['experimental', 'advanced'],
-			description: localize('chat.automations.enabled', "Enables the Automations feature: scheduling agent sessions to run on a cadence. When disabled, the Automations entry in the Customizations sidebar, the Automations section in the Customizations editor, and the Automation option in the new-session composer are hidden, and scheduled automations are not dispatched."),
+			description: localize('chat.automations.enabled', "Enables the Automations feature: scheduling agent sessions to run on a cadence. When disabled, the Automations section in the sessions list, the Automation option in the new-session composer, and scheduled dispatch are all hidden."),
 			included: product.quality !== 'stable',
 			experiment: { mode: 'auto' },
 		},
