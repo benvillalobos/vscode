@@ -421,6 +421,12 @@ export class NewChatInputWidget extends Disposable implements IHistoryNavigation
 			 * chat widget. The welcome composer leaves this unset.
 			 */
 			voiceRoutesWhileSessionActive?: boolean;
+			/** Hide attachments: the attachment pill row, drag & drop, and the Add Context button. */
+			hideAttachments?: boolean;
+			/** Suppress New Chat notice surfaces: notification widget, onboarding hosts, getting-started tip, and prompt options. */
+			suppressNotices?: boolean;
+			/** Do not read or write the shared New Chat draft storage. In-memory draft state still works. */
+			disableDraftPersistence?: boolean;
 		},
 		@IInstantiationService private readonly instantiationService: IInstantiationService,
 		@IModelService private readonly modelService: IModelService,
@@ -526,74 +532,78 @@ export class NewChatInputWidget extends Disposable implements IHistoryNavigation
 		this._register(composerFocusTracker.onDidFocus(() => composerFocusKey.set(true)));
 		this._register(composerFocusTracker.onDidBlur(() => composerFocusKey.set(false)));
 
-		// Notification widget above the input area
-		const notificationContainer = dom.append(chatInputContainer, dom.$(`.chat-input-notification-container.${chatInputStackSlotClass}`));
-		// Declared up front: the visibility callback can fire while the widget is
-		// still being constructed, before the binding below is assigned.
-		const notificationWidget: ChatInputNotificationWidget = this._register(this.instantiationService.createInstance(
-			ChatInputNotificationWidget,
-			{
-				modelTargetChatSessionType: this.sessionTypePicker.modelTargetChatSessionType,
-				deferredNotificationsEnabled: this.options.deferredNotificationsEnabled,
-				openModelPicker: () => this._newChatModelPickerService.openModelPicker(),
-				switchToModel: modelIdentifier => this._newChatModelPickerService.switchToModel(modelIdentifier),
-				onDidChangeVisibility: (visible, focusTarget) => this.noticeHost.setOccupied(ChatInputNoticeLane.Notification, visible, focusTarget),
-				focusInput: () => this.focus(),
-			},
-		));
-		notificationWidget.attachTo(notificationContainer);
+		if (!this.options.suppressNotices) {
+			// Notification widget above the input area
+			const notificationContainer = dom.append(chatInputContainer, dom.$(`.chat-input-notification-container.${chatInputStackSlotClass}`));
+			// Declared up front: the visibility callback can fire while the widget is
+			// still being constructed, before the binding below is assigned.
+			const notificationWidget: ChatInputNotificationWidget = this._register(this.instantiationService.createInstance(
+				ChatInputNotificationWidget,
+				{
+					modelTargetChatSessionType: this.sessionTypePicker.modelTargetChatSessionType,
+					deferredNotificationsEnabled: this.options.deferredNotificationsEnabled,
+					openModelPicker: () => this._newChatModelPickerService.openModelPicker(),
+					switchToModel: modelIdentifier => this._newChatModelPickerService.switchToModel(modelIdentifier),
+					onDidChangeVisibility: (visible, focusTarget) => this.noticeHost.setOccupied(ChatInputNoticeLane.Notification, visible, focusTarget),
+					focusInput: () => this.focus(),
+				},
+			));
+			notificationWidget.attachTo(notificationContainer);
 
-		// First-run voice and dictation introductions, docked directly above the
-		// input area so they read as one stack with it.
-		const voiceOnboardingContainer = dom.append(chatInputContainer, dom.$(`.voice-mode-onboarding-container.${chatInputStackSlotClass}`));
-		const dictationOnboardingContainer = dom.append(chatInputContainer, dom.$(`.dictation-onboarding-container.${chatInputStackSlotClass}`));
-		this._register(registerChatInputOnboardingHosts(
-			this.noticeHost,
-			{ voice: voiceOnboardingContainer, dictation: dictationOnboardingContainer },
-			chatInputContainer,
-			() => this.focus(),
-			this.voiceModeOnboardingService,
-			this.dictationOnboardingService,
-		));
+			// First-run voice and dictation introductions, docked directly above the
+			// input area so they read as one stack with it.
+			const voiceOnboardingContainer = dom.append(chatInputContainer, dom.$(`.voice-mode-onboarding-container.${chatInputStackSlotClass}`));
+			const dictationOnboardingContainer = dom.append(chatInputContainer, dom.$(`.dictation-onboarding-container.${chatInputStackSlotClass}`));
+			this._register(registerChatInputOnboardingHosts(
+				this.noticeHost,
+				{ voice: voiceOnboardingContainer, dictation: dictationOnboardingContainer },
+				chatInputContainer,
+				() => this.focus(),
+				this.voiceModeOnboardingService,
+				this.dictationOnboardingService,
+			));
 
-		// Getting-started tip: the canonical notice slot, directly above and
-		// attached to the input, matching the workbench chat input.
-		this._gettingStartedTipContainer = dom.append(chatInputContainer, dom.$(`.chat-getting-started-tip-container.${chatInputStackSlotClass}`));
+			// Getting-started tip: the canonical notice slot, directly above and
+			// attached to the input, matching the workbench chat input.
+			this._gettingStartedTipContainer = dom.append(chatInputContainer, dom.$(`.chat-getting-started-tip-container.${chatInputStackSlotClass}`));
 
-		this._promptOptionsWidget.value = this.instantiationService.createInstance(NewSessionPromptOptionsWidget, chatInputContainer, {
-			selectOption: async (option, expectedInput, animate) => {
-				this.focus();
-				const inserted = animate
-					? await this.animatePrompt(option.prompt, NEW_SESSION_PROMPT_TYPING_DURATION_MS, option.placeholder, CancellationToken.None, expectedInput)
-					: this._replacePrompt(option.prompt, option.placeholder, expectedInput);
-				const generatedValue = option.placeholder ? option.prompt.replace(option.placeholder, '') : option.prompt;
-				if (inserted && (this._editor.getValue() === option.prompt || this._editor.getValue() === generatedValue)) {
-					aria.status(localize('newSessionPromptOptions.inserted', "Inserted prompt: {0}", option.title));
-				}
-				return inserted;
-			},
-			onDidSelectOption: option => this._promptOptionsController?.onDidSelectOption(option),
-			onDidClose: () => this._dismissPromptOptions(),
-		});
-		this._promptOptionsWidget.value.setState(this._promptOptionsState);
+			this._promptOptionsWidget.value = this.instantiationService.createInstance(NewSessionPromptOptionsWidget, chatInputContainer, {
+				selectOption: async (option, expectedInput, animate) => {
+					this.focus();
+					const inserted = animate
+						? await this.animatePrompt(option.prompt, NEW_SESSION_PROMPT_TYPING_DURATION_MS, option.placeholder, CancellationToken.None, expectedInput)
+						: this._replacePrompt(option.prompt, option.placeholder, expectedInput);
+					const generatedValue = option.placeholder ? option.prompt.replace(option.placeholder, '') : option.prompt;
+					if (inserted && (this._editor.getValue() === option.prompt || this._editor.getValue() === generatedValue)) {
+						aria.status(localize('newSessionPromptOptions.inserted', "Inserted prompt: {0}", option.title));
+					}
+					return inserted;
+				},
+				onDidSelectOption: option => this._promptOptionsController?.onDidSelectOption(option),
+				onDidClose: () => this._dismissPromptOptions(),
+			});
+			this._promptOptionsWidget.value.setState(this._promptOptionsState);
+		}
 
 		// Input area inside the input slot
 		const inputAreaWrapper = dom.append(chatInputContainer, dom.$('.new-chat-input-area-wrapper'));
 		const inputArea = dom.append(inputAreaWrapper, dom.$('.new-chat-input-area'));
 
 		// Attachments row (pills only) inside input area, above editor
-		const contextAttachments = this._contextAttachments;
-		const attachRow = dom.append(inputArea, dom.$('.sessions-chat-attach-row'));
-		const attachedContextContainer = dom.append(attachRow, dom.$('.sessions-chat-attached-context'));
-		this._contextAttachments.renderAttachedContext(attachedContextContainer);
-		this._register(this.instantiationService.createInstance(ChatDragAndDrop, () => undefined, {
-			get attachments() { return contextAttachments.attachments; },
-			addAttachments: (entries: readonly IChatRequestVariableEntry[]) => contextAttachments.addAttachments(...entries),
-		}, {
-			listForeground: inactiveSessionViewForeground,
-			listBackground: inactiveSessionViewBackground,
-			overlayBackground: EDITOR_DRAG_AND_DROP_BACKGROUND,
-		})).addOverlay(root, root);
+		if (!this.options.hideAttachments) {
+			const contextAttachments = this._contextAttachments;
+			const attachRow = dom.append(inputArea, dom.$('.sessions-chat-attach-row'));
+			const attachedContextContainer = dom.append(attachRow, dom.$('.sessions-chat-attached-context'));
+			this._contextAttachments.renderAttachedContext(attachedContextContainer);
+			this._register(this.instantiationService.createInstance(ChatDragAndDrop, () => undefined, {
+				get attachments() { return contextAttachments.attachments; },
+				addAttachments: (entries: readonly IChatRequestVariableEntry[]) => contextAttachments.addAttachments(...entries),
+			}, {
+				listForeground: inactiveSessionViewForeground,
+				listBackground: inactiveSessionViewBackground,
+				overlayBackground: EDITOR_DRAG_AND_DROP_BACKGROUND,
+			})).addOverlay(root, root);
+		}
 
 		this._createEditor(inputArea, editorOverflowWidgetsDomNode);
 		const inputHasContent = observableFromEvent(this, this._editor.onDidChangeModelContent, () => this._editor.getValue().length > 0);
@@ -946,7 +956,9 @@ export class NewChatInputWidget extends Disposable implements IHistoryNavigation
 			toolbar.classList.toggle('sessions-chat-voice-input-actions-multiple', Number(dictationActionVisible) + voiceActionCount > 1);
 		};
 
-		this._createAttachButton(toolbar);
+		if (!this.options.hideAttachments) {
+			this._createAttachButton(toolbar);
+		}
 
 		// Session config pickers (such as model) — rendered via MenuWorkbenchToolBar
 		// Visibility controlled by context keys (isActiveSessionBackgroundProvider, isNewChatSession)
@@ -1396,6 +1408,9 @@ export class NewChatInputWidget extends Disposable implements IHistoryNavigation
 	}
 
 	private _getDraftState(): IDraftState | undefined {
+		if (this.options.disableDraftPersistence) {
+			return undefined;
+		}
 		const raw = this.storageService.get(STORAGE_KEY_DRAFT_STATE, StorageScope.WORKSPACE);
 		if (!raw) {
 			return undefined;
@@ -1409,10 +1424,16 @@ export class NewChatInputWidget extends Disposable implements IHistoryNavigation
 
 	private _clearDraftState(): void {
 		this._draftState = { inputText: '', attachments: [] };
+		if (this.options.disableDraftPersistence) {
+			return;
+		}
 		this.storageService.store(STORAGE_KEY_DRAFT_STATE, JSON.stringify(this._draftState), StorageScope.WORKSPACE, StorageTarget.MACHINE);
 	}
 
 	saveState(): void {
+		if (this.options.disableDraftPersistence) {
+			return;
+		}
 		if (this._draftState) {
 			const state = {
 				...this._draftState,
