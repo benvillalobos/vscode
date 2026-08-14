@@ -95,7 +95,6 @@ interface IAutomationTemporaryRunRow extends IDisposable {
 interface IAutomationTemplate {
 	readonly name: string;
 	readonly description: string;
-	readonly metaLabel: string;
 	readonly seed: IAutomationDialogSeedValues;
 }
 
@@ -103,7 +102,6 @@ const AUTOMATION_TEMPLATES: IAutomationTemplate[] = [
 	{
 		name: localize('template.notificationTriage', "Notification Triage"),
 		description: localize('template.notificationTriageDesc', "Surface what needs your attention from GitHub notifications, grouped by repo."),
-		metaLabel: localize('template.daily9am', "Daily at 9:00 AM"),
 		seed: {
 			name: localize('template.notificationTriage', "Notification Triage"),
 			prompt: 'Triage my GitHub notifications from the last 24 hours. Put anything waiting on me first, then group the rest by repository. For each item, suggest one action: reply, review, or ignore. Skip bot noise unless it signals a real failure.',
@@ -115,7 +113,6 @@ const AUTOMATION_TEMPLATES: IAutomationTemplate[] = [
 	{
 		name: localize('template.prReviewQueue', "PR Review Queue"),
 		description: localize('template.prReviewQueueDesc', "See which PRs are waiting for your review, sorted by wait time."),
-		metaLabel: localize('template.daily9am', "Daily at 9:00 AM"),
 		seed: {
 			name: localize('template.prReviewQueue', "PR Review Queue"),
 			prompt: 'List open PRs where my review is requested, sorted by how long they\'ve been waiting. For each, include the repo, author, and a one-line summary of what changed. Flag which ones look like quick wins and which need careful review.',
@@ -127,7 +124,6 @@ const AUTOMATION_TEMPLATES: IAutomationTemplate[] = [
 	{
 		name: localize('template.standupDraft', "Standup Draft"),
 		description: localize('template.standupDraftDesc', "Draft a standup update from recent commits and open PRs."),
-		metaLabel: localize('template.daily845am', "Daily at 8:45 AM"),
 		seed: {
 			name: localize('template.standupDraft', "Standup Draft"),
 			prompt: 'Draft my standup update from my commits and open PRs since my last working day. Use three short sections: what I finished, what I\'m doing today, and blockers. Keep it paste-ready for chat: short bullets, plain language, no commit hashes.',
@@ -139,7 +135,6 @@ const AUTOMATION_TEMPLATES: IAutomationTemplate[] = [
 	{
 		name: localize('template.dailyRepoDigest', "Daily Repo Digest"),
 		description: localize('template.dailyRepoDigestDesc', "Summarize what landed in the last 24 hours in the areas you work in most."),
-		metaLabel: localize('template.daily9am', "Daily at 9:00 AM"),
 		seed: {
 			name: localize('template.dailyRepoDigest', "Daily Repo Digest"),
 			prompt: 'Summarize what landed on the default branch in the last 24 hours. Cross-reference it against areas I\'ve worked in recently. Split the output into: major changes everyone should know about, changes relevant to my work, and everything else in one line each. If nothing notable landed, say so.',
@@ -510,9 +505,6 @@ class AutomationCardsSection extends Disposable {
 
 		const descEl = DOM.append(card, $('span.automations-template-card-description'));
 		descEl.textContent = template.description;
-
-		const metaEl = DOM.append(card, $('span.automations-template-card-meta'));
-		metaEl.textContent = template.metaLabel;
 
 		this.emptyStateDisposables.add(DOM.addDisposableListener(card, DOM.EventType.CLICK, () => {
 			this.openCreateDialog(template.seed);
