@@ -102,7 +102,7 @@ interface IAutomationTemplate {
 const AUTOMATION_TEMPLATES: IAutomationTemplate[] = [
 	{
 		name: localize('template.notificationTriage', "Notification Triage"),
-		description: localize('template.notificationTriageDesc', "Surface what needs your attention from GitHub notifications, grouped by repo with a suggested action for each."),
+		description: localize('template.notificationTriageDesc', "Surface what needs your attention from GitHub notifications, grouped by repo."),
 		metaLabel: localize('template.daily9am', "Daily at 9:00 AM"),
 		seed: {
 			name: localize('template.notificationTriage', "Notification Triage"),
@@ -114,7 +114,7 @@ const AUTOMATION_TEMPLATES: IAutomationTemplate[] = [
 	},
 	{
 		name: localize('template.prReviewQueue', "PR Review Queue"),
-		description: localize('template.prReviewQueueDesc', "See which pull requests are waiting for your review, sorted by wait time, with a quick summary of each."),
+		description: localize('template.prReviewQueueDesc', "See which PRs are waiting for your review, sorted by wait time."),
 		metaLabel: localize('template.daily9am', "Daily at 9:00 AM"),
 		seed: {
 			name: localize('template.prReviewQueue', "PR Review Queue"),
@@ -126,7 +126,7 @@ const AUTOMATION_TEMPLATES: IAutomationTemplate[] = [
 	},
 	{
 		name: localize('template.standupDraft', "Standup Draft"),
-		description: localize('template.standupDraftDesc', "Draft a paste-ready standup update from your recent commits and open PRs, organized by what you finished, what's next, and blockers."),
+		description: localize('template.standupDraftDesc', "Draft a standup update from recent commits and open PRs."),
 		metaLabel: localize('template.daily845am', "Daily at 8:45 AM"),
 		seed: {
 			name: localize('template.standupDraft', "Standup Draft"),
@@ -138,7 +138,7 @@ const AUTOMATION_TEMPLATES: IAutomationTemplate[] = [
 	},
 	{
 		name: localize('template.dailyRepoDigest', "Daily Repo Digest"),
-		description: localize('template.dailyRepoDigestDesc', "Summarize what landed in the last 24 hours and highlight changes relevant to the areas you work in most."),
+		description: localize('template.dailyRepoDigestDesc', "Summarize what landed in the last 24 hours in the areas you work in most."),
 		metaLabel: localize('template.daily9am', "Daily at 9:00 AM"),
 		seed: {
 			name: localize('template.dailyRepoDigest', "Daily Repo Digest"),
