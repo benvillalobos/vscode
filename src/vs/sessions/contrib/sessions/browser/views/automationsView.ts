@@ -101,12 +101,24 @@ interface IAutomationTemplate {
 
 const AUTOMATION_TEMPLATES: IAutomationTemplate[] = [
 	{
-		name: localize('template.notificationTriage', "GitHub Notification Triage"),
-		description: localize('template.notificationTriageDesc', "Triage GitHub notifications from the last 24 hours, summarize action items, and flag anything urgent."),
+		name: localize('template.notificationTriage', "Notification Triage"),
+		description: localize('template.notificationTriageDesc', "Surface what needs your attention from GitHub notifications, grouped by repo with a suggested action for each."),
 		metaLabel: localize('template.daily9am', "Daily at 9:00 AM"),
 		seed: {
-			name: localize('template.notificationTriage', "GitHub Notification Triage"),
-			prompt: 'Triage my GitHub notifications from the last 24 hours. Summarize what needs my attention, group by repository, and flag anything urgent.',
+			name: localize('template.notificationTriage', "Notification Triage"),
+			prompt: 'Triage my GitHub notifications from the last 24 hours. Put anything waiting on me first, then group the rest by repository. For each item, suggest one action: reply, review, or ignore. Skip bot noise unless it signals a real failure.',
+			schedule: { interval: 'daily', scheduleHour: 9, scheduleMinute: 0 },
+			targetKind: 'quickChat',
+			mode: 'auto',
+		},
+	},
+	{
+		name: localize('template.prReviewQueue', "PR Review Queue"),
+		description: localize('template.prReviewQueueDesc', "See which pull requests are waiting for your review, sorted by wait time, with a quick summary of each."),
+		metaLabel: localize('template.daily9am', "Daily at 9:00 AM"),
+		seed: {
+			name: localize('template.prReviewQueue', "PR Review Queue"),
+			prompt: 'List open PRs where my review is requested, sorted by how long they\'ve been waiting. For each, include the repo, author, and a one-line summary of what changed. Flag which ones look like quick wins and which need careful review.',
 			schedule: { interval: 'daily', scheduleHour: 9, scheduleMinute: 0 },
 			targetKind: 'quickChat',
 			mode: 'auto',
@@ -114,36 +126,24 @@ const AUTOMATION_TEMPLATES: IAutomationTemplate[] = [
 	},
 	{
 		name: localize('template.standupDraft', "Standup Draft"),
-		description: localize('template.standupDraftDesc', "Draft a standup update from recent commits, PRs, and work in progress."),
+		description: localize('template.standupDraftDesc', "Draft a paste-ready standup update from your recent commits and open PRs, organized by what you finished, what's next, and blockers."),
 		metaLabel: localize('template.daily845am', "Daily at 8:45 AM"),
 		seed: {
 			name: localize('template.standupDraft', "Standup Draft"),
-			prompt: 'Draft my standup update. Look at my recent commits, open PRs, and any work in progress. Summarize what I did yesterday, what I plan to do today, and any blockers.',
+			prompt: 'Draft my standup update from my commits and open PRs since my last working day. Use three short sections: what I finished, what I\'m doing today, and blockers. Keep it paste-ready for chat: short bullets, plain language, no commit hashes.',
 			schedule: { interval: 'daily', scheduleHour: 8, scheduleMinute: 45 },
 			targetKind: 'workspace',
 			mode: 'auto',
 		},
 	},
 	{
-		name: localize('template.codeHealthSweep', "Code Health Sweep"),
-		description: localize('template.codeHealthSweepDesc', "Scan for code smells, TODOs, and potential issues in recently changed files."),
-		metaLabel: localize('template.weeklyMonday', "Weekly on Monday at 10:00 AM"),
+		name: localize('template.dailyRepoDigest', "Daily Repo Digest"),
+		description: localize('template.dailyRepoDigestDesc', "Summarize what landed in the last 24 hours and highlight changes relevant to the areas you work in most."),
+		metaLabel: localize('template.daily9am', "Daily at 9:00 AM"),
 		seed: {
-			name: localize('template.codeHealthSweep', "Code Health Sweep"),
-			prompt: 'Scan files changed in the last week for code smells, stale TODOs, missing error handling, and potential bugs. Summarize findings grouped by severity.',
-			schedule: { interval: 'weekly', scheduleHour: 10, scheduleMinute: 0, scheduleDay: 1 },
-			targetKind: 'workspace',
-			mode: 'auto',
-		},
-	},
-	{
-		name: localize('template.docsDriftCheck', "Docs Drift Check"),
-		description: localize('template.docsDriftCheckDesc', "Find documentation that has drifted out of sync with the code."),
-		metaLabel: localize('template.weeklyWednesday', "Weekly on Wednesday at 2:00 PM"),
-		seed: {
-			name: localize('template.docsDriftCheck', "Docs Drift Check"),
-			prompt: 'Check for documentation that may be out of sync with the code. Compare README files, inline docs, and API documentation against recent changes. Flag anything stale.',
-			schedule: { interval: 'weekly', scheduleHour: 14, scheduleMinute: 0, scheduleDay: 3 },
+			name: localize('template.dailyRepoDigest', "Daily Repo Digest"),
+			prompt: 'Summarize what landed on the default branch in the last 24 hours. Cross-reference it against areas I\'ve worked in recently. Split the output into: major changes everyone should know about, changes relevant to my work, and everything else in one line each. If nothing notable landed, say so.',
+			schedule: { interval: 'daily', scheduleHour: 9, scheduleMinute: 0 },
 			targetKind: 'workspace',
 			mode: 'auto',
 		},
