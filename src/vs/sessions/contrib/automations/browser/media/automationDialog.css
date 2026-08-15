@@ -828,11 +828,11 @@
 
 /* Let every bottom-row control shrink so its label ellipsizes (the "dots") as
  * the row narrows, mirroring the new-session composer. The container query
- * above then hides the labels entirely once there's no room. */
+ * above then hides the labels entirely once there's no room. (The picker-slot
+ * action-label gets its floor from the 30px rule below, so it is omitted here.) */
 .automation-form-prompt-host .new-chat-bottom-container .new-chat-controls-container > *,
 .automation-form-prompt-host .new-chat-bottom-container .new-chat-repo-config-container > *,
-.automation-form-prompt-host .new-chat-bottom-container .new-chat-extra-controls > *,
-.automation-form-prompt-host .new-chat-bottom-container .sessions-chat-picker-slot .action-label {
+.automation-form-prompt-host .new-chat-bottom-container .new-chat-extra-controls > * {
 	min-width: 0;
 	overflow: hidden;
 }
