@@ -762,13 +762,41 @@
 	margin-top: var(--vscode-spacing-size40);
 	min-height: 28px;
 	max-width: 100%;
+	/* Establish a size container so the queries below can collapse the picker
+	 * labels to icon-only as the dialog (and this row) narrows — matching the
+	 * new-session composer, whose container lives on `.new-chat-widget-container`. */
+	container-type: inline-size;
+}
+
+/* Below this width the row can't fit every picker label, so drop them to
+ * icon-only (thresholds mirror the new-session composer). */
+@container (max-width: 330px) {
+	.automation-form-prompt-host .new-chat-bottom-container .sessions-chat-dropdown-label {
+		display: none;
+	}
+	/* The permission picker's label carries state, so keep it a little longer. */
+	.automation-form-prompt-host .new-chat-bottom-container .sessions-chat-permission-picker .sessions-chat-dropdown-label {
+		display: revert;
+	}
+	/* Center the now icon-only chips instead of leaving left-aligned padding. */
+	.automation-form-prompt-host .new-chat-bottom-container .monaco-action-bar .action-item:not(.sessions-chat-permission-picker) .action-label,
+	.automation-form-prompt-host .new-chat-bottom-container .sessions-chat-picker-slot:not(.sessions-chat-permission-picker) .action-label {
+		justify-content: center;
+		padding: var(--vscode-spacing-size20);
+	}
+}
+
+@container (max-width: 240px) {
+	.automation-form-prompt-host .new-chat-bottom-container .sessions-chat-permission-picker .sessions-chat-dropdown-label {
+		display: none;
+	}
 }
 
 .automation-form-prompt-host .new-chat-controls-container,
 .automation-form-prompt-host .new-chat-repo-config-container {
 	display: flex;
 	align-items: center;
-	gap: var(--vscode-spacing-size60);
+	gap: var(--vscode-spacing-size20);
 	min-width: 0;
 	overflow: hidden;
 }
@@ -778,12 +806,14 @@
 	align-items: center;
 	gap: var(--vscode-spacing-size20);
 	min-width: 0;
-	/* Clip so a long workspace name ellipsizes instead of spilling into the
-	 * neighboring provider mode picker. The session-type slot opts out of
-	 * shrinking below (flex-shrink: 0) so its short label always shows. */
 	overflow: hidden;
-	/* Breathing room before the provider mode/permission pickers. */
-	margin-right: var(--vscode-spacing-size40);
+}
+
+/* Give the provider toolbars the same small inter-chip gap as the extra
+ * controls, so the whole row reads with one consistent rhythm (the widget's
+ * own 2px gap rule is scoped to `.new-chat-widget-container`, absent here). */
+.automation-form-prompt-host .new-chat-bottom-container .monaco-action-bar .actions-container {
+	gap: var(--vscode-spacing-size20);
 }
 
 /* The dialog stamps `padding-inline-start: 20px` on every <ul> inside its
@@ -796,25 +826,23 @@
 	margin-left: 0;
 }
 
-/* Keep the harness + workspace labels from collapsing to an icon when the row
- * is crowded (short, meaningful labels: Copilot / Claude / Codex). */
-.automation-form-prompt-host .new-chat-extra-controls .sessions-chat-session-type-picker,
-.automation-form-prompt-host .new-chat-extra-controls .sessions-chat-workspace-picker {
-	flex-shrink: 0;
-}
-
-/* Cap the workspace name so a long folder ellipsizes instead of pushing into
- * the mode picker, while a normal name stays fully visible. */
-.automation-form-prompt-host .new-chat-extra-controls .sessions-chat-workspace-picker .sessions-chat-dropdown-label {
-	max-width: 140px;
-	overflow: hidden;
-	text-overflow: ellipsis;
-	white-space: nowrap;
-}
-
-/* Complete the shrink chain on the workspace wrapper. */
-.automation-form-prompt-host .new-chat-extra-controls .chat-input-picker-item {
+/* Let every bottom-row control shrink so its label ellipsizes (the "dots") as
+ * the row narrows, mirroring the new-session composer. The container query
+ * above then hides the labels entirely once there's no room. */
+.automation-form-prompt-host .new-chat-bottom-container .new-chat-controls-container > *,
+.automation-form-prompt-host .new-chat-bottom-container .new-chat-repo-config-container > *,
+.automation-form-prompt-host .new-chat-bottom-container .new-chat-extra-controls > *,
+.automation-form-prompt-host .new-chat-bottom-container .sessions-chat-picker-slot .action-label {
 	min-width: 0;
+	overflow: hidden;
+}
+
+/* Floor each picker at icon + padding width so it never shrinks past its
+ * codicon before the container query collapses the label. */
+.automation-form-prompt-host .new-chat-bottom-container .monaco-action-bar .action-item,
+.automation-form-prompt-host .new-chat-bottom-container .sessions-chat-picker-slot .action-label,
+.automation-form-prompt-host .new-chat-bottom-container .monaco-action-bar .action-item .action-label {
+	min-width: 30px;
 	overflow: hidden;
 }
 
