@@ -42,7 +42,7 @@
  * Lock the dialog box to a stable width. Without this rule the dialog
  * inherits `width: min-content` from `dialog.css` and re-flows as the
  * embedded chat input's chips change size (e.g. when the model picker
- * resolves a shorter label). Use min(640px, 92vw) so the dialog still
+ * resolves a shorter label). Use min(720px, 92vw) so the dialog still
  * shrinks gracefully on narrow viewports.
  *
  * Padding is stripped (vs. the base 8px) so our `.automation-titlebar`
@@ -53,7 +53,7 @@
  * itself (not an ancestor), so we attach the rule directly here.
  */
 .monaco-dialog-box.automation-dialog {
-	width: min(640px, 92vw);
+	width: min(720px, 92vw);
 	min-width: min(520px, 92vw);
 	max-width: 92vw;
 	padding: 0;
