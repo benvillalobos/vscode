@@ -104,7 +104,7 @@ const AUTOMATION_TEMPLATES: IAutomationTemplate[] = [
 		description: localize('template.notificationTriageDesc', "Surface what needs your attention from GitHub notifications, grouped by repo."),
 		seed: {
 			name: localize('template.notificationTriage', "Notification Triage"),
-			prompt: 'Triage my GitHub notifications from the last 24 hours. Put anything waiting on me first, then group the rest by repository. For each item, suggest one action: reply, review, or ignore. Skip bot noise unless it signals a real failure.',
+			prompt: 'Triage my GitHub notifications from the last 24 hours using gh or mcp. Surface anything that explicitly depends on me or where I am pinged directly. Anything ignorable should be marked as read and surfaced in a minimal, skimmable inline linked list. For each item, suggest one action: reply, review, or ignore. Skip bot noise unless it signals a real failure.',
 			schedule: { interval: 'daily', scheduleHour: 9, scheduleMinute: 0 },
 			targetKind: 'quickChat',
 			mode: 'auto',
@@ -115,9 +115,9 @@ const AUTOMATION_TEMPLATES: IAutomationTemplate[] = [
 		description: localize('template.prReviewQueueDesc', "See which PRs are waiting for your review, sorted by wait time."),
 		seed: {
 			name: localize('template.prReviewQueue', "PR Review Queue"),
-			prompt: 'List open PRs where my review is requested, sorted by how long they\'ve been waiting. For each, include the repo, author, and a one-line summary of what changed. Flag which ones look like quick wins and which need careful review.',
+			prompt: 'Use gh in the current repository to list open PRs where my review is requested. Show at most five non-draft PRs, ordered by oldest last activity first. Put drafts in a separate "Not ready" line. For each listed PR, include an inline link, author, last activity, one-sentence summary, and label it Quick review or Deep review. Exclude PRs I authored. End with the single PR I should review next and why. If nothing is ready, say so.',
 			schedule: { interval: 'daily', scheduleHour: 9, scheduleMinute: 0 },
-			targetKind: 'quickChat',
+			targetKind: 'workspace',
 			mode: 'auto',
 		},
 	},
@@ -126,7 +126,7 @@ const AUTOMATION_TEMPLATES: IAutomationTemplate[] = [
 		description: localize('template.standupDraftDesc', "Draft a standup update from recent commits and open PRs."),
 		seed: {
 			name: localize('template.standupDraft', "Standup Draft"),
-			prompt: 'Draft my standup update from my commits and open PRs since my last working day. Use three short sections: what I finished, what I\'m doing today, and blockers. Keep it paste-ready for chat: short bullets, plain language, no commit hashes.',
+			prompt: 'Use local git and gh to draft my standup. Set the cutoff to the start of my previous working day in local time and ignore activity before it. Finished may include only commits I authored and merged PRs that I authored, was assigned to, or that came from my branch. Today may include only the current branch and working-tree changes plus open PRs I authored, was assigned to, or directly updated after the cutoff. Do not include PRs where I am only a reviewer. Produce exactly two sections: Finished and Today, with at most three short bullets each. Add a blocker only under Today and only when the evidence shows one. Never infer plans or claim I shipped work without ownership and timestamp evidence. Return only the paste-ready standup text. Do not explain your research, criteria, or validation. Use plain language, no commit hashes, and links only when they add context.',
 			schedule: { interval: 'daily', scheduleHour: 8, scheduleMinute: 45 },
 			targetKind: 'workspace',
 			mode: 'auto',
@@ -137,7 +137,7 @@ const AUTOMATION_TEMPLATES: IAutomationTemplate[] = [
 		description: localize('template.dailyRepoDigestDesc', "Summarize what landed in the last 24 hours in the areas you work in most."),
 		seed: {
 			name: localize('template.dailyRepoDigest', "Daily Repo Digest"),
-			prompt: 'Summarize what landed on the default branch in the last 24 hours. Cross-reference it against areas I\'ve worked in recently. Split the output into: major changes everyone should know about, changes relevant to my work, and everything else in one line each. If nothing notable landed, say so.',
+			prompt: 'Use git and gh to summarize notable PRs merged into the default branch in the last 24 hours. Rank changes related to files or areas I worked in recently first, then include only high-impact repo-wide changes. Return at most six inline-linked bullets. Each bullet should say what changed and why it matters. Prefer PR metadata over raw commit subjects. Exclude trivial formatting, comment-only changes, dependency churn, and low-signal housekeeping unless they have real impact. Do not repeat items or add an "everything else" dump. If fewer than three changes are notable, say so.',
 			schedule: { interval: 'daily', scheduleHour: 9, scheduleMinute: 0 },
 			targetKind: 'workspace',
 			mode: 'auto',
