@@ -26,6 +26,7 @@ import { ILanguageModelsService } from '../../../../workbench/contrib/chat/commo
 import { IHostService } from '../../../../workbench/services/host/browser/host.js';
 import { IWorkbenchLayoutService } from '../../../../workbench/services/layout/browser/layoutService.js';
 import { ISessionsManagementService } from '../../../services/sessions/common/sessionsManagement.js';
+import { ISessionsProvidersService } from '../../../services/sessions/browser/sessionsProvidersService.js';
 import { IFormState, IValidationState, isAutomationDialogEditCommand, isAutomationDialogPopupTarget, registerAutomationDialogKeyboardNavigation, renderForm, updateSaveButtonState } from './automationDialog.js';
 
 const $ = DOM.$;
@@ -76,6 +77,7 @@ export class AutomationDialogService implements IAutomationDialogService {
 		@IProductService private readonly productService: IProductService,
 		@IHostService private readonly hostService: IHostService,
 		@ISessionsManagementService private readonly sessionsManagementService: ISessionsManagementService,
+		@ISessionsProvidersService private readonly sessionsProvidersService: ISessionsProvidersService,
 		@IWorkspaceTrustRequestService private readonly workspaceTrustRequestService: IWorkspaceTrustRequestService,
 	) { }
 
@@ -166,7 +168,7 @@ export class AutomationDialogService implements IAutomationDialogService {
 
 					const formPane = DOM.append(container, $('.automation-form-pane'));
 					const form = DOM.append(formPane, $('.automation-form'));
-					const handle = renderForm(form, state, disposables, validation, () => revalidate(), this.instantiationService, this.contextKeyService, this.contextViewService, this.configurationService, this.languageModelsService, this.layoutService, this.logService, this.productService, this.sessionsManagementService, this.workspaceTrustRequestService, initial?.prompt ?? '', initial?.mode, initial?.permissionLevel, initial?.modelId);
+					const handle = renderForm(form, state, disposables, validation, () => revalidate(), this.instantiationService, this.contextKeyService, this.contextViewService, this.configurationService, this.languageModelsService, this.layoutService, this.logService, this.productService, this.sessionsManagementService, this.sessionsProvidersService, this.workspaceTrustRequestService, initial?.prompt ?? '', initial?.mode, initial?.permissionLevel, initial?.modelId);
 					getPrompt = handle.getPrompt;
 					getMode = handle.getMode;
 					getPermissionLevel = handle.getPermissionLevel;

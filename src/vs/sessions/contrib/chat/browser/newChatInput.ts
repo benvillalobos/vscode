@@ -427,6 +427,13 @@ export class NewChatInputWidget extends Disposable implements IHistoryNavigation
 			suppressNotices?: boolean;
 			/** Do not read or write the shared New Chat draft storage. In-memory draft state still works. */
 			disableDraftPersistence?: boolean;
+			/**
+			 * Render caller-owned controls at the leading edge of the bottom
+			 * controls row, before the session-type picker and session controls.
+			 * Used by embedded composers (e.g. the automations dialog) to place
+			 * their own workspace/session-type pickers under the input.
+			 */
+			renderExtraControls?: (container: HTMLElement) => void;
 		},
 		@IInstantiationService private readonly instantiationService: IInstantiationService,
 		@IModelService private readonly modelService: IModelService,
@@ -612,6 +619,10 @@ export class NewChatInputWidget extends Disposable implements IHistoryNavigation
 
 		const newChatBottomContainer = dom.append(parent, dom.$('.new-chat-bottom-container'));
 		const newChatControlsContainer = dom.append(newChatBottomContainer, dom.$('.new-chat-controls-container'));
+		if (this.options.renderExtraControls) {
+			const extraControlsContainer = dom.append(newChatControlsContainer, dom.$('.new-chat-extra-controls'));
+			this.options.renderExtraControls(extraControlsContainer);
+		}
 		if (this.options.renderSessionTypePickerInControls !== false) {
 			const sessionTypePickerHost = dom.append(newChatControlsContainer, dom.$('.new-chat-session-type-picker-host'));
 			this.sessionTypePicker.render(sessionTypePickerHost);

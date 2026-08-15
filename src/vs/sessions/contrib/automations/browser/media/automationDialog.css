@@ -720,3 +720,160 @@
 .hc-light .automation-form-prompt-host .automation-form-branch-slot:focus-visible {
 	outline-color: var(--vscode-contrastActiveBorder);
 }
+
+/* -------------------------------------------------------------------------
+ * Embedded NewChatInputWidget layout.
+ *
+ * The widget's own styles live under `.new-chat-widget-container`, which the
+ * dialog does not have. Re-assert the layout the widget needs inside the
+ * dialog's prompt host: un-hide the input container, lay out the bottom
+ * controls row, and size the provider chips + the dialog's own workspace /
+ * session-type pickers to the compact scale used elsewhere.
+ * ------------------------------------------------------------------------- */
+
+/* The base rule hides `.new-chat-input-container` until `.revealed` is set on
+ * the (absent) `.new-chat-widget-container`; show it here. */
+.automation-form-prompt-host .new-chat-input-container {
+	display: block;
+	margin-top: 0;
+	max-width: 100%;
+}
+
+.automation-form-prompt-host .new-chat-input-area {
+	max-width: 100%;
+}
+
+/* The voice toolbar is always appended to the input toolbar even when the
+ * controller renders no actions. A zero-width flex child still contributes the
+ * toolbar's `gap`, leaving a sliver of space to the right of the dictation mic.
+ * Collapse it when it holds no action item so the trailing control reads flush.
+ * (The experimental voice-input pill already self-hides via a `.hidden` class.) */
+.automation-form-prompt-host .sessions-chat-voice-toolbar:not(:has(.action-item)) {
+	display: none;
+}
+
+/* Bottom controls row: leading pickers on the left, repo config on the right. */
+.automation-form-prompt-host .new-chat-bottom-container {
+	display: flex;
+	flex-direction: row;
+	align-items: center;
+	justify-content: space-between;
+	gap: var(--vscode-spacing-size20);
+	margin-top: var(--vscode-spacing-size40);
+	min-height: 28px;
+	max-width: 100%;
+}
+
+.automation-form-prompt-host .new-chat-controls-container,
+.automation-form-prompt-host .new-chat-repo-config-container {
+	display: flex;
+	align-items: center;
+	gap: var(--vscode-spacing-size60);
+	min-width: 0;
+	overflow: hidden;
+}
+
+.automation-form-prompt-host .new-chat-extra-controls {
+	display: flex;
+	align-items: center;
+	gap: var(--vscode-spacing-size20);
+	min-width: 0;
+	/* Clip so a long workspace name ellipsizes instead of spilling into the
+	 * neighboring provider mode picker. The session-type slot opts out of
+	 * shrinking below (flex-shrink: 0) so its short label always shows. */
+	overflow: hidden;
+	/* Breathing room before the provider mode/permission pickers. */
+	margin-right: var(--vscode-spacing-size40);
+}
+
+/* The dialog stamps `padding-inline-start: 20px` on every <ul> inside its
+ * message container (dialog.css, specificity 0,3,1 via the `ul` element). The
+ * widget's toolbars render their action lists as <ul>s, so that indent pushes
+ * the model picker off the input's left edge and leaves a gap where the hidden
+ * attach/send buttons were. Reset it with enough specificity to win. */
+.automation-form-prompt-host.interactive-session .monaco-action-bar .actions-container {
+	padding-inline-start: 0;
+	margin-left: 0;
+}
+
+/* Keep the harness + workspace labels from collapsing to an icon when the row
+ * is crowded (short, meaningful labels: Copilot / Claude / Codex). */
+.automation-form-prompt-host .new-chat-extra-controls .sessions-chat-session-type-picker,
+.automation-form-prompt-host .new-chat-extra-controls .sessions-chat-workspace-picker {
+	flex-shrink: 0;
+}
+
+/* Cap the workspace name so a long folder ellipsizes instead of pushing into
+ * the mode picker, while a normal name stays fully visible. */
+.automation-form-prompt-host .new-chat-extra-controls .sessions-chat-workspace-picker .sessions-chat-dropdown-label {
+	max-width: 140px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+/* Complete the shrink chain on the workspace wrapper. */
+.automation-form-prompt-host .new-chat-extra-controls .chat-input-picker-item {
+	min-width: 0;
+	overflow: hidden;
+}
+
+/* Match the secondary-toolbar chip metrics used by the new-session controls. */
+.automation-form-prompt-host .new-chat-bottom-container .action-label {
+	height: 16px;
+	padding: var(--vscode-spacing-size20) var(--vscode-spacing-size60);
+	font-size: var(--vscode-agents-fontSize-label2, 11px);
+	color: var(--vscode-icon-foreground);
+}
+
+.automation-form-prompt-host .new-chat-bottom-container .action-label > .codicon {
+	font-size: var(--vscode-codiconFontSize-compact, 12px);
+	width: auto;
+	height: auto;
+}
+
+/* The neighboring chips render no dropdown chevron; hide it for consistency. */
+.automation-form-prompt-host .new-chat-bottom-container .action-label > .codicon-chevron-down,
+.automation-form-prompt-host .new-chat-bottom-container .sessions-chat-dropdown-chevron {
+	display: none;
+}
+
+/* Workspace + session-type pickers in the leading controls slot. These carry
+ * the `sessions-chat-workspace-picker` / `sessions-chat-session-type-picker`
+ * classes whose global rules (chatWidget.css) size them for the new-session
+ * "hero" UI (18px label + 16px icon). Bring them down to the compact chip
+ * scale used by the neighboring provider controls. */
+.automation-form-prompt-host .new-chat-extra-controls .sessions-chat-picker-slot .action-label {
+	height: 16px;
+	padding: var(--vscode-spacing-size20) var(--vscode-spacing-size60);
+	font-size: var(--vscode-agents-fontSize-label2, 11px);
+	line-height: normal;
+	color: var(--vscode-icon-foreground);
+	border: none;
+	background-color: transparent;
+	border-radius: var(--vscode-cornerRadius-small);
+}
+
+.automation-form-prompt-host .new-chat-extra-controls .sessions-chat-picker-slot .action-label .sessions-chat-dropdown-label {
+	font-size: inherit;
+	line-height: inherit;
+}
+
+.automation-form-prompt-host .new-chat-extra-controls .sessions-chat-picker-slot .action-label > .codicon:not(.sessions-chat-dropdown-chevron) {
+	font-size: var(--vscode-codiconFontSize-compact, 12px);
+}
+
+/* Restore the hover highlight the neighboring provider chips have. The compact
+ * override above sets a transparent background at the same specificity as the
+ * shared hero `:hover` rule, cancelling it; reassert it with higher specificity. */
+.automation-form-prompt-host .new-chat-extra-controls .sessions-chat-picker-slot .action-label:hover {
+	background-color: var(--vscode-toolbar-hoverBackground);
+	color: var(--vscode-foreground);
+}
+
+/* Hide the workspace picker's dropdown chevron so it reads like the other
+ * chips. The shared hero rule forces it visible at (0,4,0); this 5-class
+ * selector wins. */
+.automation-form-prompt-host .new-chat-extra-controls .sessions-chat-picker-slot .action-label .sessions-chat-dropdown-chevron {
+	display: none;
+}
