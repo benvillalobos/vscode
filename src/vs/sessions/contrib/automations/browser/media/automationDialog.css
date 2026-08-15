@@ -224,25 +224,22 @@
 }
 
 /*
- * Host for the embedded ChatInputPart. The composer brings its own
- * background, border, and rounded corners (see chat.css
- * `.interactive-input-part`), so we just give it room to breathe and let
- * it fill the dialog's column width. `min-height` is sized for ~5 lines
- * of body text + the toolbar row so the editor doesn't feel cramped on
- * first open; the editor itself grows as the user types.
+ * Host for the embedded NewChatInputWidget. The composer brings its own
+ * background, border, and rounded corners, so we just give it room to breathe
+ * and let it fill the dialog's column width. `min-height` is sized for ~5 lines
+ * of body text + the controls row so the editor doesn't feel cramped on first
+ * open; the editor itself grows as the user types.
  */
 .automation-form-prompt-host {
 	display: flex;
 	flex-direction: column;
 	min-height: 140px;
 	/*
-	 * The host carries the `.interactive-session` class so the shared
-	 * chat input CSS (chip colors, focus borders, etc.) matches what
-	 * users see in a real chat session. That class also sets
-	 * `max-width: 950px; margin: auto; height: 100%` (chat.css), which
-	 * is meant for the full chat panel. In our flex column it makes
-	 * the host take its content's min-content width and center,
-	 * collapsing the chat input to ~chip-bar width. Re-assert
+	 * The host carries the `.interactive-session` class so shared chat input
+	 * CSS (chip colors, focus borders, etc.) matches a real chat session. That
+	 * class also sets `max-width: 950px; margin: auto; height: 100%` (chat.css),
+	 * meant for the full chat panel; in our flex column it would collapse the
+	 * host to its content's min-content width and center it. Re-assert
 	 * full-width sizing so the host fills the dialog's form column.
 	 */
 	width: auto;
@@ -250,183 +247,6 @@
 	margin: 0;
 	height: auto;
 	align-self: stretch;
-}
-
-.automation-form-prompt-host .interactive-input-part {
-	/*
-	 * `.interactive-input-part` in chat.css has `margin: 0 12px`, which
-	 * (combined with the default `width: auto`) is designed to inset the
-	 * composer inside a wider chat panel. In our dialog the prompt host
-	 * is already the form column, so the margin pushes the composer 12px
-	 * past the host on each side. Its right border ends up sitting
-	 * outside the dialog. Zero out the margin so the composer aligns
-	 * with the other form fields.
-	 */
-	margin: 0;
-	/* chat.css sets `padding: 4px 0` — zero both ends so the container
-	 * sits flush with the label above and the Enabled separator below. */
-	padding-top: 0;
-	padding-bottom: 0;
-	/* Don't let long custom-mode names or model identifiers push the
-	 * modal wider than its declared max-width. */
-	max-width: 100%;
-	min-width: 0;
-}
-
-.automation-form-prompt-host .chat-input-container {
-	/* chat.css sets `padding: 0 6px 6px` — the 6px bottom gap between the
-	 * picker chips and the container border looks excessive in the compact
-	 * dialog. Tighten it to 2px. */
-	padding-bottom: 2px;
-}
-
-.automation-form-prompt-host .interactive-input-editor,
-.automation-form-prompt-host .monaco-editor,
-.automation-form-prompt-host .monaco-editor-background,
-.automation-form-prompt-host .monaco-editor .margin {
-	background-color: var(--vscode-settings-textInputBackground, var(--vscode-input-background));
-}
-
-.automation-form-prompt-host .interactive-input-and-side-toolbar {
-	/* Allow the input column to shrink below its content's preferred
-	 * width so flex children (chips, custom-mode names) don't push the
-	 * modal wider than its declared max-width. */
-	min-width: 0;
-}
-
-/*
- * Hide chips from the embedded chat input's primary toolbar that don't fit
- * the automation dialog's reduced surface:
- *  - "Configure Tools" (`workbench.action.chat.configureTools`,
- *    `.codicon-settings-compact`) — tool selection is not relevant for a
- *    scheduled prompt.
- *  - "Add Context" (`workbench.action.chat.attachContext`,
- *    `.codicon-add-compact`, the `+`) — the dialog doesn't support
- *    attachments; the prompt is the only payload sent at run time.
- *  - "List MCP Servers" (`workbench.mcp.listServer`, `.codicon-server`) —
- *    MCP server management belongs in the live chat surface, not a one-off
- *    prompt definition.
- *
- * We hide the `.action-label` (which carries the codicon class) rather than
- * the parent `.action-item`. Targeting the `.action-item` would require a
- * `:has()` selector, whose invalidation bookkeeping is paid across every
- * `.action-item` in the workbench (see microsoft/vscode#324985). Since
- * `.action-item` has no intrinsic padding/margin (actionbar.css), hiding the
- * label collapses the slot to zero width, so there is no visual gap.
- *
- * Known limitation: the hidden chips remain in the toolbar's arrow-key focus
- * rotation (the action bar skips only disabled/separator items, not
- * `display:none` ones). This is an accepted temporary trade-off — the dialog
- * will migrate to `newChatInput.ts`, which builds its own toolbars and never
- * renders these `MenuId.ChatInput` chips at all.
- */
-.automation-form-prompt-host .chat-input-toolbar .action-label.codicon-settings-compact,
-.automation-form-prompt-host .chat-input-toolbar .action-label.codicon-add-compact,
-.automation-form-prompt-host .chat-input-toolbar .action-item.chat-mcp {
-	display: none;
-}
-
-/*
- * Suppress every inter-chip divider drawn by chat.css inside the dialog,
- * in both the primary (`.chat-input-toolbar`) and secondary
- * (`.chat-secondary-input-toolbar`) toolbars. CSS `+` matches by DOM
- * order regardless of `display:none`, so the divider would otherwise
- * appear as an orphan vertical line on whichever visible chip follows
- * our hidden `+`/settings items. For example the bar drawn to the left
- * of the Folder/Worktree isolation chip because it follows the Copilot
- * CLI chip in the secondary toolbar (microsoft/vscode-internalbacklog#8304). The remaining visible
- * chips (Agent, model, mode, isolation) already have enough intrinsic
- * padding to read as separate without the divider. Dropping dividers
- * entirely is simpler and more resilient than per-pair suppression rules
- * that depend on DOM order.
- */
-.automation-form-prompt-host .chat-input-toolbar .monaco-action-bar .actions-container > .action-item + .action-item::before,
-.automation-form-prompt-host .chat-secondary-input-toolbar .monaco-action-bar .actions-container > .action-item + .action-item::before {
-	display: none;
-}
-
-/*
- * Cancel the dialog's `<ul>` indent for the chat input toolbars.
- *
- * `dialog.css:120` applies `padding-inline-start: 20px` to every `<ul>`
- * inside `.dialog-message-container` (meant to reduce the excessive
- * default indent on bulleted lists in dialog body text). The
- * `monaco-action-bar`'s `.actions-container` is rendered as a `<ul>`, so
- * the chat input's primary and secondary toolbars inherit that 20px
- * left indent. This pushes the Agent / Copilot CLI chips ~20px right of
- * the chat input's bottom-left corner.
- *
- * `actionbar.css` sets `.actions-container { padding: 0 }`, but the
- * dialog rule uses a logical property (`padding-inline-start`), which
- * cascades-after the physical shorthand and wins regardless of selector
- * specificity. Override the logical property explicitly here.
- *
- * Scoped to `.automation-form-prompt-host` so the regular chat panel
- * (which isn't inside a dialog) is unaffected. Any `<ul>`
- * elements in the dialog's actual message body text retain the
- * intended 20px indent.
- */
-.automation-form-prompt-host .chat-input-toolbar .monaco-action-bar .actions-container,
-.automation-form-prompt-host .chat-secondary-toolbar .monaco-action-bar .actions-container {
-	padding-inline-start: 0;
-	margin-left: 0;
-}
-
-/*
- * Sessions-layer workspace picker visual override.
- *
- * Two cascading sources need to be defeated to match Mode/Model:
- *
- * 1. `.sessions-chat-picker-slot.sessions-chat-workspace-picker
- *    .action-label` (sessions-layer `chatWidget.css:244-269`) sets a
- *    welcome-flow visual: label 18px, inner span 18px, icons 16px,
- *    chevron, generous padding, `color: var(--vscode-foreground)`.
- *
- * 2. `.monaco-action-bar .action-label` (actionbar.css:48) sets the
- *    base toolbar font-size to **11px**. This is what Mode/Model
- *    inherit. They don't set font-size themselves. The action bar
- *    base rule wins for their `.action-label`. The workspace picker's
- *    own sessions-layer rule (source 1) overrides that base, so we
- *    need to put the 11px back explicitly. `font-size: inherit`
- *    does NOT work because none of `.sessions-chat-picker-slot`'s
- *    ancestors carry an 11px font-size. The 11px lives on sibling
- *    `.action-label` elements via `.monaco-action-bar .action-label`,
- *    not on an ancestor we can inherit from.
- *
- * Result: match the 11px base, neutralize the welcome-flow oversizing,
- * keep the Mode/Model color (`var(--vscode-icon-foreground)`), match
- * the chip metrics from `.chat-secondary-toolbar .chat-input-picker-item
- * .action-label` (chat.css:1728), and hide the chevron (the neighboring
- * secondary-toolbar pickers don't render one).
- *
- * Scoped to `.automation-form-prompt-host` so the welcome view's
- * standalone workspace picker keeps its larger sizing.
- */
-.automation-form-prompt-host .chat-secondary-toolbar .sessions-chat-picker-slot.sessions-chat-workspace-picker .action-label {
-	height: 16px;
-	padding: 3px 6px;
-	font-size: 11px;
-	line-height: normal;
-	color: var(--vscode-icon-foreground);
-}
-
-.automation-form-prompt-host .chat-secondary-toolbar .sessions-chat-picker-slot.sessions-chat-workspace-picker .action-label .sessions-chat-dropdown-label {
-	font-size: inherit;
-	line-height: inherit;
-}
-
-.automation-form-prompt-host .chat-secondary-toolbar .sessions-chat-picker-slot.sessions-chat-workspace-picker .action-label > .codicon:not(.sessions-chat-dropdown-chevron) {
-	font-size: 12px;
-}
-
-/*
- * The neighboring secondary-toolbar pickers don't render a dropdown
- * chevron. They are recognized as chips by their padding + hover. Hide
- * the chevron that `_renderTriggerLabel` always appends so the
- * workspace chip reads the same way.
- */
-.automation-form-prompt-host .chat-secondary-toolbar .sessions-chat-picker-slot.sessions-chat-workspace-picker .action-label .sessions-chat-dropdown-chevron {
-	display: none;
 }
 
 .automation-form-row {
