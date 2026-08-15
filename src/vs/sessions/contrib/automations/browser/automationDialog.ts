@@ -200,6 +200,8 @@ interface IRenderFormHandle {
 	readonly getPermissionLevel: () => string | undefined;
 	readonly getModelId: () => string | undefined;
 	readonly getBranch: () => string | undefined;
+	/** True while the embedded composer's draft session is still resolving. */
+	readonly loading: IObservable<boolean>;
 	readonly waitForAutomationSessionSync: () => Promise<void>;
 	readonly getFocusableElements: () => readonly HTMLElement[];
 }
@@ -937,13 +939,15 @@ export function renderForm(
 		};
 	};
 
+	const loading = derived(reader => automationActiveSession.read(reader)?.loading.read(reader) ?? false);
+
 	const chatInput = disposables.add(scopedInstantiationService.createInstance(NewChatInputWidget, {
 		session: automationActiveSession,
 		getContextFolderUri: () => isolationModel.folderUriObs.get(),
 		// The dialog commits via its own button; the composer never sends.
 		sendRequest: async (_request: INewChatInputSendRequest) => false,
 		canSendRequest: constObservable(false),
-		loading: derived(reader => automationActiveSession.read(reader)?.loading.read(reader) ?? false),
+		loading,
 		historyKey: constObservable(undefined),
 		placeholder: localize('automation.form.prompt.placeholder', "Describe what you want to automate"),
 		renderSendButton: false,
@@ -1082,6 +1086,7 @@ export function renderForm(
 		getPermissionLevel: () => initialPermissionLevel,
 		getModelId: () => automationActiveSession.get()?.modelId.get(),
 		getBranch: () => readDraftRepositoryConfig().branch,
+		loading,
 		waitForAutomationSessionSync: async () => {
 			updateAutomationSessionTarget();
 			await automationSessionDraftSynchronizer.waitForSync();
@@ -1134,6 +1139,7 @@ export function updateSaveButtonState(
 	form: HTMLElement,
 	getPrompt: () => string,
 	getBranch: () => string | undefined,
+	isLoading = false,
 ): void {
 	validation.nameError = state.name.trim() === ''
 		? localize('automation.form.nameRequired', "Name is required.")
@@ -1154,7 +1160,9 @@ export function updateSaveButtonState(
 
 	const valid = !validation.nameError && !validation.promptError && !validation.folderError && !validation.sessionTypeError && !validation.branchError;
 	if (saveButton) {
-		saveButton.enabled = valid;
+		// Also gate on the composer's draft still resolving, so a save can't
+		// commit before the provider config (model, isolation/branch) is ready.
+		saveButton.enabled = valid && !isLoading;
 	}
 	form.classList.toggle('automation-form-invalid', !valid);
 }

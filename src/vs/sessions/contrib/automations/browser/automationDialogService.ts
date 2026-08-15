@@ -8,6 +8,7 @@ import * as DOM from '../../../../base/browser/dom.js';
 import { IButton } from '../../../../base/browser/ui/button/button.js';
 import { Dialog } from '../../../../base/browser/ui/dialog/dialog.js';
 import { DisposableStore, toDisposable } from '../../../../base/common/lifecycle.js';
+import { autorun } from '../../../../base/common/observable.js';
 import { localize } from '../../../../nls.js';
 import { IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
 import { IContextKeyService } from '../../../../platform/contextkey/common/contextkey.js';
@@ -186,7 +187,14 @@ export class AutomationDialogService implements IAutomationDialogService {
 						isAutomationDialogPopupTarget,
 					));
 					focusFirst = keyboardNavigation.focusFirst;
-					revalidate = () => updateSaveButtonState(saveButton, state, validation, form, getPrompt, getBranch);
+					const isLoading = () => handle.loading.get();
+					revalidate = () => updateSaveButtonState(saveButton, state, validation, form, getPrompt, getBranch, isLoading());
+					// Re-run validation when the composer's draft finishes (or restarts)
+					// loading so Save enables/disables with it.
+					disposables.add(autorun(reader => {
+						handle.loading.read(reader);
+						revalidate();
+					}));
 					revalidate();
 				},
 			}, this.keybindingService, this.layoutService, this.hostService, automationDialogAllowableCommands,
