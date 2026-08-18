@@ -13,6 +13,7 @@ import { NullLogService } from '../../../log/common/log.js';
 import { AgentHostStateManager } from '../../node/agentHostStateManager.js';
 import { AgentHostSessionTitleController } from '../../node/agentHostSessionTitleController.js';
 import { ActionType } from '../../common/state/sessionActions.js';
+import { AgentHostPreserveTitleMetadataKey } from '../../common/meta/agentHostSessionMeta.js';
 import { buildChatUri, buildDefaultChatUri, MessageKind, ResponsePartKind, SessionStatus, ToolCallConfirmationReason, ToolCallStatus, TurnState, type ResponsePart, type SessionSummary, type ToolCallCompletedState, type Turn } from '../../common/state/sessionState.js';
 import { type AutoMergeMethod, type CreatedPullRequest, type GitHubIssueOrPullRequest, type IAgentHostOctoKitService } from '../../node/shared/agentHostOctoKitService.js';
 import { type ICopilotApiService, type ICopilotApiServiceRequestOptions, type ICopilotUtilityChatCompletionRequest } from '../../node/shared/copilotApiService.js';
@@ -175,6 +176,28 @@ suite('AgentHostSessionTitleController', () => {
 		assert.strictEqual(copilotApiService.utilityCalls.length, 0);
 		assert.strictEqual(instruction, 'This chat currently has an auto-generated or placeholder name. Before doing any other work or responding to the user, you MUST call the `rename_chat` tool exactly once to give it a short, descriptive title based on the user\'s intent. If the prompt references a pull request or issue link, resolve that link first and use its context when choosing the title. Do not skip this call even if the current name already seems descriptive.');
 		await waitForCondition(async () => await db.getMetadata(SESSION_CUSTOM_TITLE_SOURCE_KEY) === AGENT_HOST_TITLE_SOURCE_AUTO, 'auto provenance should be persisted');
+	});
+
+	test('preserved session titles skip automatic title generation and the rename reminder', async () => {
+		const copilotApiService = new TestCopilotApiService();
+		const { controller, stateManager, session, titleActions } = setup(copilotApiService, '', undefined, undefined, undefined, undefined, undefined, true);
+		stateManager.dispatchServerAction(session.toString(), {
+			type: ActionType.SessionMetaChanged,
+			_meta: { [AgentHostPreserveTitleMetadataKey]: true },
+		});
+
+		controller.seedTitleFromFirstMessage(session.toString(), 'Summarize repository activity');
+		const instruction = await controller.prepareInstructionForAgent(session.toString(), buildDefaultChatUri(session));
+
+		assert.deepStrictEqual({
+			titleActions,
+			utilityCallCount: copilotApiService.utilityCalls.length,
+			instruction,
+		}, {
+			titleActions: [],
+			utilityCallCount: 0,
+			instruction: undefined,
+		});
 	});
 
 	test('active-agent fallback hard-truncates a single oversized word', () => {

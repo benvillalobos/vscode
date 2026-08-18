@@ -780,6 +780,27 @@ suite('Sessions - SessionsList', () => {
 				},
 			});
 		});
+
+		test('uses the supplied title for the visible and accessible row labels', () => {
+			const session = createTestSession('Renamed chat title').session;
+			const harness = createListHarness(disposables, [session]);
+			const container = harness.createContainer();
+			const list = harness.store.add(harness.instantiationService.createInstance(SessionsFlatList, container, {
+				showSessionHover: false,
+				getTitle: () => 'Automation name',
+				onSessionOpen: () => { },
+			}));
+			list.setSessions([session]);
+			list.layout(list.getContentHeight(), 400);
+
+			assert.deepStrictEqual({
+				title: container.querySelector('.session-title')?.textContent,
+				ariaLabel: container.querySelector('.monaco-list-row')?.getAttribute('aria-label'),
+			}, {
+				title: 'Automation name',
+				ariaLabel: 'Automation name, updated now, in Workspace',
+			});
+		});
 	});
 
 	suite('computeReorderSortChanges', () => {

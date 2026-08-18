@@ -731,6 +731,7 @@ class AutomationHistorySection extends Disposable {
 			toolbarMenuId: Menus.AutomationsHistoryItem,
 			markSessionReadOnOpen: false,
 			approvalModel: this.approvalModel,
+			getTitle: (session, reader) => this.getRunTitle(session, entry.runsBySession, reader),
 			onSessionOpen: resource => void this.openRunSession(resource),
 			onToolbarAction: (action, session) => this.handleSessionToolbarAction(action, session, entry.runsBySession),
 		}));
@@ -859,6 +860,15 @@ class AutomationHistorySection extends Disposable {
 
 	private getAutomationName(run: IAutomationRun): string {
 		return this.automationService.automations.get().find(automation => automation.id === run.automationId)?.name
+			?? localize('unknownAutomation', "Unknown");
+	}
+
+	private getRunTitle(session: ISession, runsBySession: ReadonlyMap<string, IAutomationRun>, reader: IReader): string {
+		const run = runsBySession.get(session.resource.toString());
+		if (!run) {
+			return session.title.read(reader);
+		}
+		return this.automationService.automations.read(reader).find(automation => automation.id === run.automationId)?.name
 			?? localize('unknownAutomation', "Unknown");
 	}
 

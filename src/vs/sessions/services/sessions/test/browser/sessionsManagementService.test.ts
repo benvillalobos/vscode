@@ -1513,11 +1513,13 @@ suite('SessionsManagementService', () => {
 			mainChat: constObservable(chat),
 		});
 		const calls: string[] = [];
+		let createdMetadata: Record<string, unknown> | undefined;
 		const provider = new class extends TestSessionsProvider {
 			override readonly supportsQuickChats = true;
 			override getSessions(): ISession[] { return [activeSession]; }
-			override createQuickChat(sessionTypeId: string): ISession {
+			override createQuickChat(sessionTypeId: string, options?: ISessionsProviderCreateSessionOptions): ISession {
 				calls.push(`createQuickChat:${sessionTypeId}`);
+				createdMetadata = options?.metadata;
 				return quickChat;
 			}
 			override setModel(_sessionId: string, modelId: string): void { calls.push(`setModel:${modelId}`); }
@@ -1534,6 +1536,7 @@ suite('SessionsManagementService', () => {
 		const result = await service.createAndSendQuickChatRequest({ query: 'hi' }, {
 			providerId: 'test',
 			sessionTypeId: 'test',
+			metadata: { preserveTitle: true },
 			modelId: 'gpt-4o',
 			isolationMode: 'worktree',
 			branch: 'stale',
@@ -1543,11 +1546,13 @@ suite('SessionsManagementService', () => {
 			sessionId: result?.sessionId,
 			activeSession: view.activeSession.get()?.sessionId,
 			newSession: service.newSession.get(),
+			createdMetadata,
 			calls,
 		}, {
 			sessionId: 'quick-1',
 			activeSession: 'active',
 			newSession: undefined,
+			createdMetadata: { preserveTitle: true },
 			calls: ['createQuickChat:test', 'setModel:gpt-4o', 'send'],
 		});
 	});

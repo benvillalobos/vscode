@@ -243,8 +243,9 @@ export interface ISessionsProvider {
 	 * Callers must gate on {@link supportsQuickChats}; providers that do not
 	 * support quick chats must throw.
 	 * @param sessionTypeId The ID of the session type to create.
+	 * @param options Optional metadata and other provider creation inputs.
 	 */
-	createQuickChat(sessionTypeId: string): ISession;
+	createQuickChat(sessionTypeId: string, options?: ISessionsProviderCreateSessionOptions): ISession;
 
 	/**
 	 * Delete a new (untitled, not-yet-sent) session previously created via

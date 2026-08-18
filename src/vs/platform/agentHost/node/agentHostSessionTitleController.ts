@@ -11,6 +11,7 @@ import { ILogService } from '../../log/common/log.js';
 import { ISessionDataService } from '../common/sessionDataService.js';
 import { SessionServerToolName } from '../common/serverToolNames.js';
 import { ActionType } from '../common/state/sessionActions.js';
+import { readAgentHostPreserveTitle } from '../common/meta/agentHostSessionMeta.js';
 import { buildDefaultChatUri, isAhpChatChannel, isDefaultChatUri, type Turn, type URI as ProtocolURI } from '../common/state/sessionState.js';
 import { buildConversationContext, renderResponseMarkdown, truncateMiddle } from '../common/agentHostConversationContext.js';
 import { AgentHostStateManager } from './agentHostStateManager.js';
@@ -116,6 +117,9 @@ export class AgentHostSessionTitleController extends Disposable {
 	}
 
 	seedTitleFromFirstMessage(channel: ProtocolURI, userPrompt: string, chatChannel?: ProtocolURI): void {
+		if (this._shouldPreserveTitle(channel)) {
+			return;
+		}
 		const activeAgentTitleGenerationEnabled = this._isActiveAgentTitleGenerationEnabled(channel);
 		const fallbackTitle = activeAgentTitleGenerationEnabled
 			? this._normalizeActiveAgentFallbackTitle(userPrompt)
@@ -444,7 +448,7 @@ export class AgentHostSessionTitleController extends Disposable {
 	}
 
 	async prepareInstructionForAgent(channel: ProtocolURI, chatChannel: ProtocolURI): Promise<string | undefined> {
-		if (!this._isActiveAgentTitleGenerationEnabled(channel)) {
+		if (this._shouldPreserveTitle(channel) || !this._isActiveAgentTitleGenerationEnabled(channel)) {
 			return undefined;
 		}
 		const independentChat = this._independentChatChannel(channel, chatChannel);
@@ -789,6 +793,10 @@ export class AgentHostSessionTitleController extends Disposable {
 		return serverTools
 			? serverTools.some(tool => tool.name === SessionServerToolName.RenameChat)
 			: this._options.isActiveAgentTitleGenerationEnabled?.() === true;
+	}
+
+	private _shouldPreserveTitle(channel: ProtocolURI): boolean {
+		return readAgentHostPreserveTitle(this._stateManager.getSessionState(channel));
 	}
 
 	private async _readPersistedTitleSource(session: ProtocolURI, key: string): Promise<string | undefined> {

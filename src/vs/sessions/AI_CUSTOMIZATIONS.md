@@ -92,7 +92,7 @@ Migration is transactional per source URI. All selected storage identities for o
 
 Migration overview cards use their native action button as the only interactive target; the surrounding card is presentational rather than a focusable button containing another button. The full User Data migration page fixture is `blocksCi` because its warning and migration controls form a distinct full-page state.
 
-Automation run history stores the created session as a serialized URI. Its Open Session action uses the shared resource-first session opener, allowing the Agents window to route the URI through `ISessionsService` before the core workbench falls back to resolving an `IAgentSession`.
+Automation run history stores the created session as a serialized URI. Its Open Session action uses the shared resource-first session opener, allowing the Agents window to route the URI through `ISessionsService` before the core workbench falls back to resolving an `IAgentSession`. Automation-created Agent Host sessions preserve the automation-provided title instead of asking the running agent to rename the chat.
 
 Manual automation runs announce that they started once session dispatch commits, while lifecycle tracking continues until completion, failure, cancellation, or timeout.
 

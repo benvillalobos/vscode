@@ -2878,7 +2878,7 @@ export abstract class BaseAgentHostSessionsProvider extends Disposable implement
 		return toDisposable(() => newSession.setActivity(undefined));
 	}
 
-	createQuickChat(sessionTypeId: string): ISession {
+	createQuickChat(sessionTypeId: string, options?: ISessionsProviderCreateSessionOptions): ISession {
 		const sessionType = this.sessionTypes.find(t => t.id === sessionTypeId);
 		if (!sessionType) {
 			throw new Error(this._noAgentsErrorMessage());
@@ -2890,7 +2890,7 @@ export abstract class BaseAgentHostSessionsProvider extends Disposable implement
 		// workspace-less: no `resolveWorkspace`, no `workingDirectory`. The
 		// agent host runs it in a throwaway scratch cwd and tags it via the
 		// `quickChat` create flag.
-		return this._createDraftSession(sessionType, undefined, true);
+		return this._createDraftSession(sessionType, undefined, true, options?.metadata);
 	}
 
 	/**

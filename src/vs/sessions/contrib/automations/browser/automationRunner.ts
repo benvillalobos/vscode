@@ -9,6 +9,7 @@ import { derived, waitForState } from '../../../../base/common/observable.js';
 import { localize } from '../../../../nls.js';
 import { ILogService } from '../../../../platform/log/common/log.js';
 import { INotificationService } from '../../../../platform/notification/common/notification.js';
+import { AgentHostPreserveTitleMetadataKey } from '../../../../platform/agentHost/common/meta/agentHostSessionMeta.js';
 import { ITelemetryService } from '../../../../platform/telemetry/common/telemetry.js';
 import { AutomationRunTrigger, IAutomationDescriptor, IAutomationRun } from '../../../../workbench/contrib/chat/common/automations/automation.js';
 import { IAutomationRunDispatch, IAutomationRunner, IAutomationRunOperation } from '../../../../workbench/contrib/chat/common/automations/automationRunner.js';
@@ -83,17 +84,16 @@ export class AutomationRunner implements IAutomationRunner {
 				: undefined;
 			const branch = target.kind === 'workspace' && target.isolation.kind === 'worktree' ? target.isolation.branch : undefined;
 
-			const createOptions: ICreateNewSessionOptions | undefined = target.providerId !== undefined || target.sessionTypeId !== undefined || automation.modelId !== undefined || automation.mode !== undefined || automation.permissionLevel !== undefined || isolationMode !== undefined || branch !== undefined
-				? {
-					providerId: target.providerId,
-					sessionTypeId: target.sessionTypeId,
-					modelId: automation.modelId,
-					modeId: automation.mode,
-					permissionLevel: automation.permissionLevel,
-					isolationMode,
-					branch,
-				}
-				: undefined;
+			const createOptions: ICreateNewSessionOptions = {
+				providerId: target.providerId,
+				sessionTypeId: target.sessionTypeId,
+				metadata: { [AgentHostPreserveTitleMetadataKey]: true },
+				modelId: automation.modelId,
+				modeId: automation.mode,
+				permissionLevel: automation.permissionLevel,
+				isolationMode,
+				branch,
+			};
 
 			const targetAvailable = target.kind === 'quickChat'
 				? this.sessionsManagementService.isQuickChatTargetAvailable(createOptions)

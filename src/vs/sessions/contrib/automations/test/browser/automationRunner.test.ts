@@ -13,6 +13,7 @@ import { NullLogService } from '../../../../../platform/log/common/log.js';
 import { TestNotificationService } from '../../../../../platform/notification/test/common/testNotificationService.js';
 import { InMemoryStorageService } from '../../../../../platform/storage/common/storage.js';
 import { NullTelemetryService } from '../../../../../platform/telemetry/common/telemetryUtils.js';
+import { AgentHostPreserveTitleMetadataKey } from '../../../../../platform/agentHost/common/meta/agentHostSessionMeta.js';
 import { createAutomationService } from './automationTestUtils.js';
 import { AutomationTarget, AutomationWorkspaceIsolation, IAutomationSchedule } from '../../../../../workbench/contrib/chat/common/automations/automation.js';
 import { IChat, ISession, SessionStatus } from '../../../../services/sessions/common/session.js';
@@ -139,6 +140,7 @@ suite('AutomationRunner', () => {
 		assert.strictEqual(sessionsMgmt.calls[0].folderUri?.toString(), FOLDER_A.toString());
 		assert.strictEqual(sessionsMgmt.calls[0].options.query, 'do the thing');
 		assert.strictEqual(sessionsMgmt.calls[0].options.background, true);
+		assert.deepStrictEqual(sessionsMgmt.calls[0].createOptions?.metadata, { [AgentHostPreserveTitleMetadataKey]: true });
 
 		const runs = service.runs.get();
 		assert.strictEqual(runs.length, 1);
@@ -274,6 +276,7 @@ suite('AutomationRunner', () => {
 			createOptions: {
 				providerId: 'local-agent-host',
 				sessionTypeId: 'copilotcli',
+				metadata: { [AgentHostPreserveTitleMetadataKey]: true },
 				modelId: undefined,
 				modeId: undefined,
 				permissionLevel: undefined,
@@ -482,6 +485,7 @@ suite('AutomationRunner', () => {
 		assert.deepStrictEqual(sessionsMgmt.calls[0].createOptions, {
 			providerId: 'local-agent-host',
 			sessionTypeId: 'agent-host-copilotcli',
+			metadata: { [AgentHostPreserveTitleMetadataKey]: true },
 			modelId: undefined,
 			modeId: undefined,
 			permissionLevel: undefined,
@@ -508,6 +512,7 @@ suite('AutomationRunner', () => {
 		assert.deepStrictEqual(sessionsMgmt.calls[0].createOptions, {
 			providerId: undefined,
 			sessionTypeId: undefined,
+			metadata: { [AgentHostPreserveTitleMetadataKey]: true },
 			modelId: undefined,
 			modeId: 'agent',
 			permissionLevel: 'autopilot',
@@ -540,6 +545,7 @@ suite('AutomationRunner', () => {
 			{
 				providerId: undefined,
 				sessionTypeId: undefined,
+				metadata: { [AgentHostPreserveTitleMetadataKey]: true },
 				modelId: undefined,
 				modeId: undefined,
 				permissionLevel: undefined,
@@ -549,6 +555,7 @@ suite('AutomationRunner', () => {
 			{
 				providerId: undefined,
 				sessionTypeId: undefined,
+				metadata: { [AgentHostPreserveTitleMetadataKey]: true },
 				modelId: undefined,
 				modeId: undefined,
 				permissionLevel: undefined,
@@ -558,7 +565,7 @@ suite('AutomationRunner', () => {
 		]);
 	});
 
-	test('omits createOptions entirely when no provider/sessionType is captured', async () => {
+	test('passes preserve-title metadata when no provider/sessionType is captured', async () => {
 		const { service, sessionsMgmt, runner } = setup();
 		sessionsMgmt.nextSession = fakeSession('s1');
 
@@ -566,7 +573,16 @@ suite('AutomationRunner', () => {
 		await runner.runOnce(a, 'schedule', 1).whenCompleted;
 
 		assert.strictEqual(sessionsMgmt.calls.length, 1);
-		assert.strictEqual(sessionsMgmt.calls[0].createOptions, undefined);
+		assert.deepStrictEqual(sessionsMgmt.calls[0].createOptions, {
+			providerId: undefined,
+			sessionTypeId: undefined,
+			metadata: { [AgentHostPreserveTitleMetadataKey]: true },
+			modelId: undefined,
+			modeId: undefined,
+			permissionLevel: undefined,
+			isolationMode: undefined,
+			branch: undefined,
+		});
 	});
 
 	test('does not throw if the automation is deleted mid-run', async () => {

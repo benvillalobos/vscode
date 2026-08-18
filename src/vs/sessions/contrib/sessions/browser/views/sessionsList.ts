@@ -393,7 +393,7 @@ class SessionItemRenderer implements ITreeRenderer<SessionListItem, FuzzyScore, 
 	readonly onDidApproveSession: Event<IApprovedSession> = this._onDidApproveSession.event;
 
 	constructor(
-		private readonly options: { grouping: () => SessionsGrouping; isPinned: (session: ISession) => boolean; isRenderedInCustomGroup?: (session: ISession) => boolean; visibleSessions: IObservable<readonly (IActiveSession | undefined)[]>; getMultiSelectedSessions: (session: ISession) => ISession[]; showHover: boolean; useCompactQuickChatRows: boolean; approvalRowMaxLines: number; toolbarMenuId: MenuId | undefined; handleToolbarAction?: (action: IAction, session: ISession) => boolean | Promise<boolean>; onDidRequestRename?: (session: ISession) => void },
+		private readonly options: { grouping: () => SessionsGrouping; isPinned: (session: ISession) => boolean; isRenderedInCustomGroup?: (session: ISession) => boolean; visibleSessions: IObservable<readonly (IActiveSession | undefined)[]>; getMultiSelectedSessions: (session: ISession) => ISession[]; getTitle?: (session: ISession, reader: IReader) => string; showHover: boolean; useCompactQuickChatRows: boolean; approvalRowMaxLines: number; toolbarMenuId: MenuId | undefined; handleToolbarAction?: (action: IAction, session: ISession) => boolean | Promise<boolean>; onDidRequestRename?: (session: ISession) => void },
 		private readonly approvalModel: AgentSessionApprovalModel | undefined,
 		private readonly ciFixModel: ISessionCIFixModel | undefined,
 		private readonly instantiationService: IInstantiationService,
@@ -604,7 +604,7 @@ class SessionItemRenderer implements ITreeRenderer<SessionListItem, FuzzyScore, 
 
 		// Title — reactive
 		template.elementDisposables.add(autorun(reader => {
-			const titleText = element.title.read(reader);
+			const titleText = this.options.getTitle?.(element, reader) ?? element.title.read(reader);
 			template.title.set(titleText, matches);
 		}));
 
@@ -1341,6 +1341,7 @@ interface ISessionsAccessibilityProviderOptions {
 	readonly isPinned: (session: ISession) => boolean;
 	readonly isRenderedInCustomGroup?: (session: ISession) => boolean;
 	readonly includeQuickChatIdentity?: boolean;
+	readonly getTitle?: (session: ISession, reader: IReader) => string;
 }
 
 class SessionsAccessibilityProvider {
@@ -1394,7 +1395,7 @@ class SessionsAccessibilityProvider {
 				: element.label;
 		}
 		return derived(this, reader => {
-			const title = element.title.read(reader);
+			const title = this.options?.getTitle?.(element, reader) ?? element.title.read(reader);
 			const updated = fromNow(element.updatedAt.read(reader), true);
 			let label: string;
 			if (this.options?.includeQuickChatIdentity && element.isQuickChat?.read(reader)) {
@@ -3719,6 +3720,8 @@ export interface ISessionsFlatListOptions {
 	 * `true`; consumers showing homogeneous history entries can opt into regular rows.
 	 */
 	readonly useCompactQuickChatRows?: boolean;
+	/** Overrides the visible and accessible title for each session row. */
+	readonly getTitle?: (session: ISession, reader: IReader) => string;
 }
 
 /**
@@ -3774,6 +3777,7 @@ export class SessionsFlatList extends Disposable {
 				isPinned: s => this._sessionsListModelService.isSessionPinned(s),
 				visibleSessions: this._sessionsService.visibleSessions,
 				getMultiSelectedSessions: s => [s],
+				getTitle: this.options.getTitle,
 				showHover: this.options.showSessionHover ?? true,
 				useCompactQuickChatRows,
 				approvalRowMaxLines: this.options.approvalRowMaxLines ?? DEFAULT_APPROVAL_ROW_MAX_LINES,
@@ -3804,6 +3808,7 @@ export class SessionsFlatList extends Disposable {
 					grouping: () => SessionsGrouping.Date,
 					isPinned: session => this._sessionsListModelService.isSessionPinned(session),
 					includeQuickChatIdentity: !useCompactQuickChatRows,
+					getTitle: this.options.getTitle,
 				}),
 				identityProvider: {
 					getId: (element: SessionListItem) => (element as ISession).resource.toString(),
