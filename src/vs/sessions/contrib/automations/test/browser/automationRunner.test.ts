@@ -516,6 +516,37 @@ suite('AutomationRunner', () => {
 		});
 	});
 
+	test('passes provider configuration through to createAndSendNewChatRequest', async () => {
+		const { service, sessionsMgmt, runner } = setup();
+		sessionsMgmt.nextSession = fakeSession('s1');
+		const providerConfiguration = {
+			providerId: 'local-agent-host',
+			sessionTypeId: 'copilotcli',
+			version: 1,
+			data: '{"config":{"mode":"plan"}}',
+		};
+		const automation = await service.createAutomation({
+			name: 'A',
+			prompt: 'p',
+			schedule: hourly(),
+			target: workspaceTarget(FOLDER_A, { providerId: 'local-agent-host', sessionTypeId: 'copilotcli' }),
+			providerConfiguration,
+		});
+
+		await runner.runOnce(automation, 'schedule', 1).whenCompleted;
+
+		assert.deepStrictEqual(sessionsMgmt.calls[0].createOptions, {
+			providerId: 'local-agent-host',
+			sessionTypeId: 'copilotcli',
+			modelId: undefined,
+			modeId: undefined,
+			permissionLevel: undefined,
+			providerConfiguration,
+			isolationMode: undefined,
+			branch: undefined,
+		});
+	});
+
 	test('passes a branch only for Worktree isolation', async () => {
 		const { service, sessionsMgmt, runner } = setup();
 		sessionsMgmt.nextSession = fakeSession('s1');

@@ -47,6 +47,7 @@ import { setActiveSessionContextKeys } from '../../../services/sessions/common/s
 import { IsNewChatSessionContext } from '../../../common/contextkeys.js';
 import { isAgentHostProvider } from '../../../common/agentHostSessionsProvider.js';
 import { SessionConfigKey } from '../../../../platform/agentHost/common/sessionConfigKeys.js';
+import { ISessionProviderConfiguration } from '../../../../platform/session/common/sessionProviderConfiguration.js';
 import { INewChatInputSendRequest, NewChatInputWidget } from '../../chat/browser/newChatInput.js';
 import { showMobileWorkspacePickerSheet, shouldUseMobileWorkspacePickerSheet } from '../../chat/browser/mobile/mobileWorkspacePickerSheet.js';
 
@@ -193,6 +194,7 @@ interface IRenderFormHandle {
 	readonly getPermissionLevel: () => string | undefined;
 	readonly getModelId: () => string | undefined;
 	readonly getBranch: () => string | undefined;
+	readonly captureProviderConfiguration: () => Promise<ISessionProviderConfiguration | undefined>;
 	/** True while the embedded composer's draft session is still resolving. */
 	readonly loading: IObservable<boolean>;
 	readonly waitForAutomationSessionSync: () => Promise<void>;
@@ -216,17 +218,20 @@ export class AutomationSessionDraftSynchronizer extends Disposable {
 	private syncScheduled = false;
 	private syncPromise = Promise.resolve();
 	private disposed = false;
+	private syncError: Error | undefined;
 
 	constructor(
 		private readonly sessionsManagementService: AutomationSessionDraftService,
 		private readonly canSelectWorkspace: (folderUri: URI, preferredProviderId: string | undefined) => Promise<boolean>,
 		private readonly onError: (error: unknown) => void,
+		private initialProviderConfiguration?: ISessionProviderConfiguration,
 	) {
 		super();
 	}
 
 	update(target: AutomationSessionDraftTarget | undefined): void {
 		this.requestedTarget = target;
+		this.syncError = undefined;
 		this.generation++;
 		this.scheduleSync();
 	}
@@ -237,6 +242,9 @@ export class AutomationSessionDraftSynchronizer extends Disposable {
 			pendingSync = this.syncPromise;
 			await pendingSync;
 		} while (pendingSync !== this.syncPromise);
+		if (this.syncError) {
+			throw this.syncError;
+		}
 	}
 
 	private scheduleSync(): void {
@@ -272,22 +280,41 @@ export class AutomationSessionDraftSynchronizer extends Disposable {
 			if (this.disposed || generation !== this.generation) {
 				return;
 			}
+			const providerConfiguration = this.getInitialProviderConfiguration(target);
 			this.session = target.kind === 'quickChat'
 				? this.sessionsManagementService.createAutomationQuickChat({
 					providerId: target.providerId,
 					sessionTypeId: target.sessionTypeId,
+					providerConfiguration,
 				})
 				: this.sessionsManagementService.createAutomationSession(target.folderUri, {
 					providerId: target.providerId,
 					sessionTypeId: target.sessionTypeId,
+					providerConfiguration,
 				});
+			if (providerConfiguration) {
+				this.initialProviderConfiguration = undefined;
+			}
 			this.appliedTarget = target;
 		} catch (error) {
 			if (!this.disposed && generation === this.generation) {
 				this.discardSession();
+				this.syncError = error instanceof Error ? error : new Error(String(error));
 				this.onError(error);
 			}
 		}
+	}
+
+	private getInitialProviderConfiguration(target: AutomationSessionDraftTarget): ISessionProviderConfiguration | undefined {
+		const configuration = this.initialProviderConfiguration;
+		if (!configuration) {
+			return undefined;
+		}
+		if (configuration.providerId !== target.providerId || configuration.sessionTypeId !== target.sessionTypeId) {
+			this.initialProviderConfiguration = undefined;
+			return undefined;
+		}
+		return configuration;
 	}
 
 	private matchesAppliedTarget(target: AutomationSessionDraftTarget): boolean {
@@ -359,6 +386,7 @@ export function renderForm(
 	initialMode: string | undefined,
 	initialPermissionLevel: string | undefined,
 	initialModelId: string | undefined,
+	initialProviderConfiguration: ISessionProviderConfiguration | undefined,
 ): IRenderFormHandle {
 	const nameRow = DOM.append(form, $('.automation-form-row'));
 	DOM.append(nameRow, $('span.automation-form-label', undefined, localize('automation.form.name', "Name")));
@@ -454,6 +482,7 @@ export function renderForm(
 		sessionsManagementService,
 		(folderUri, preferredProviderId) => canSelectAutomationWorkspace(folderUri, preferredProviderId, sessionsManagementService, workspaceTrustRequestService),
 		error => logService.error('[AutomationDialog] Failed to synchronize the automation session draft.', error),
+		initialProviderConfiguration,
 	));
 
 	const promptRow = DOM.append(form, $('.automation-form-row'));
@@ -650,10 +679,20 @@ export function renderForm(
 		getPermissionLevel: () => initialPermissionLevel,
 		getModelId: () => automationActiveSession.get()?.modelId.get(),
 		getBranch: () => readDraftRepositoryConfig().branch,
+		captureProviderConfiguration: async () => {
+			const draft = sessionsManagementService.automationSession.get();
+			if (!draft) {
+				return undefined;
+			}
+			return sessionsProvidersService.getProvider(draft.providerId)?.captureNewSessionConfiguration?.(draft.sessionId);
+		},
 		loading,
 		waitForAutomationSessionSync: async () => {
 			updateAutomationSessionTarget();
 			await automationSessionDraftSynchronizer.waitForSync();
+			if (!sessionsManagementService.automationSession.get()) {
+				throw new Error('Automation session draft is unavailable.');
+			}
 			// Bridge isolation from the provider draft into the form state so
 			// `createAutomationTarget` produces the correct target at Save.
 			state.isolationMode = readDraftRepositoryConfig().isolationMode;

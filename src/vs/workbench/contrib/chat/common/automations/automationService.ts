@@ -7,6 +7,7 @@ import { IObservable } from '../../../../../base/common/observable.js';
 import { URI } from '../../../../../base/common/uri.js';
 import { createDecorator } from '../../../../../platform/instantiation/common/instantiation.js';
 import { ChatPermissionLevel } from '../constants.js';
+import { ISessionProviderConfiguration } from '../../../../../platform/session/common/sessionProviderConfiguration.js';
 import { IAutomationDescriptor, IAutomationRun, AutomationRunTrigger, IAutomationSchedule, AutomationTarget } from './automation.js';
 
 export const IAutomationService = createDecorator<IAutomationService>('automationService');
@@ -27,6 +28,7 @@ export interface ICreateAutomationOptions {
 	readonly modelId?: string;
 	readonly mode?: string;
 	readonly permissionLevel?: string;
+	readonly providerConfiguration?: ISessionProviderConfiguration;
 	readonly enabled?: boolean;
 }
 
@@ -42,6 +44,7 @@ export interface IUpdateAutomationOptions {
 	readonly modelId?: string | null;
 	readonly mode?: string | null;
 	readonly permissionLevel?: string | null;
+	readonly providerConfiguration?: ISessionProviderConfiguration | null;
 	readonly enabled?: boolean;
 }
 
@@ -87,6 +90,7 @@ export function serializeAutomationEditableState(automation: IAutomationDescript
 		modelId: automation.modelId,
 		mode: automation.mode,
 		permissionLevel: automation.permissionLevel ?? ChatPermissionLevel.Default,
+		providerConfiguration: automation.providerConfiguration,
 		enabled: automation.enabled,
 	});
 }

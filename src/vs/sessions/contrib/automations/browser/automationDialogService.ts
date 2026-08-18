@@ -21,6 +21,7 @@ import { IWorkspaceTrustRequestService } from '../../../../platform/workspace/co
 import { defaultDialogStyles } from '../../../../platform/theme/browser/defaultStyles.js';
 import { createWorkbenchDialogOptions } from '../../../../workbench/browser/parts/dialogs/dialog.js';
 import { AutomationTarget, IAutomationSchedule } from '../../../../workbench/contrib/chat/common/automations/automation.js';
+import { ISessionProviderConfiguration } from '../../../../platform/session/common/sessionProviderConfiguration.js';
 import { IAutomationDialogResult, IAutomationDialogService, IShowAutomationDialogOptions } from '../../../../workbench/contrib/chat/common/automations/automationDialogService.js';
 import { ICreateAutomationOptions, IUpdateAutomationOptions } from '../../../../workbench/contrib/chat/common/automations/automationService.js';
 import { ILanguageModelsService } from '../../../../workbench/contrib/chat/common/languageModels.js';
@@ -117,6 +118,7 @@ export class AutomationDialogService implements IAutomationDialogService {
 		let getPermissionLevel: () => string | undefined = () => initial?.permissionLevel;
 		let getModelId: () => string | undefined = () => initial?.modelId;
 		let getBranch: () => string | undefined = () => initialWorkspaceTarget?.isolation.kind === 'worktree' ? initialWorkspaceTarget.isolation.branch : undefined;
+		let captureProviderConfiguration: () => Promise<ISessionProviderConfiguration | undefined> = async () => initial?.providerConfiguration;
 		let waitForAutomationSessionSync: () => Promise<void> = async () => { };
 		let getFocusableElements: () => readonly HTMLElement[] = () => [];
 		let focusFirst: () => void = () => { };
@@ -169,12 +171,13 @@ export class AutomationDialogService implements IAutomationDialogService {
 
 					const formPane = DOM.append(container, $('.automation-form-pane'));
 					const form = DOM.append(formPane, $('.automation-form'));
-					const handle = renderForm(form, state, disposables, validation, () => revalidate(), this.instantiationService, this.contextKeyService, this.contextViewService, this.configurationService, this.languageModelsService, this.layoutService, this.logService, this.productService, this.sessionsManagementService, this.sessionsProvidersService, this.workspaceTrustRequestService, initial?.prompt ?? '', initial?.mode, initial?.permissionLevel, initial?.modelId);
+					const handle = renderForm(form, state, disposables, validation, () => revalidate(), this.instantiationService, this.contextKeyService, this.contextViewService, this.configurationService, this.languageModelsService, this.layoutService, this.logService, this.productService, this.sessionsManagementService, this.sessionsProvidersService, this.workspaceTrustRequestService, initial?.prompt ?? '', initial?.mode, initial?.permissionLevel, initial?.modelId, initial?.providerConfiguration);
 					getPrompt = handle.getPrompt;
 					getMode = handle.getMode;
 					getPermissionLevel = handle.getPermissionLevel;
 					getModelId = handle.getModelId;
 					getBranch = handle.getBranch;
+					captureProviderConfiguration = handle.captureProviderConfiguration;
 					waitForAutomationSessionSync = handle.waitForAutomationSessionSync;
 					getFocusableElements = handle.getFocusableElements;
 					const keyboardNavigation = disposables.add(registerAutomationDialogKeyboardNavigation(
@@ -220,6 +223,7 @@ export class AutomationDialogService implements IAutomationDialogService {
 				return undefined;
 			}
 			await waitForAutomationSessionSync();
+			const providerConfiguration = await captureProviderConfiguration();
 
 			const schedule: IAutomationSchedule = {
 				interval: state.interval,
@@ -247,6 +251,7 @@ export class AutomationDialogService implements IAutomationDialogService {
 					modelId: modelId ?? null,
 					mode: mode ?? null,
 					permissionLevel: permissionLevel ?? null,
+					providerConfiguration: providerConfiguration ?? null,
 					enabled: state.enabled,
 				};
 				return { kind: 'update', id: initial.id, value: patch };
@@ -260,6 +265,7 @@ export class AutomationDialogService implements IAutomationDialogService {
 				modelId,
 				mode,
 				permissionLevel,
+				providerConfiguration,
 				enabled: state.enabled,
 			};
 			return { kind: 'create', value: create };

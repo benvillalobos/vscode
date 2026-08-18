@@ -83,13 +83,14 @@ export class AutomationRunner implements IAutomationRunner {
 				: undefined;
 			const branch = target.kind === 'workspace' && target.isolation.kind === 'worktree' ? target.isolation.branch : undefined;
 
-			const createOptions: ICreateNewSessionOptions | undefined = target.providerId !== undefined || target.sessionTypeId !== undefined || automation.modelId !== undefined || automation.mode !== undefined || automation.permissionLevel !== undefined || isolationMode !== undefined || branch !== undefined
+			const createOptions: ICreateNewSessionOptions | undefined = target.providerId !== undefined || target.sessionTypeId !== undefined || automation.modelId !== undefined || automation.mode !== undefined || automation.permissionLevel !== undefined || automation.providerConfiguration !== undefined || isolationMode !== undefined || branch !== undefined
 				? {
 					providerId: target.providerId,
 					sessionTypeId: target.sessionTypeId,
 					modelId: automation.modelId,
 					modeId: automation.mode,
 					permissionLevel: automation.permissionLevel,
+					...(automation.providerConfiguration ? { providerConfiguration: automation.providerConfiguration } : {}),
 					isolationMode,
 					branch,
 				}

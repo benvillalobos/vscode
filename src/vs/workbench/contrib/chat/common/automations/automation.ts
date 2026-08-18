@@ -4,6 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { URI } from '../../../../../base/common/uri.js';
+import { ISessionProviderConfiguration } from '../../../../../platform/session/common/sessionProviderConfiguration.js';
 
 /**
  * How often an automation runs. `hourly` fires every hour from creation/update;
@@ -73,6 +74,9 @@ export interface IAutomationDescriptor {
 
 	/** Optional permission level (`default`/`autoApprove`/`autopilot`). Overrides only for scheduled runs; defaults to provider's default. */
 	readonly permissionLevel?: string;
+
+	/** Opaque provider-owned configuration captured from the Automation draft. */
+	readonly providerConfiguration?: ISessionProviderConfiguration;
 
 	readonly enabled: boolean;
 

@@ -32,6 +32,7 @@ import {
 import { publishAutomationCreated, publishAutomationDeleted, publishAutomationUpdated } from '../../../../workbench/contrib/chat/common/automations/automationTelemetry.js';
 import { computeNextRunAt } from '../../../../workbench/contrib/chat/common/automations/schedule.js';
 import { ChatPermissionLevel, isChatPermissionLevel } from '../../../../workbench/contrib/chat/common/constants.js';
+import { ISessionProviderConfiguration } from '../../../../platform/session/common/sessionProviderConfiguration.js';
 import { AUTOMATION_STORAGE_KEY, IAutomationStorageService } from '../common/automationStorageService.js';
 
 const LEGACY_SCHEMA_VERSIONS = new Set([1, 2]);
@@ -47,6 +48,7 @@ interface ISerializedAutomationBase {
 	readonly modelId?: string;
 	readonly mode?: string;
 	readonly permissionLevel?: string;
+	readonly providerConfiguration?: ISessionProviderConfiguration;
 	readonly enabled: boolean;
 	readonly createdAt: string;
 	readonly updatedAt: string;
@@ -180,6 +182,7 @@ export class AutomationStore extends Disposable implements IAutomationStore {
 			modelId: options.modelId,
 			mode: options.mode,
 			permissionLevel: isChatPermissionLevel(options.permissionLevel) ? options.permissionLevel : undefined,
+			providerConfiguration: options.providerConfiguration,
 			enabled: options.enabled ?? true,
 			createdAt: nowIso,
 			updatedAt: nowIso,
@@ -606,6 +609,7 @@ function serializeAutomation(a: IAutomationDescriptor): ISerializedAutomation {
 		modelId: a.modelId,
 		mode: a.mode,
 		permissionLevel: a.permissionLevel,
+		providerConfiguration: a.providerConfiguration,
 		enabled: a.enabled,
 		createdAt: a.createdAt,
 		updatedAt: a.updatedAt,
@@ -622,7 +626,7 @@ function areAutomationSnapshotsEqual(first: IAutomation, second: IAutomation): b
 
 function deserializeAutomation(s: ISerializedAutomation): IAutomationDescriptor | undefined {
 	const target = deserializeAutomationTarget(s.target);
-	return target ? createAutomationFromSerialized(s, target) : undefined;
+	return target ? createAutomationFromSerialized(s, target, deserializeProviderConfiguration(s.providerConfiguration)) : undefined;
 }
 
 function deserializeLegacyAutomation(s: ILegacySerializedAutomation): IAutomationDescriptor | undefined {
@@ -643,10 +647,14 @@ function deserializeLegacyAutomation(s: ILegacySerializedAutomation): IAutomatio
 			deserializeLegacyIsolation(s.isolationMode, s.branch),
 		);
 	}
-	return createAutomationFromSerialized(s, target);
+	return createAutomationFromSerialized(s, target, undefined);
 }
 
-function createAutomationFromSerialized(s: ISerializedAutomationBase, target: AutomationTarget): IAutomationDescriptor {
+function createAutomationFromSerialized(
+	s: ISerializedAutomationBase,
+	target: AutomationTarget,
+	providerConfiguration: ISessionProviderConfiguration | undefined,
+): IAutomationDescriptor {
 	// Default to most restrictive if the persisted value is invalid.
 	const permissionLevel = isChatPermissionLevel(s.permissionLevel)
 		? s.permissionLevel
@@ -661,12 +669,37 @@ function createAutomationFromSerialized(s: ISerializedAutomationBase, target: Au
 		modelId: s.modelId,
 		mode: s.mode,
 		permissionLevel,
+		providerConfiguration,
 		enabled: s.enabled,
 		createdAt: s.createdAt,
 		updatedAt: s.updatedAt,
 		lastRunAt: s.lastRunAt,
 		nextRunAt: s.nextRunAt,
 	});
+}
+
+function deserializeProviderConfiguration(value: unknown): ISessionProviderConfiguration | undefined {
+	if (value === undefined) {
+		return undefined;
+	}
+	if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+		throw new Error('Automation provider configuration must be an object.');
+	}
+	const configuration = value as Partial<ISessionProviderConfiguration>;
+	if (typeof configuration.providerId !== 'string'
+		|| typeof configuration.sessionTypeId !== 'string'
+		|| typeof configuration.version !== 'number'
+		|| !Number.isInteger(configuration.version)
+		|| configuration.version < 1
+		|| typeof configuration.data !== 'string') {
+		throw new Error('Automation provider configuration is invalid.');
+	}
+	return {
+		providerId: configuration.providerId,
+		sessionTypeId: configuration.sessionTypeId,
+		version: configuration.version,
+		data: configuration.data,
+	};
 }
 
 function updateAutomation(current: IAutomationDescriptor, patch: IUpdateAutomationOptions, now: Date): IAutomationDescriptor {
@@ -692,6 +725,7 @@ function mergeAutomation(current: IAutomationDescriptor, patch: IUpdateAutomatio
 		modelId: patch.modelId === null ? undefined : (patch.modelId ?? current.modelId),
 		mode: patch.mode === null ? undefined : (patch.mode ?? current.mode),
 		permissionLevel: patch.permissionLevel === null ? undefined : (patch.permissionLevel && isChatPermissionLevel(patch.permissionLevel) ? patch.permissionLevel : current.permissionLevel),
+		providerConfiguration: patch.providerConfiguration === null ? undefined : (patch.providerConfiguration ?? current.providerConfiguration),
 		enabled: patch.enabled ?? current.enabled,
 	};
 }

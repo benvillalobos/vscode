@@ -17,6 +17,7 @@ import { IKeybindingService } from '../../../../../platform/keybinding/common/ke
 import { ResultKind } from '../../../../../platform/keybinding/common/keybindingResolver.js';
 import { ILayoutService } from '../../../../../platform/layout/browser/layoutService.js';
 import { IWorkspaceTrustRequestService, ResourceTrustRequestOptions } from '../../../../../platform/workspace/common/workspaceTrust.js';
+import { ISessionProviderConfiguration } from '../../../../../platform/session/common/sessionProviderConfiguration.js';
 import { createWorkbenchDialogOptions } from '../../../../../workbench/browser/parts/dialogs/dialog.js';
 import { ILanguageModelChatMetadata, ILanguageModelsService } from '../../../../../workbench/contrib/chat/common/languageModels.js';
 import { IHostService } from '../../../../../workbench/services/host/browser/host.js';
@@ -79,6 +80,7 @@ function createWorkspace(requiresWorkspaceTrust: boolean): ISessionWorkspace {
 function createAutomationDraftService() {
 	const automationSession = observableValue<ISession | undefined>('automationSession', undefined);
 	const created: Array<{ kind: 'workspace' | 'quickChat'; providerId: string | undefined; sessionTypeId: string; folderUri?: string }> = [];
+	const configurations: Array<ISessionProviderConfiguration | undefined> = [];
 	const discarded: string[] = [];
 	let nextId = 1;
 	const createDraft = (kind: 'workspace' | 'quickChat', providerId: string | undefined, sessionTypeId: string, folderUri?: URI): ISession => {
@@ -97,8 +99,14 @@ function createAutomationDraftService() {
 	};
 	const service = upcastPartial<ISessionsManagementService>({
 		automationSession,
-		createAutomationSession: (folderUri, options) => createDraft('workspace', options?.providerId, options?.sessionTypeId ?? 'default', folderUri),
-		createAutomationQuickChat: options => createDraft('quickChat', options?.providerId, options?.sessionTypeId ?? 'default'),
+		createAutomationSession: (folderUri, options) => {
+			configurations.push(options?.providerConfiguration);
+			return createDraft('workspace', options?.providerId, options?.sessionTypeId ?? 'default', folderUri);
+		},
+		createAutomationQuickChat: options => {
+			configurations.push(options?.providerConfiguration);
+			return createDraft('quickChat', options?.providerId, options?.sessionTypeId ?? 'default');
+		},
 		discardAutomationSession: session => {
 			const current = automationSession.get();
 			if (!current || (session && session.sessionId !== current.sessionId)) {
@@ -108,7 +116,7 @@ function createAutomationDraftService() {
 			automationSession.set(undefined, undefined);
 		},
 	});
-	return { service, created, discarded };
+	return { service, created, configurations, discarded };
 }
 
 suite('Automation session draft synchronization', () => {
@@ -151,6 +159,24 @@ suite('Automation session draft synchronization', () => {
 		});
 	});
 
+	test('seeds the initial matching target with provider configuration only once', async () => {
+		const { service, configurations } = createAutomationDraftService();
+		const providerConfiguration: ISessionProviderConfiguration = {
+			providerId: 'provider-a',
+			sessionTypeId: 'type-a',
+			version: 1,
+			data: '{}',
+		};
+		const synchronizer = disposables.add(new AutomationSessionDraftSynchronizer(service, async () => true, () => { }, providerConfiguration));
+
+		synchronizer.update({ kind: 'workspace', folderUri: URI.parse('file:///workspace'), providerId: 'provider-a', sessionTypeId: 'type-a' });
+		await synchronizer.waitForSync();
+		synchronizer.update({ kind: 'workspace', folderUri: URI.parse('file:///workspace'), providerId: 'provider-b', sessionTypeId: 'type-b' });
+		await synchronizer.waitForSync();
+
+		assert.deepStrictEqual(configurations, [providerConfiguration, undefined]);
+	});
+
 	test('ignores stale workspace validation', async () => {
 		const { service, created } = createAutomationDraftService();
 		const firstWorkspaceValidation = new DeferredPromise<boolean>();
@@ -182,7 +208,7 @@ suite('Automation session draft synchronization', () => {
 		));
 
 		synchronizer.update({ kind: 'workspace', folderUri: URI.parse('file:///workspace'), providerId: 'provider', sessionTypeId: 'type' });
-		await synchronizer.waitForSync();
+		await assert.rejects(synchronizer.waitForSync(), /validation failed/);
 
 		assert.deepStrictEqual({
 			created,
@@ -199,9 +225,11 @@ suite('Automation session draft synchronization', () => {
 		const automationSession = observableValue<ISession | undefined>('automationSession', undefined);
 		let createCount = 0;
 		let errorCount = 0;
+		const configurations: Array<ISessionProviderConfiguration | undefined> = [];
 		const service = upcastPartial<ISessionsManagementService>({
 			automationSession,
 			createAutomationSession: (_folderUri, options) => {
+				configurations.push(options?.providerConfiguration);
 				if (createCount++ === 0) {
 					throw new Error('provider unavailable');
 				}
@@ -215,20 +243,28 @@ suite('Automation session draft synchronization', () => {
 			},
 			discardAutomationSession: () => automationSession.set(undefined, undefined),
 		});
-		const synchronizer = disposables.add(new AutomationSessionDraftSynchronizer(service, async () => true, () => errorCount++));
+		const providerConfiguration: ISessionProviderConfiguration = {
+			providerId: 'provider',
+			sessionTypeId: 'type',
+			version: 1,
+			data: '{}',
+		};
+		const synchronizer = disposables.add(new AutomationSessionDraftSynchronizer(service, async () => true, () => errorCount++, providerConfiguration));
 		const target = { kind: 'workspace', folderUri: URI.parse('file:///workspace'), providerId: 'provider', sessionTypeId: 'type' } as const;
 
 		synchronizer.update(target);
-		await synchronizer.waitForSync();
+		await assert.rejects(synchronizer.waitForSync(), /provider unavailable/);
 		synchronizer.update(target);
 		await synchronizer.waitForSync();
 
 		assert.deepStrictEqual({
 			createCount,
+			configurations,
 			errorCount,
 			sessionId: automationSession.get()?.sessionId,
 		}, {
 			createCount: 2,
+			configurations: [providerConfiguration, providerConfiguration],
 			errorCount: 1,
 			sessionId: 'automation-retry',
 		});

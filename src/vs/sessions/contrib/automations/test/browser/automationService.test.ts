@@ -102,6 +102,34 @@ suite('AutomationService', () => {
 		assert.strictEqual(a.enabled, true);
 	});
 
+	test('persists provider configuration in the schema v3 ledger', async () => {
+		const { service, storage } = createService();
+		const providerConfiguration = {
+			providerId: 'provider-a',
+			sessionTypeId: 'type-a',
+			version: 1,
+			data: '{"mode":"plan"}',
+		};
+		const automation = await service.createAutomation({
+			name: 'Configured',
+			prompt: 'p',
+			schedule: dailySchedule(),
+			target: workspaceTarget(),
+			providerConfiguration,
+		});
+		const persisted = JSON.parse(storage.get('chat.automations.ledger', StorageScope.APPLICATION)!);
+
+		assert.deepStrictEqual({
+			inMemory: automation.providerConfiguration,
+			schemaVersion: persisted.schemaVersion,
+			persisted: persisted.automations[0].providerConfiguration,
+		}, {
+			inMemory: providerConfiguration,
+			schemaVersion: 3,
+			persisted: providerConfiguration,
+		});
+	});
+
 	test('createAutomation with manual schedule leaves nextRunAt undefined', async () => {
 		const { service } = createService();
 		const a = await service.createAutomation({
@@ -688,6 +716,22 @@ suite('AutomationService', () => {
 		const storage = teardown.add(new InMemoryStorageService());
 		storage.store('chat.automations.ledger', 'not json', -1, 1);
 		const service = teardown.add(createAutomationService(storage, new NullLogService(), NullTelemetryService));
+		assert.deepStrictEqual(service.automations.get(), []);
+	});
+
+	test('drops an automation with malformed provider configuration', () => {
+		const storage = teardown.add(new InMemoryStorageService());
+		storage.store('chat.automations.ledger', JSON.stringify({
+			schemaVersion: 3,
+			revision: 1,
+			automations: [{
+				...serializeLedgerAutomation('malformed', 'Malformed'),
+				providerConfiguration: { providerId: 'provider-a', version: 1, data: '{}' },
+			}],
+			runs: [],
+		}), -1, 1);
+		const service = teardown.add(createAutomationService(storage, new NullLogService(), NullTelemetryService));
+
 		assert.deepStrictEqual(service.automations.get(), []);
 	});
 
