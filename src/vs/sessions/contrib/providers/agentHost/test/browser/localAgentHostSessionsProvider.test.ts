@@ -2868,6 +2868,7 @@ suite('LocalAgentHostSessionsProvider', () => {
 		await waitForSessionConfig(provider, session.sessionId, config => config === undefined);
 
 		assert.strictEqual(provider.getSessionConfig(session.sessionId), undefined);
+		await assert.rejects(provider.captureNewSessionConfiguration(session.sessionId), /before it resolves/);
 	});
 
 	test('createNewSession maps allowAll from chat.defaultConfiguration to autoApprove', async () => {
@@ -2920,6 +2921,36 @@ suite('LocalAgentHostSessionsProvider', () => {
 		assert.deepStrictEqual(agentHost.createSessionConfigs[0]?.config, { autoApprove: 'autoApprove' });
 	});
 
+	test('captured configuration seeds a fresh draft before config resolution', async () => {
+		const storageService = disposables.add(new InMemoryStorageService());
+		agentHost.resolveSessionConfigResult = {
+			schema: { type: 'object', properties: { autoApprove: { type: 'string', enum: ['default', 'autoApprove'], title: 'Auto-approve' } } },
+			values: { autoApprove: 'autoApprove' },
+		};
+		const provider = createProvider(disposables, agentHost, undefined, { storageService });
+		const first = provider.createNewSession(URI.parse('file:///home/user/project'), provider.sessionTypes[0].id);
+		await waitForSessionConfig(provider, first.sessionId, () => !provider.isSessionConfigResolving(first.sessionId).get());
+		await provider.setSessionConfigValue(first.sessionId, SessionConfigKey.AutoApprove, 'autoApprove');
+		const captured = await provider.captureNewSessionConfiguration(first.sessionId);
+		storageService.remove(STORAGE_KEY_REMEMBERED_SESSION_CONFIG_VALUES, StorageScope.PROFILE);
+
+		const second = provider.createNewSession(URI.parse('file:///home/user/project'), provider.sessionTypes[0].id, {
+			providerConfiguration: captured,
+		});
+		const seededImmediately = provider.getSessionConfig(second.sessionId)?.values.autoApprove;
+		await waitForSessionConfig(provider, second.sessionId, () => !provider.isSessionConfigResolving(second.sessionId).get());
+
+		assert.deepStrictEqual({
+			seededImmediately,
+			settled: provider.getSessionConfig(second.sessionId)?.values.autoApprove,
+			forwardedToAgentHost: agentHost.resolveSessionConfigRequests.at(-1)?.config?.autoApprove,
+		}, {
+			seededImmediately: 'autoApprove',
+			settled: 'autoApprove',
+			forwardedToAgentHost: 'autoApprove',
+		});
+	});
+
 	test('createNewSession does not seed autoApprove when chat.defaultConfiguration approvals is manual', () => {
 		const provider = createProvider(disposables, agentHost);
 		const session = provider.createNewSession(URI.parse('file:///home/user/project'), provider.sessionTypes[0].id);
@@ -2946,6 +2977,26 @@ suite('LocalAgentHostSessionsProvider', () => {
 			seededImmediately: 'default',
 			forwardedToAgentHost: 'default',
 		});
+	});
+
+	test('replayed autoApprove fails when policy no longer allows it', async () => {
+		const config = createPolicyRestrictedConfigurationService();
+		agentHost.resolveSessionConfigResult = {
+			schema: { type: 'object', properties: { autoApprove: { type: 'string', enum: ['default'], title: 'Auto-approve' } } },
+			values: { autoApprove: 'default' },
+		};
+		const provider = createProvider(disposables, agentHost, undefined, { configurationService: config });
+		const session = provider.createNewSession(URI.parse('file:///home/user/project'), provider.sessionTypes[0].id, {
+			providerConfiguration: {
+				providerId: provider.id,
+				sessionTypeId: provider.sessionTypes[0].id,
+				version: 1,
+				data: JSON.stringify({ config: { autoApprove: 'autoApprove' } }),
+			},
+		});
+		await waitForSessionConfig(provider, session.sessionId, () => !provider.isSessionConfigResolving(session.sessionId).get());
+
+		await assert.rejects(provider.captureNewSessionConfiguration(session.sessionId), /did not apply session config 'autoApprove'/);
 	});
 
 	test('setSessionConfigValue remembers portable string picks and drops non-remembered keys', async () => {

@@ -1661,6 +1661,47 @@ suite('SessionsManagementService', () => {
 		});
 	});
 
+	test('createAndSendNewChatRequest passes provider configuration at draft creation instead of legacy setters', async () => {
+		const session = stubSession({ sessionId: 's1', providerId: 'test' });
+		let providerCreateOptions: ISessionsProviderCreateSessionOptions | undefined;
+		const legacySetterCalls: string[] = [];
+		const provider = new class extends TestSessionsProvider {
+			override resolveWorkspace(): ISessionWorkspace { return { folderUri: URI.parse('test:///folder') } as unknown as ISessionWorkspace; }
+			override createNewSession(_folderUri: URI, _sessionTypeId: string, options?: ISessionsProviderCreateSessionOptions): ISession {
+				providerCreateOptions = options;
+				return session;
+			}
+			override setModel(): void { legacySetterCalls.push('setModel'); }
+			override setMode(): void { legacySetterCalls.push('setMode'); }
+			override setPermissionLevel(): void { legacySetterCalls.push('setPermissionLevel'); }
+		}(session);
+		const { service } = createSessionsManagementService(session, disposables, provider);
+		const providerConfiguration = {
+			providerId: 'test',
+			sessionTypeId: 'test',
+			version: 1,
+			data: '{"mode":"agent"}',
+		};
+
+		await service.createAndSendNewChatRequest(URI.parse('test:///folder'), { query: 'hi' }, {
+			modelId: 'legacy-model',
+			modeId: 'legacy-mode',
+			permissionLevel: 'legacy-permission',
+			providerConfiguration,
+		});
+
+		assert.deepStrictEqual({
+			providerCreateOptions,
+			legacySetterCalls,
+		}, {
+			providerCreateOptions: {
+				metadata: undefined,
+				providerConfiguration,
+			},
+			legacySetterCalls: [],
+		});
+	});
+
 	test('createAndSendNewChatRequest prefers atomic worktree configuration', async () => {
 		const session = stubSession({ sessionId: 's1', providerId: 'test' });
 		const calls: string[] = [];

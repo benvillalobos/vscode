@@ -7,6 +7,7 @@ import { Event } from '../../../../base/common/event.js';
 import { IDisposable } from '../../../../base/common/lifecycle.js';
 import { ThemeIcon } from '../../../../base/common/themables.js';
 import { URI } from '../../../../base/common/uri.js';
+import { ISessionProviderConfiguration } from '../../../../platform/session/common/sessionProviderConfiguration.js';
 import { IChatRequestVariableEntry } from '../../../../workbench/contrib/chat/common/attachments/chatVariableEntries.js';
 import { ILanguageModelChatMetadataAndIdentifier } from '../../../../workbench/contrib/chat/common/languageModels.js';
 import { ModelIdentifierResolution } from '../../../../workbench/contrib/chat/common/modelSelection.js';
@@ -41,6 +42,8 @@ export interface ISendRequestOptions {
 export interface ISessionsProviderCreateSessionOptions {
 	/** Initial provider metadata to associate with the session. */
 	readonly metadata?: Record<string, unknown>;
+	/** Provider-owned configuration captured from an earlier draft. */
+	readonly providerConfiguration?: ISessionProviderConfiguration;
 }
 
 /** Programmatic worktree settings applied together before a new session starts. */
@@ -244,7 +247,7 @@ export interface ISessionsProvider {
 	 * support quick chats must throw.
 	 * @param sessionTypeId The ID of the session type to create.
 	 */
-	createQuickChat(sessionTypeId: string): ISession;
+	createQuickChat(sessionTypeId: string, options?: ISessionsProviderCreateSessionOptions): ISession;
 
 	/**
 	 * Delete a new (untitled, not-yet-sent) session previously created via
@@ -254,6 +257,11 @@ export interface ISessionsProvider {
 	 * @param sessionId The id of the new session to delete.
 	 */
 	deleteNewSession(sessionId: string): void;
+
+	/**
+	 * Captures the settled, provider-owned configuration of a new-session draft.
+	 */
+	captureNewSessionConfiguration?(sessionId: string): Promise<ISessionProviderConfiguration | undefined>;
 
 	/**
 	 * Get the session types supported for a given workspace URI.

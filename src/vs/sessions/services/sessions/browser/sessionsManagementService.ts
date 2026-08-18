@@ -471,7 +471,10 @@ export class SessionsManagementService extends Disposable implements ISessionsMa
 		const { provider, sessionTypeId } = this._resolveProviderForNewSession(folderUri, options);
 
 		const previousNewSession = this._newSession.get();
-		const session = provider.createNewSession(folderUri, sessionTypeId, { metadata: options?.metadata });
+		const session = provider.createNewSession(folderUri, sessionTypeId, {
+			metadata: options?.metadata,
+			providerConfiguration: options?.providerConfiguration,
+		});
 
 		// Providers no longer dispose the previous new session implicitly, so
 		// dispose the one this composer just replaced. Use its own provider
@@ -490,7 +493,9 @@ export class SessionsManagementService extends Disposable implements ISessionsMa
 	createAutomationSession(folderUri: URI, options?: ICreateNewSessionOptions): ISession {
 		const { provider, sessionTypeId } = this._resolveProviderForNewSession(folderUri, options);
 		const previousAutomationSession = this._automationSession.get();
-		const session = provider.createNewSession(folderUri, sessionTypeId);
+		const session = provider.createNewSession(folderUri, sessionTypeId, {
+			providerConfiguration: options?.providerConfiguration,
+		});
 		if (previousAutomationSession && previousAutomationSession.sessionId !== session.sessionId) {
 			this._getProvider(previousAutomationSession)?.deleteNewSession(previousAutomationSession.sessionId);
 		}
@@ -558,7 +563,9 @@ export class SessionsManagementService extends Disposable implements ISessionsMa
 		const { provider, sessionTypeId } = this._resolveProviderForQuickChat(options);
 
 		const previousNewSession = this._newSession.get();
-		const session = provider.createQuickChat(sessionTypeId);
+		const session = provider.createQuickChat(sessionTypeId, {
+			providerConfiguration: options?.providerConfiguration,
+		});
 		this._newSession.set(session, undefined);
 		this.storageService.store(LAST_USED_QUICK_CHAT_SESSION_TYPE_STORAGE_KEY, sessionTypeId, StorageScope.PROFILE, StorageTarget.USER);
 
@@ -574,7 +581,9 @@ export class SessionsManagementService extends Disposable implements ISessionsMa
 	createAutomationQuickChat(options?: ICreateNewSessionOptions): ISession {
 		const { provider, sessionTypeId } = this._resolveProviderForQuickChat(options);
 		const previousAutomationSession = this._automationSession.get();
-		const session = provider.createQuickChat(sessionTypeId);
+		const session = provider.createQuickChat(sessionTypeId, {
+			providerConfiguration: options?.providerConfiguration,
+		});
 		if (previousAutomationSession && previousAutomationSession.sessionId !== session.sessionId) {
 			this._getProvider(previousAutomationSession)?.deleteNewSession(previousAutomationSession.sessionId);
 		}
@@ -752,7 +761,10 @@ export class SessionsManagementService extends Disposable implements ISessionsMa
 				throw new WorkspaceNotTrustedError();
 			}
 		}
-		const session = provider.createNewSession(folderUri, sessionTypeId, { metadata: createOptions?.metadata });
+		const session = provider.createNewSession(folderUri, sessionTypeId, {
+			metadata: createOptions?.metadata,
+			providerConfiguration: createOptions?.providerConfiguration,
+		});
 		this._unlistedNewSessions.set(session.resource, session);
 		const requestActivity = new MutableDisposable();
 		try {
@@ -776,7 +788,9 @@ export class SessionsManagementService extends Disposable implements ISessionsMa
 
 	async createAndSendQuickChatRequest(options: ISendRequestOptions, createOptions?: ICreateNewSessionOptions, token: CancellationToken = CancellationToken.None): Promise<ISession | undefined> {
 		const { provider, sessionTypeId } = this._resolveProviderForQuickChat(createOptions);
-		const session = provider.createQuickChat(sessionTypeId);
+		const session = provider.createQuickChat(sessionTypeId, {
+			providerConfiguration: createOptions?.providerConfiguration,
+		});
 		return this._configureAndSendNewSession(provider, session, options, createOptions, false, token);
 	}
 
@@ -824,6 +838,9 @@ export class SessionsManagementService extends Disposable implements ISessionsMa
 		token: CancellationToken,
 		folderUri: URI | undefined,
 	): Promise<void> {
+		if (createOptions?.providerConfiguration) {
+			return;
+		}
 		if (createOptions?.modelId) {
 			const resolvedModelId = await this._waitForRequestedModel(provider, session, createOptions.modelId, token, folderUri);
 			provider.setModel(session.sessionId, session.mainChat.get().resource, resolvedModelId, ChatModelSource.Chosen);

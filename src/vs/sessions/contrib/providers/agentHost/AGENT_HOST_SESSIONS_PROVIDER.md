@@ -200,6 +200,13 @@ because there is no response stream in which to represent them.
 2. Constructs a `NewSession` draft, stores it in `_newSessions`, and fires `onDidChangeSessionConfig`. New-session model/mode selection is seeded by the existing model/agent pickers and sent on the first message.
 3. If a connection exists and authentication is **not** pending, eagerly starts the backend session and resolves its dynamic config in parallel. While auth is pending the draft waits; `_resumeNewSessionAfterAuthenticationSettles` (driven by the `authenticationPending` observable going false) starts the backend for all pending drafts.
 
+Agent Host drafts support opaque provider-configuration capture/replay. Capture
+waits for dynamic config resolution and records the effective model, custom
+agent, and config values. Replay seeds those values in `NewSession` before the
+first config resolution and eager `createSession`; current policy normalization
+still applies. If a saved permission/isolation value cannot be reproduced by the
+current host schema, the draft records the resolution error and Send fails.
+
 Portable string config picks are remembered in profile storage and seed later drafts. `branch` is deliberately excluded because it is repository-scoped; each new workspace instead gets the default branch for worktree isolation or the current branch for folder isolation from the host's Git-backed config resolution. Branch config and completions use local names such as `main`; when that local name denotes the repository default, worktree creation still uses its remote-tracking ref such as `origin/main` as the start point.
 
 The eager session-state subscription does not compute Git metadata while the host session lifecycle is `Creating`: its initial working directory is the selected checkout, not the final isolated worktree. Materialization publishes the resolved working directory through `notify/sessionAdded` and starts the first Git-state refresh against that path; the later `session/metaChanged` / `notify/sessionSummaryChanged` updates rebuild the adapter workspace with the resolved branch.

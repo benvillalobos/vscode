@@ -54,6 +54,14 @@ When `createNewSession(workspace)` is called, the provider creates one of two co
 - Provides `getModelOptionsSnapshot()`, `getOtherOptionGroups()` for UI to render provider-specific pickers
 - Watches context key changes to dynamically show/hide option groups
 
+Both draft types support opaque provider-configuration capture/replay. CLI
+replay seeds isolation and worktree branch before repository resolution starts,
+then restores model, mode, permission, and provider option values before the
+draft is returned. Workspace-mode branch remains live Git state and is not
+captured. Cloud replay restores model and extension-provided option selections.
+Send waits for CLI repository resolution and fails if a saved isolation choice
+cannot be honored.
+
 ## `AgentSessionAdapter` — Wrapping Existing Sessions
 
 Adapts an existing `IAgentSession` from the chat layer into the `ISession` facade:

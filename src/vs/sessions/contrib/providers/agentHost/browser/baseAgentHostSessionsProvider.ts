@@ -25,7 +25,10 @@ import { buildAnnotationsUri } from '../../../../../platform/agentHost/common/an
 import { parseGitHubIssueUrl } from '../../../../../platform/agentHost/common/githubIssueReferences.js';
 import { getEffectiveAgents } from '../../../../../platform/agentHost/common/customAgents.js';
 import { KNOWN_MODE_VALUES, SessionConfigKey } from '../../../../../platform/agentHost/common/sessionConfigKeys.js';
+import { ClaudeSessionConfigKey } from '../../../../../platform/agentHost/common/claudeSessionConfigKeys.js';
+import { CodexSessionConfigKey } from '../../../../../platform/agentHost/common/codexSessionConfigKeys.js';
 import { migrateLegacyAutopilotConfig } from '../../../../../platform/agentHost/common/agentHostSchema.js';
+import { ISessionProviderConfiguration } from '../../../../../platform/session/common/sessionProviderConfiguration.js';
 import type { IAgentSubscription } from '../../../../../platform/agentHost/common/state/agentSubscription.js';
 import { ResolveSessionConfigResult, type SessionConfigPropertySchema } from '../../../../../platform/agentHost/common/state/protocol/commands.js';
 import { AgentCustomization, ChangesSummary, ChatInteractivity as ProtocolChatInteractivity, ChatOriginKind as ProtocolChatOriginKind, type ClientPluginCustomization, Customization, CustomizationEnablementKind, CustomizationType, type CustomizationEnablement, ModelSelection, SessionStatus as ProtocolSessionStatus, RootConfigState, RootState, SessionState, SessionSummary, type Changeset } from '../../../../../platform/agentHost/common/state/protocol/state.js';
@@ -62,6 +65,57 @@ import { createSessionOutputObs, ISessionOutputObs } from './agentHostSessionFil
 
 const STORAGE_KEY_REMEMBERED_SESSION_CONFIG_VALUES = 'sessions.agentHost.sessionConfigPicker.selectedValues';
 const UNSAFE_SESSION_CONFIG_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+const AGENT_HOST_PROVIDER_CONFIGURATION_VERSION = 1;
+const SECURITY_SENSITIVE_CONFIG_KEYS = new Set<string>([
+	SessionConfigKey.AutoApprove,
+	SessionConfigKey.Permissions,
+	SessionConfigKey.Isolation,
+	ClaudeSessionConfigKey.PermissionMode,
+	CodexSessionConfigKey.PermissionsPreset,
+	CodexSessionConfigKey.ApprovalPolicy,
+	CodexSessionConfigKey.SandboxMode,
+]);
+
+interface IAgentHostProviderConfigurationData {
+	readonly modelId?: string;
+	readonly agent?: ISessionAgentRef;
+	readonly config?: Record<string, unknown>;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function parseAgentHostProviderConfiguration(configuration: ISessionProviderConfiguration, providerId: string, sessionTypeId: string): IAgentHostProviderConfigurationData {
+	if (configuration.providerId !== providerId || configuration.sessionTypeId !== sessionTypeId) {
+		throw new Error('Session provider configuration does not match the selected provider and session type.');
+	}
+	if (configuration.version !== AGENT_HOST_PROVIDER_CONFIGURATION_VERSION) {
+		throw new Error(`Unsupported agent host session configuration version '${configuration.version}'.`);
+	}
+	const parsed: unknown = JSON.parse(configuration.data);
+	if (!isRecord(parsed)) {
+		throw new Error('Agent host session configuration must be an object.');
+	}
+	if (parsed.modelId !== undefined && typeof parsed.modelId !== 'string') {
+		throw new Error('Agent host session configuration contains an invalid model.');
+	}
+	const modelId = typeof parsed.modelId === 'string' ? parsed.modelId : undefined;
+	let agent: ISessionAgentRef | undefined;
+	if (parsed.agent !== undefined) {
+		if (!isRecord(parsed.agent) || typeof parsed.agent.uri !== 'string' || typeof parsed.agent.name !== 'string') {
+			throw new Error('Agent host session configuration contains an invalid agent.');
+		}
+		agent = { uri: parsed.agent.uri, name: parsed.agent.name };
+	}
+	if (parsed.config !== undefined && !isRecord(parsed.config)) {
+		throw new Error('Agent host session configuration contains invalid config values.');
+	}
+	if (parsed.config && Object.keys(parsed.config).some(property => UNSAFE_SESSION_CONFIG_KEYS.has(property))) {
+		throw new Error('Agent host session configuration contains an unsafe config key.');
+	}
+	return { modelId, agent, config: parsed.config };
+}
 
 // Well-known config chips whose last-resolved schemas are cached and seeded into
 // new drafts, so they stay visible (disabled) while a draft re-resolves rather
@@ -1643,6 +1697,9 @@ interface INewSessionConstructionContext {
 	 * present from the very first `resolveConfig`/`createSession`.
 	 */
 	readonly initialConfigValues?: Record<string, unknown>;
+	readonly initialModelId?: string;
+	readonly initialAgent?: ISessionAgentRef;
+	readonly requiredConfigValues?: Readonly<Record<string, unknown>>;
 	/**
 	 * Optional property schemas to seed into the new session's config before its
 	 * first {@link NewSession.resolveConfig} round-trip. Carried over from the
@@ -1702,6 +1759,7 @@ class NewSession extends Disposable {
 	readonly requiresWorkspaceTrust: boolean;
 	/** `true` when this is a workspace-less quick chat. */
 	readonly isQuickChat: boolean;
+	readonly requiredConfigValues: Readonly<Record<string, unknown>> | undefined;
 	/** Session-kind strategy chosen once at construction (quick chat vs. workspace). */
 	private readonly _kind: IAgentHostSessionKind;
 
@@ -1751,6 +1809,7 @@ class NewSession extends Disposable {
 	 * discards itself.
 	 */
 	private _configRequestSeq = 0;
+	private _configResolutionError: Error | undefined;
 
 	/**
 	 * `true` while a `resolveConfig` round-trip is in flight. Distinct from
@@ -1798,6 +1857,7 @@ class NewSession extends Disposable {
 		}
 		this.workspaceUri = workspaceUri;
 		this.isQuickChat = this._kind.isQuickChat;
+		this.requiredConfigValues = ctx.requiredConfigValues;
 		this.requiresWorkspaceTrust = !!ctx.workspace?.requiresWorkspaceTrust;
 		this.agentProvider = ctx.sessionType.id;
 		this._providerId = ctx.providerId;
@@ -1821,11 +1881,12 @@ class NewSession extends Disposable {
 		this._workspace = observableValue<ISessionWorkspace | undefined>(this, ctx.workspace);
 		const changes = observableValueOpts<readonly (IChatSessionFileChange | IChatSessionFileChange2)[]>({ owner: this, equalsFn: sessionFileChangesEqual }, []);
 		const checkpoints = observableValue(this, undefined);
-		this._selectedModelId = undefined;
-		this._selectedAgent = undefined;
+		this._selectedModelId = ctx.initialModelId;
+		this._selectedAgent = ctx.initialAgent;
 		this._modelId = observableValue<string | undefined>(this, this._selectedModelId);
-		this._modelSource = observableValue<ChatModelSource | undefined>(this, undefined);
-		const mode = observableValue<{ readonly id: string; readonly kind: string } | undefined>(this, undefined);
+		this._modelSource = observableValue<ChatModelSource | undefined>(this, this._selectedModelId ? ChatModelSource.CarriedOver : undefined);
+		const mode = observableValue<{ readonly id: string; readonly kind: string } | undefined>(this,
+			this._selectedAgent ? { id: this._selectedAgent.uri, kind: AGENT_MODE_KIND } : undefined);
 		this._mode = mode;
 		const isArchived = observableValue(this, false);
 		const isRead = observableValue(this, true);
@@ -1987,6 +2048,13 @@ class NewSession extends Disposable {
 		while (this._configResolution) {
 			await raceCancellationError(this._configResolution, this.cancellationToken);
 		}
+		if (this._configResolutionError) {
+			throw this._configResolutionError;
+		}
+	}
+
+	setConfigResolutionError(error: Error): void {
+		this._configResolutionError = error;
 	}
 
 	private _clearConfigResolution(promise: Promise<void>): void {
@@ -2932,7 +3000,10 @@ export abstract class BaseAgentHostSessionsProvider extends Disposable implement
 			throw new Error(`Cannot resolve workspace for URI: ${workspaceUri.toString()}`);
 		}
 
-		return this._createDraftSession(sessionType, workspace, false, options?.metadata);
+		const providerConfiguration = options?.providerConfiguration
+			? parseAgentHostProviderConfiguration(options.providerConfiguration, this.id, sessionTypeId)
+			: undefined;
+		return this._createDraftSession(sessionType, workspace, false, options?.metadata, providerConfiguration);
 	}
 
 	startNewSessionRequest(sessionId: string, activity?: string): IDisposable {
@@ -2945,7 +3016,7 @@ export abstract class BaseAgentHostSessionsProvider extends Disposable implement
 		return toDisposable(() => newSession.setActivity(undefined));
 	}
 
-	createQuickChat(sessionTypeId: string): ISession {
+	createQuickChat(sessionTypeId: string, options?: ISessionsProviderCreateSessionOptions): ISession {
 		const sessionType = this.sessionTypes.find(t => t.id === sessionTypeId);
 		if (!sessionType) {
 			throw new Error(this._noAgentsErrorMessage());
@@ -2957,7 +3028,32 @@ export abstract class BaseAgentHostSessionsProvider extends Disposable implement
 		// workspace-less: no `resolveWorkspace`, no `workingDirectory`. The
 		// agent host runs it in a throwaway scratch cwd and tags it via the
 		// `quickChat` create flag.
-		return this._createDraftSession(sessionType, undefined, true);
+		const providerConfiguration = options?.providerConfiguration
+			? parseAgentHostProviderConfiguration(options.providerConfiguration, this.id, sessionTypeId)
+			: undefined;
+		return this._createDraftSession(sessionType, undefined, true, undefined, providerConfiguration);
+	}
+
+	async captureNewSessionConfiguration(sessionId: string): Promise<ISessionProviderConfiguration | undefined> {
+		const newSession = this._getNewSession(sessionId);
+		if (!newSession) {
+			return undefined;
+		}
+		await newSession.waitForConfigResolution();
+		if (!newSession.getConfig()) {
+			throw new Error('Cannot capture agent host session configuration before it resolves.');
+		}
+		const data: IAgentHostProviderConfigurationData = {
+			modelId: newSession.getSelectedModelId(),
+			agent: newSession.getSelectedAgent(),
+			config: newSession.getConfigValues(),
+		};
+		return {
+			providerId: this.id,
+			sessionTypeId: newSession.agentProvider,
+			version: AGENT_HOST_PROVIDER_CONFIGURATION_VERSION,
+			data: JSON.stringify(data),
+		};
 	}
 
 	/**
@@ -2965,7 +3061,13 @@ export abstract class BaseAgentHostSessionsProvider extends Disposable implement
 	 * given session type. Shared by {@link createNewSession} (workspace-bound)
 	 * and {@link createQuickChat} (workspace-less, `quickChat === true`).
 	 */
-	private _createDraftSession(sessionType: ISessionType, workspace: ISessionWorkspace | undefined, quickChat: boolean, initialMetadata?: Record<string, unknown>): ISession {
+	private _createDraftSession(
+		sessionType: ISessionType,
+		workspace: ISessionWorkspace | undefined,
+		quickChat: boolean,
+		initialMetadata?: Record<string, unknown>,
+		providerConfiguration?: IAgentHostProviderConfigurationData,
+	): ISession {
 		// Tear-down of superseded drafts is handled by the management layer
 		// (it calls `deleteNewSession` on the previous pending session). Each
 		// new session is tracked independently in `_newSessions` so several can
@@ -2974,6 +3076,22 @@ export abstract class BaseAgentHostSessionsProvider extends Disposable implement
 		const connection = this.connection;
 		const resourceScheme = this.resourceSchemeForProvider(sessionType.id);
 		const activeClientScope = this._activeClientService.acquireScope(resourceScheme, workspace?.folders.map(folder => folder.root) ?? []);
+		const defaultConfig = this._initialNewSessionConfig(workspace);
+		const snapshotConfig = providerConfiguration?.config;
+		const policyRestricted = isAutoApprovePolicyRestricted(this._baseConfigurationService);
+		const initialConfigValues = snapshotConfig
+			? {
+				...defaultConfig,
+				...Object.fromEntries(Object.entries(snapshotConfig).map(([property, value]) => [
+					property,
+					normalizeSessionConfigValue(property, value, policyRestricted),
+				])),
+			}
+			: defaultConfig;
+		const requiredConfigEntries = snapshotConfig
+			? Object.entries(snapshotConfig).filter(([property]) => SECURITY_SENSITIVE_CONFIG_KEYS.has(property))
+			: [];
+		const requiredConfigValues = requiredConfigEntries.length > 0 ? Object.fromEntries(requiredConfigEntries) : undefined;
 		let newSession: NewSession;
 		try {
 			newSession = this._instantiationService.createInstance(NewSession, {
@@ -2986,7 +3104,10 @@ export abstract class BaseAgentHostSessionsProvider extends Disposable implement
 				backendSessionScheme: this._backendSessionScheme(sessionType.id),
 				authenticationPending: this.authenticationPending,
 				logService: this._logService,
-				initialConfigValues: this._initialNewSessionConfig(workspace),
+				initialConfigValues,
+				initialModelId: providerConfiguration?.modelId,
+				initialAgent: providerConfiguration?.agent,
+				requiredConfigValues,
 				initialConfigSchema: this._seededConfigSchema(),
 				initialMetadata,
 				instantiationService: this._instantiationService,
@@ -3043,7 +3164,13 @@ export abstract class BaseAgentHostSessionsProvider extends Disposable implement
 	private _startNewSessionBackend(newSession: NewSession, connection: IAgentConnection): void {
 		// Resolving the session config (schema + defaults for the picker chips)
 		// is part of viewing the new-session UI and stays ungated.
-		void newSession.trackConfigResolution(this._refreshNewSessionConfig(newSession, { markSessionLoading: true }));
+		const configResolution = this._refreshNewSessionConfig(newSession, {
+			expected: newSession.requiredConfigValues,
+			markSessionLoading: true,
+		}).catch(error => {
+			newSession.setConfigResolutionError(error instanceof Error ? error : new Error(String(error)));
+		});
+		void newSession.trackConfigResolution(configResolution);
 
 		// Defense-in-depth: never eagerly spawn an agent backend in an
 		// untrusted folder. The interactive trust prompt lives at folder-pick

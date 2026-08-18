@@ -282,6 +282,12 @@ user selects workspace and session type
 The view service owns presentation and focus. The management service owns the
 draft lifecycle and provider selection. The provider owns backend preparation.
 
+Providers may optionally capture a settled draft as an opaque
+`ISessionProviderConfiguration` and accept it through draft-creation options.
+The envelope identifies the provider and session type; only the provider parses
+and versions its data. Replay is applied before the draft is returned so
+provider controls never transiently display unrelated defaults.
+
 The new-session input keeps nonessential notices out of the first-use flow.
 Notifications marked `deferForNewUsers` remain hidden until the existing
 Agents-window usage threshold is reached; the input derives this eligibility

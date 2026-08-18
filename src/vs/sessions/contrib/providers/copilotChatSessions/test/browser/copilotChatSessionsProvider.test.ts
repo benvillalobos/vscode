@@ -641,6 +641,23 @@ suite('CopilotChatSessionsProvider', () => {
 		});
 	});
 
+	test('cloud provider options survive capture and replay', async () => {
+		const provider = createProvider(disposables, model);
+		const workspace = URI.from({ scheme: GITHUB_REMOTE_FILE_SCHEME, path: '/owner/repository' });
+		const configuration = {
+			providerId: provider.id,
+			sessionTypeId: CopilotCloudSessionType.id,
+			version: 1,
+			data: JSON.stringify({ options: { environment: 'production' } }),
+		};
+		const first = provider.createNewSession(workspace, CopilotCloudSessionType.id, { providerConfiguration: configuration });
+		const captured = await provider.captureNewSessionConfiguration(first.sessionId);
+		const second = provider.createNewSession(workspace, CopilotCloudSessionType.id, { providerConfiguration: captured });
+		const recaptured = await provider.captureNewSessionConfiguration(second.sessionId);
+
+		assert.deepStrictEqual(JSON.parse(recaptured!.data).options, { environment: 'production' });
+	});
+
 	test('Copilot CLI keeps an empty Copilot catalog pending until live models arrive', () => {
 		const models = new Map<string, ILanguageModelChatMetadata>();
 		const provider = createProvider(disposables, model, {
@@ -1720,6 +1737,33 @@ suite('CopilotChatSessionsProvider', () => {
 			assert.strictEqual(session?.permissionLevel.get(), ChatPermissionLevel.Default);
 		});
 
+		test('rejects replayed elevated permission when policy disables global auto-approval', () => {
+			const configurationService = makeConfig({ policyRestricted: true });
+			const provider = createProviderForSendTests(disposables, model, () => new Promise(() => { }), { configurationService });
+
+			assert.throws(() => provider.createNewSession(workspace, CopilotCLISessionType.id, {
+				providerConfiguration: {
+					providerId: provider.id,
+					sessionTypeId: CopilotCLISessionType.id,
+					version: 1,
+					data: JSON.stringify({ permissionLevel: ChatPermissionLevel.Autopilot }),
+				},
+			}), /unavailable because global auto-approval is disabled by policy/);
+		});
+
+		test('rejects malformed replayed branch values', () => {
+			const provider = createProviderForSendTests(disposables, model, () => new Promise(() => { }));
+
+			assert.throws(() => provider.createNewSession(workspace, CopilotCLISessionType.id, {
+				providerConfiguration: {
+					providerId: provider.id,
+					sessionTypeId: CopilotCLISessionType.id,
+					version: 1,
+					data: JSON.stringify({ isolationMode: 'worktree', branch: 42 }),
+				},
+			}), /invalid branch/);
+		});
+
 		test('falls back to Default when chat.permissions.default is unset', () => {
 			const configurationService = makeConfig({});
 			const provider = createProviderForSendTests(disposables, model, () => new Promise(() => { }), { configurationService });
@@ -1728,6 +1772,20 @@ suite('CopilotChatSessionsProvider', () => {
 			const session = provider.getSession(sessionInfo.sessionId);
 
 			assert.strictEqual(session?.permissionLevel.get(), ChatPermissionLevel.Default);
+		});
+
+		test('captured configuration seeds permission before a fresh draft is returned', async () => {
+			const configurationService = makeConfig({ defaultLevel: ChatPermissionLevel.Default });
+			const provider = createProviderForSendTests(disposables, model, () => new Promise(() => { }), { configurationService });
+			const first = provider.createNewSession(workspace, CopilotCLISessionType.id);
+			provider.setPermissionLevel(first.sessionId, ChatPermissionLevel.Autopilot);
+			const captured = await provider.captureNewSessionConfiguration(first.sessionId);
+
+			const second = provider.createNewSession(workspace, CopilotCLISessionType.id, {
+				providerConfiguration: captured,
+			});
+
+			assert.strictEqual(provider.getSession(second.sessionId)?.permissionLevel.get(), ChatPermissionLevel.Autopilot);
 		});
 	});
 

@@ -8,6 +8,7 @@ import { IObservable } from '../../../../base/common/observable.js';
 import { URI } from '../../../../base/common/uri.js';
 import { CancellationToken } from '../../../../base/common/cancellation.js';
 import { createDecorator } from '../../../../platform/instantiation/common/instantiation.js';
+import { ISessionProviderConfiguration } from '../../../../platform/session/common/sessionProviderConfiguration.js';
 import { IChat, ISession, ISessionType, ISessionWorkspace, ISideChatSelection } from './session.js';
 import { IDeleteChatOptions, ISendRequestOptions as ISessionsProviderSendRequestOptions } from './sessionsProvider.js';
 
@@ -74,6 +75,8 @@ export interface ICreateNewSessionOptions {
 	readonly sessionTypeId?: string;
 	/** Initial provider metadata to associate with the session. */
 	readonly metadata?: Record<string, unknown>;
+	/** Provider-owned configuration captured from an earlier draft. */
+	readonly providerConfiguration?: ISessionProviderConfiguration;
 	/**
 	 * Optional model identifier to apply to the new session via
 	 * {@link ISessionsProvider.setModel}. If the provider throws, the
