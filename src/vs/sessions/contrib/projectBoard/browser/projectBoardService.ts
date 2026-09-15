@@ -116,6 +116,7 @@ class ProjectBoardView extends Disposable implements IProjectBoardView {
 	private readonly promptTimes = new Map<string, number>();
 	private showArchived = false;
 	private readonly visibleCounts = new Map<string, number>();
+	private readonly collapsedColumns = new Set<string>();
 	private dragging = false;
 	private rendering = false;
 	private menuOpen = false;
@@ -538,11 +539,24 @@ class ProjectBoardView extends Disposable implements IProjectBoardView {
 	private getDisplayedCards(): readonly IProjectBoardCard[] {
 		return [
 			...this.model.getUnassignedCards(this.showArchived),
-			...this.model.rows.flatMap(row => this.model.columns.flatMap(column => {
+			...this.model.rows.flatMap(row => this.model.columns.filter(column => !this.collapsedColumns.has(column.id)).flatMap(column => {
 				const placement = { rowId: row.id, columnId: column.id };
 				return this.model.getCards(row.id, column.id, this.showArchived).slice(0, this.visibleCounts.get(this.cellKey(placement)) ?? 3);
 			})),
 		];
+	}
+
+	private getColumnCardCount(columnId: string): number {
+		return this.model.rows.reduce((count, row) => count + this.model.getCards(row.id, columnId, this.showArchived).length, 0);
+	}
+
+	private toggleColumn(columnId: string): void {
+		if (this.collapsedColumns.has(columnId)) {
+			this.collapsedColumns.delete(columnId);
+		} else {
+			this.collapsedColumns.add(columnId);
+		}
+		this.observeSessions();
 	}
 
 	private render(): void {
@@ -640,16 +654,47 @@ class ProjectBoardView extends Disposable implements IProjectBoardView {
 
 		const grid = document.createElement('section');
 		grid.className = 'project-board-grid';
-		grid.style.gridTemplateColumns = `minmax(90px, auto) repeat(${this.model.columns.length}, minmax(180px, 1fr))`;
+		grid.style.gridTemplateColumns = [
+			'minmax(90px, auto)',
+			...this.model.columns.map(column => this.collapsedColumns.has(column.id) ? 'var(--vscode-spacing-size400, 40px)' : 'minmax(180px, 1fr)'),
+		].join(' ');
 		grid.setAttribute('aria-label', localize('projectBoard.grid', "Project board"));
 
 		const corner = document.createElement('div');
 		corner.className = 'project-board-axis-corner';
 		grid.appendChild(corner);
 		for (const column of this.model.columns) {
+			const collapsed = this.collapsedColumns.has(column.id);
+			const cardCount = this.getColumnCardCount(column.id);
 			const heading = document.createElement('h2');
 			heading.className = 'project-board-column-heading';
+			heading.classList.toggle('collapsed', collapsed);
+			heading.dataset.columnId = column.id;
 			this.renderAxis(heading, column, 'column', store);
+			const toggle = this.createControl(heading, '', `collapse-column:${column.id}`, store);
+			toggle.element.classList.add('project-board-column-collapse');
+			toggle.icon = collapsed ? Codicon.chevronRight : Codicon.chevronLeft;
+			toggle.element.setAttribute('aria-expanded', String(!collapsed));
+			const toggleLabel = collapsed
+				? cardCount === 1
+					? localize('projectBoard.expandColumnSingle', "Expand {0} column, 1 session", column.label)
+					: localize('projectBoard.expandColumn', "Expand {0} column, {1} sessions", column.label, cardCount)
+				: localize('projectBoard.collapseColumn', "Collapse {0} column", column.label);
+			toggle.element.setAttribute('aria-label', toggleLabel);
+			store.add(this.hoverService.setupDelayedHover(toggle.element, { content: toggleLabel }));
+			store.add(toggle.onDidClick(() => this.toggleColumn(column.id)));
+			if (collapsed) {
+				const count = document.createElement('span');
+				count.className = 'project-board-column-count';
+				count.setAttribute('aria-hidden', 'true');
+				count.textContent = String(cardCount);
+				heading.appendChild(count);
+			}
+			store.add(addDisposableListener(heading, EventType.CLICK, event => {
+				if (!event.composedPath().some(target => isHTMLElement(target) && target.classList.contains('monaco-button'))) {
+					this.toggleColumn(column.id);
+				}
+			}));
 			grid.appendChild(heading);
 		}
 
@@ -659,6 +704,14 @@ class ProjectBoardView extends Disposable implements IProjectBoardView {
 			this.renderAxis(rowHeading, row, 'row', store);
 			grid.appendChild(rowHeading);
 			for (const column of this.model.columns) {
+				if (this.collapsedColumns.has(column.id)) {
+					const collapsedCell = document.createElement('div');
+					collapsedCell.className = 'project-board-collapsed-cell';
+					collapsedCell.dataset.columnId = column.id;
+					collapsedCell.setAttribute('aria-hidden', 'true');
+					grid.appendChild(collapsedCell);
+					continue;
+				}
 				grid.appendChild(this.createCardGroup(
 					document,
 					localize('projectBoard.cell', "{0}, {1}", row.label, column.label),
@@ -780,6 +833,7 @@ class ProjectBoardView extends Disposable implements IProjectBoardView {
 
 	private renderAxis(container: HTMLElement, axis: IProjectBoardAxis, kind: 'row' | 'column', store: DisposableStore): void {
 		const button = this.createControl(container, axis.label, `axis:${kind}:${axis.id}`, store);
+		button.element.classList.add('project-board-axis-control');
 		button.element.setAttribute('aria-label', localize('projectBoard.editAxis', "Edit {0}: {1}", kind === 'row' ? localize('projectBoard.row', "row") : localize('projectBoard.column', "column"), axis.label));
 		store.add(button.onDidClick(() => {
 			this.menuOpen = true;

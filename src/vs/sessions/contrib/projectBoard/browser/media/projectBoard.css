@@ -101,7 +101,53 @@
 }
 
 .project-board-column-heading {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	gap: var(--vscode-spacing-size40, 4px);
 	text-align: center;
+	cursor: pointer;
+}
+
+.project-board-column-heading > .project-board-axis-control {
+	flex: 1;
+	min-width: 0;
+}
+
+.project-board-column-heading > .project-board-column-collapse {
+	flex: 0 0 auto;
+	width: 22px;
+	height: 22px;
+	padding: 0;
+	opacity: 0;
+}
+
+.project-board-column-heading:hover > .project-board-column-collapse,
+.project-board-column-heading:focus-within > .project-board-column-collapse,
+.project-board-column-heading.collapsed > .project-board-column-collapse {
+	opacity: 1;
+}
+
+.project-board-column-heading.collapsed {
+	flex-direction: column;
+	padding: var(--vscode-spacing-size40, 4px);
+}
+
+.project-board-column-heading.collapsed > .project-board-axis-control {
+	display: none;
+}
+
+.project-board-column-count {
+	color: var(--vscode-descriptionForeground);
+	font-size: var(--vscode-fontSize-label1, 12px);
+	font-weight: var(--vscode-fontWeight-regular, 400);
+	font-variant-numeric: tabular-nums;
+}
+
+.project-board-collapsed-cell {
+	min-height: 110px;
+	border: var(--vscode-strokeThickness, 1px) solid var(--vscode-panel-border);
+	background: var(--vscode-sideBar-background);
 }
 
 .project-board-card-group {

@@ -279,6 +279,65 @@ suite('ProjectBoardService', () => {
 		assert.ok(state.focusCount > firstFocusCount);
 	});
 
+	test('columns collapse from their heading and show their session count', async () => {
+		const { document } = createBoardDocument();
+		const chats = [new TestChat('First collapsed chat'), new TestChat('Second collapsed chat')];
+		const h = createBoard(document, chats);
+		await h.service.open();
+		for (const chat of chats) {
+			await h.moveViaPicker('General, P0', chat.resource);
+		}
+
+		const heading = () => h.container.querySelector<HTMLElement>('.project-board-column-heading')!;
+		const toggle = () => heading().querySelector<HTMLElement>('.project-board-column-collapse')!;
+		const columnId = heading().dataset.columnId!;
+		const cellCount = h.container.querySelectorAll('[aria-label$=", P0"]').length;
+		assert.deepStrictEqual({
+			expanded: toggle().getAttribute('aria-expanded'),
+			label: toggle().getAttribute('aria-label'),
+			count: heading().querySelector('.project-board-column-count')?.textContent ?? null,
+			cards: h.container.querySelectorAll('.project-board-card').length,
+		}, {
+			expanded: 'true',
+			label: 'Collapse P0 column',
+			count: null,
+			cards: 2,
+		});
+
+		toggle().focus();
+		toggle().click();
+		assert.deepStrictEqual({
+			collapsed: heading().classList.contains('collapsed'),
+			expanded: toggle().getAttribute('aria-expanded'),
+			label: toggle().getAttribute('aria-label'),
+			count: heading().querySelector('.project-board-column-count')?.textContent,
+			collapsedCells: h.container.querySelectorAll(`.project-board-collapsed-cell[data-column-id="${columnId}"]`).length,
+			cards: h.container.querySelectorAll('.project-board-card').length,
+			focusedControl: document.activeElement?.getAttribute('data-board-control'),
+		}, {
+			collapsed: true,
+			expanded: 'false',
+			label: 'Expand P0 column, 2 sessions',
+			count: '2',
+			collapsedCells: cellCount,
+			cards: 0,
+			focusedControl: `collapse-column:${columnId}`,
+		});
+
+		heading().click();
+		assert.deepStrictEqual({
+			collapsed: heading().classList.contains('collapsed'),
+			expanded: toggle().getAttribute('aria-expanded'),
+			count: heading().querySelector('.project-board-column-count') ?? null,
+			cards: h.container.querySelectorAll('.project-board-card').length,
+		}, {
+			collapsed: false,
+			expanded: 'true',
+			count: null,
+			cards: 2,
+		});
+	});
+
 	test('embedded board leaves header actions to the custom view chrome', () => {
 		const h = createBoard(mainWindow.document, [new TestChat('Embedded')]);
 		const embeddedContainer = mainWindow.document.createElement('div');
