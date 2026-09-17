@@ -20,6 +20,7 @@ import { IAccessibilityService } from '../../../../../platform/accessibility/com
 import { TestAccessibilityService } from '../../../../../platform/accessibility/test/common/testAccessibilityService.js';
 import { MenuWorkbenchToolBar } from '../../../../../platform/actions/browser/toolbar.js';
 import { IMenu, IMenuChangeEvent, IMenuService, MenuId, MenuItemAction } from '../../../../../platform/actions/common/actions.js';
+import { CommandsRegistry } from '../../../../../platform/commands/common/commands.js';
 import { TestConfigurationService } from '../../../../../platform/configuration/test/common/testConfigurationService.js';
 import { ContextKeyService } from '../../../../../platform/contextkey/browser/contextKeyService.js';
 import { IContextKeyService } from '../../../../../platform/contextkey/common/contextkey.js';
@@ -28,6 +29,7 @@ import { IHoverService } from '../../../../../platform/hover/browser/hover.js';
 import { NullHoverService } from '../../../../../platform/hover/test/browser/nullHoverService.js';
 import { IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
 import { TestInstantiationService } from '../../../../../platform/instantiation/test/common/instantiationServiceMock.js';
+import { IListService, ListService } from '../../../../../platform/list/browser/listService.js';
 import { ILabelService } from '../../../../../platform/label/common/label.js';
 import { IOpenerService, OpenExternalOptions, OpenInternalOptions } from '../../../../../platform/opener/common/opener.js';
 import { IUriIdentityService } from '../../../../../platform/uriIdentity/common/uriIdentity.js';
@@ -62,8 +64,10 @@ import { MockChatService } from '../../../../../workbench/contrib/chat/test/comm
 import { getSessionDiffStats, getSessionSummaryHoverData } from '../../browser/sessionHoverContent.js';
 import { createListHarness, createTestSession, IListHarnessOptions, ISortChangeRecord } from './sessionsListTestUtils.js';
 import '../../browser/views/sessionsViewActions.js';
+import '../../../../../workbench/browser/actions/listCommands.js';
 import { computePullRequestIcon, GitHubPullRequestState } from '../../../github/common/types.js';
 import { AUTOMATIONS_CUSTOM_VIEW_ID } from '../../browser/automationsConstants.js';
+import { GAME_CUSTOM_VIEW_ID } from '../../../game/common/game.js';
 import { AUTOMATIONS_NEW_BADGE_STYLE_SETTING, type AutomationsNewBadgeStyle } from '../../browser/automationsNewBadge.js';
 import { BlockedSessionReason, BlockedSessions } from '../../../blockedSessions/browser/blockedSessions.js';
 import { Menus } from '../../../../browser/menus.js';
@@ -122,6 +126,70 @@ suite('Sessions - SessionsList', () => {
 	const disposables = ensureNoDisposablesAreLeakedInTestSuite();
 
 	suite('SessionSectionRenderer', () => {
+
+		for (const grouping of [SessionsGrouping.Date, SessionsGrouping.Workspace]) {
+			test(`opens the Game shortcut and tracks its active state when grouped by ${grouping}`, () => {
+				const activeCustomView = observableValue<ICustomViewDescriptor | undefined>(disposables, undefined);
+				const opened: string[] = [];
+				const harness = createListHarness(disposables, [], instantiationService => {
+					instantiationService.stub(IListService, disposables.add(new ListService()));
+					instantiationService.stub(ICustomViewService, new class extends mock<ICustomViewService>() {
+						override readonly activeCustomView = activeCustomView;
+						override showCustomView(id: string): void {
+							opened.push(id);
+							activeCustomView.set(upcastPartial<ICustomViewDescriptor>({ id }), undefined);
+						}
+					});
+				});
+				const container = harness.createContainer();
+				const list = harness.store.add(harness.instantiationService.createInstance(SessionsList, container, {
+					grouping: () => grouping,
+					sorting: () => SessionsSorting.Created,
+					onSessionOpen: () => { },
+				}));
+				list.layout(300, 400);
+				const shortcut = [...container.querySelectorAll<HTMLElement>('.session-section')]
+					.find(element => element.querySelector('.session-section-label')?.textContent === 'Game');
+				assert.ok(shortcut);
+				const row = shortcut.closest('.monaco-list-row');
+				const initiallyActive = shortcut.classList.contains('active');
+
+				shortcut.dispatchEvent(new MouseEvent('click', { bubbles: true, button: 0 }));
+				const activeAfterOpen = shortcut.classList.contains('active');
+				activeCustomView.set(upcastPartial<ICustomViewDescriptor>({ id: AUTOMATIONS_CUSTOM_VIEW_ID }), undefined);
+				const activeAfterSwitch = shortcut.classList.contains('active');
+				const tree = container.querySelector<HTMLElement>('.monaco-list');
+				assert.ok(tree);
+				tree.focus();
+				const selectCommand = CommandsRegistry.getCommand('list.select');
+				assert.ok(selectCommand);
+				harness.instantiationService.invokeFunction(selectCommand.handler);
+
+				assert.deepStrictEqual({
+					label: row?.getAttribute('aria-label'),
+					expanded: row?.getAttribute('aria-expanded'),
+					icon: !!shortcut.querySelector('.codicon-game'),
+					isShortcut: shortcut.classList.contains('session-section-shortcut'),
+					count: shortcut.querySelector('.session-section-count')?.textContent,
+					opened,
+					initiallyActive,
+					activeAfterOpen,
+					activeAfterSwitch,
+					activeAfterKeyboardOpen: shortcut.classList.contains('active'),
+				}, {
+					label: 'Game',
+					expanded: null,
+					icon: true,
+					isShortcut: true,
+					count: '',
+					opened: [GAME_CUSTOM_VIEW_ID, GAME_CUSTOM_VIEW_ID],
+					initiallyActive: false,
+					activeAfterOpen: true,
+					activeAfterSwitch: false,
+					activeAfterKeyboardOpen: true,
+				});
+			});
+		}
 
 		test('selects the rendered section before the toolbar handles its context menu', () => {
 			const instantiationService = disposables.add(new TestInstantiationService());
@@ -1960,8 +2028,8 @@ suite('Sessions - SessionsList', () => {
 				showEmptyGroups: list.isShowEmptyGroups(),
 				stored: harness.instantiationService.get(IStorageService).getBoolean('sessionsListControl.showEmptyGroups', StorageScope.PROFILE),
 			}, {
-				initiallyVisible: ['Chats', 'Empty Group', 'Populated Group'],
-				hidden: ['Populated Group'],
+				initiallyVisible: ['Game', 'Chats', 'Empty Group', 'Populated Group'],
+				hidden: ['Game', 'Populated Group'],
 				showEmptyGroups: false,
 				stored: false,
 			});

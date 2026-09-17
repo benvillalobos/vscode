@@ -100,6 +100,7 @@ import { ChatAutomationsEnabledContext } from '../../../../../workbench/contrib/
 import { IAutomationService } from '../../../../../workbench/contrib/chat/common/automations/automationService.js';
 import { ICustomViewService } from '../../../../services/customView/browser/customViewService.js';
 import { AUTOMATIONS_CUSTOM_VIEW_ID } from '../automationsConstants.js';
+import { GAME_CUSTOM_VIEW_ID } from '../../../game/common/game.js';
 import { AutomationsNewBadgeState, type AutomationsNewBadgeStyle } from '../automationsNewBadge.js';
 import { Menus } from '../../../../browser/menus.js';
 import { getSessionConversationStatusAriaLabel } from '../../../../browser/sessionConversationGroups.js';
@@ -109,6 +110,7 @@ import { BlockedSessionReason, BlockedSessions } from '../../../blockedSessions/
 const $ = DOM.$;
 
 const AUTOMATIONS_SECTION_ID = 'automations';
+const GAME_SECTION_ID = 'game';
 const SESSION_SECTION_FOCUS_FROM_POINTER_CLASS = 'session-section-focus-from-pointer';
 const SESSION_HEADER_DROP_TARGET_CLASS = 'session-header-drop-target';
 /** Shared empty set used as the default "no session hierarchy is hovered/selected" value. */
@@ -257,6 +259,8 @@ function getSessionSectionIcon(sectionId: string): ThemeIcon | undefined {
 			return Codicon.pinned;
 		case AUTOMATIONS_SECTION_ID:
 			return Codicon.calendar;
+		case GAME_SECTION_ID:
+			return Codicon.game;
 		case 'archived':
 			return Codicon.archive;
 		case 'recent':
@@ -267,6 +271,17 @@ function getSessionSectionIcon(sectionId: string): ThemeIcon | undefined {
 			return sectionId.startsWith('workspace:')
 				? Codicon.folder
 				: undefined;
+	}
+}
+
+function getSessionSectionCustomViewId(sectionId: string): string | undefined {
+	switch (sectionId) {
+		case AUTOMATIONS_SECTION_ID:
+			return AUTOMATIONS_CUSTOM_VIEW_ID;
+		case GAME_SECTION_ID:
+			return GAME_CUSTOM_VIEW_ID;
+		default:
+			return undefined;
 	}
 }
 
@@ -1867,14 +1882,19 @@ export class SessionSectionRenderer implements ITreeRenderer<SessionListItem, Fu
 		this.templatesById.set(element.id, template);
 		template.container.classList.remove(SESSION_HEADER_DROP_TARGET_CLASS);
 		template.container.classList.remove('session-section-shortcut');
+		template.container.classList.remove('active');
 		template.newBadge.style.display = 'none';
 		template.newBadge.classList.remove(
 			'session-section-new-badge-accent',
 			'session-section-new-badge-soft',
 			'session-section-new-badge-outline',
 		);
-		if (element.id === AUTOMATIONS_SECTION_ID) {
+		const customViewId = getSessionSectionCustomViewId(element.id);
+		if (customViewId) {
 			template.container.classList.add('session-section-shortcut');
+			template.elementDisposables.add(autorun(reader => {
+				template.container.classList.toggle('active', this.customViewService.activeCustomView.read(reader)?.id === customViewId);
+			}));
 		}
 
 		this.updateChevron(template, node.collapsible, node.collapsed);
@@ -1883,8 +1903,6 @@ export class SessionSectionRenderer implements ITreeRenderer<SessionListItem, Fu
 			DOM.clearNode(template.icon);
 			template.icon.style.display = '';
 			template.elementDisposables.add(autorun(reader => {
-				const activeCustomView = this.customViewService.activeCustomView.read(reader);
-				template.container.classList.toggle('active', activeCustomView?.id === AUTOMATIONS_CUSTOM_VIEW_ID);
 				const badgeStyle = this.automationNewBadgePresentation.read(reader);
 				template.newBadge.style.display = badgeStyle && badgeStyle !== 'unread' ? 'inline-flex' : 'none';
 				template.newBadge.classList.toggle('session-section-new-badge-accent', badgeStyle === 'accent');
@@ -1917,7 +1935,7 @@ export class SessionSectionRenderer implements ITreeRenderer<SessionListItem, Fu
 		}
 
 		template.label.textContent = element.label;
-		if (this.hideSectionCount || element.id === AUTOMATIONS_SECTION_ID) {
+		if (this.hideSectionCount || customViewId) {
 			template.count.textContent = '';
 			template.count.style.display = 'none';
 		} else {
@@ -2261,6 +2279,9 @@ class SessionsAccessibilityProvider {
 			return this.getSectionAriaLabel(element.group.name, element.sessions);
 		}
 		if (isSessionSection(element)) {
+			if (element.id === GAME_SECTION_ID) {
+				return element.label;
+			}
 			if (element.id === AUTOMATIONS_SECTION_ID) {
 				return derived(this, reader => {
 					let label = element.label;
@@ -3389,6 +3410,11 @@ export class SessionsList extends Disposable implements ISessionsList {
 				this.commandService.executeCommand('sessionsView.manageAutomations');
 				return;
 			}
+			if (isSessionSection(element) && element.id === GAME_SECTION_ID) {
+				this.tree.setSelection([]);
+				this.customViewService.showCustomView(GAME_CUSTOM_VIEW_ID);
+				return;
+			}
 			if (!isSessionSection(element) && !isSessionGroupItem(element)) {
 				// Gate the open on workspace trust before any side effect (mark-read,
 				// activation, folder mount). A refused open leaves the current
@@ -3777,7 +3803,7 @@ export class SessionsList extends Disposable implements ISessionsList {
 		};
 
 		const renderSection = (section: ISessionSection): IObjectTreeElement<SessionListItem> => {
-			if (section.id === AUTOMATIONS_SECTION_ID) {
+			if (getSessionSectionCustomViewId(section.id)) {
 				return {
 					element: section as SessionListItem,
 					children: [],
@@ -3848,6 +3874,7 @@ export class SessionsList extends Disposable implements ISessionsList {
 			void this.automationsNewBadgeState.initialize().catch(onUnexpectedError);
 			children.push(renderSection({ id: AUTOMATIONS_SECTION_ID, label: localize('automations', "Automations"), sessions: [] }));
 		}
+		children.push(renderSection({ id: GAME_SECTION_ID, label: localize('game', "Game"), sessions: [] }));
 
 		const pinnedSection = sections.find(s => s.id === 'pinned');
 		if (pinnedSection) {
