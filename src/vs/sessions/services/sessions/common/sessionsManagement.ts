@@ -525,6 +525,9 @@ export interface ISessionsManagementService {
 	 */
 	sendRequest(session: ISession, chat: IChat, options: ISendRequestOptions): Promise<void>;
 
+	/** Sends without navigation or discarding the composer draft; resolves on acceptance and propagates failures. */
+	sendBackgroundRequest(session: ISession, chat: IChat, options: ISendRequestOptions): Promise<void>;
+
 	// -- Session Actions --
 
 	/** Cancel the current request in a session's main chat. */

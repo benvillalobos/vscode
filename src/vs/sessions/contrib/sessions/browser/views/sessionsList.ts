@@ -3104,7 +3104,7 @@ export class SessionsList extends Disposable implements ISessionsList {
 			this.update();
 		}));
 		this._register(this.configurationService.onDidChangeConfiguration(e => {
-			if (e.affectsConfiguration(SESSIONS_LIST_SHOW_EMPTY_DEFAULT_GROUPS_SETTING) || e.affectsConfiguration(ChatSessionArchiveActionWordingSettingId)) {
+			if (e.affectsConfiguration(SESSIONS_LIST_SHOW_EMPTY_DEFAULT_GROUPS_SETTING) || e.affectsConfiguration(ChatSessionArchiveActionWordingSettingId) || e.affectsConfiguration('chat.disableAIFeatures')) {
 				this.update();
 			}
 		}));
@@ -3874,7 +3874,9 @@ export class SessionsList extends Disposable implements ISessionsList {
 			void this.automationsNewBadgeState.initialize().catch(onUnexpectedError);
 			children.push(renderSection({ id: AUTOMATIONS_SECTION_ID, label: localize('automations', "Automations"), sessions: [] }));
 		}
-		children.push(renderSection({ id: GAME_SECTION_ID, label: localize('game', "Game"), sessions: [] }));
+		if (!this.configurationService.getValue<boolean>('chat.disableAIFeatures')) {
+			children.push(renderSection({ id: GAME_SECTION_ID, label: localize('game', "Game"), sessions: [] }));
+		}
 
 		const pinnedSection = sections.find(s => s.id === 'pinned');
 		if (pinnedSection) {

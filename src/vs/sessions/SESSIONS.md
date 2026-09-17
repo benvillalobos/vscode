@@ -55,6 +55,8 @@ The model-orchestration service:
 
 It does not own active or visible session state, focus, or layout.
 
+Awaitable background sends preserve the pending composer draft, do not initiate view navigation, and propagate provider acceptance failures to their caller. Fire-and-forget composer sends retain their separate existing contract.
+
 ### `ISessionsService`
 
 The view service:

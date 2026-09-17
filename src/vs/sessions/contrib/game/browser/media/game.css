@@ -1,0 +1,461 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+.game-world {
+	--game-grass: color-mix(in srgb, var(--vscode-charts-green) 24%, var(--vscode-editor-background));
+	--game-gold: var(--vscode-charts-yellow);
+	--game-blue: var(--vscode-charts-blue);
+	display: flex;
+	flex-direction: column;
+	min-height: 480px;
+	overflow: hidden;
+	color: var(--vscode-editor-foreground);
+	background: var(--vscode-editor-background);
+	border: var(--vscode-strokeThickness) solid var(--vscode-widget-border, var(--vscode-panel-border));
+	border-radius: var(--vscode-cornerRadius-large);
+}
+
+.game-world .game-topbar {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: var(--vscode-spacing-size160);
+	padding: var(--vscode-spacing-size120) var(--vscode-spacing-size160);
+	background: var(--vscode-sideBar-background);
+	border-bottom: var(--vscode-strokeThickness) solid var(--vscode-panel-border);
+}
+
+.game-world .game-brand {
+	display: flex;
+	align-items: center;
+	gap: var(--vscode-spacing-size80);
+	letter-spacing: 0.1em;
+	font-size: var(--vscode-fontSize-body2);
+	color: var(--game-gold);
+}
+
+.game-world strong {
+	font-weight: var(--vscode-fontWeight-semiBold);
+}
+
+.game-world .game-prototype {
+	padding: var(--vscode-spacing-size20) var(--vscode-spacing-size60);
+	border: var(--vscode-strokeThickness) solid var(--vscode-panel-border);
+	border-radius: var(--vscode-cornerRadius-small);
+	color: var(--vscode-descriptionForeground);
+	font-size: var(--vscode-fontSize-label3);
+}
+
+.game-world .game-census {
+	font-size: var(--vscode-fontSize-label1);
+	color: var(--vscode-descriptionForeground);
+}
+
+.game-world .game-arena {
+	position: relative;
+	flex: 1;
+	min-height: 260px;
+}
+
+.game-world .game-map {
+	position: absolute;
+	inset: 0;
+	overflow: hidden;
+	isolation: isolate;
+	background-color: var(--game-grass);
+	background-image:
+		radial-gradient(ellipse at 78% 38%, color-mix(in srgb, var(--game-blue) 23%, transparent) 0%, transparent 34%),
+		radial-gradient(ellipse at 25% 70%, color-mix(in srgb, var(--game-gold) 12%, transparent) 0%, transparent 30%),
+		linear-gradient(30deg, transparent 49.6%, color-mix(in srgb, var(--vscode-editor-foreground) 5%, transparent) 50%, transparent 50.4%),
+		linear-gradient(150deg, transparent 49.6%, color-mix(in srgb, var(--vscode-editor-foreground) 5%, transparent) 50%, transparent 50.4%);
+	background-size: auto, auto, 64px 36px, 64px 36px;
+}
+
+.game-world .game-map:focus-visible {
+	outline: 1px solid var(--vscode-focusBorder);
+	outline-offset: -2px;
+}
+
+.game-world .game-scenery,
+.game-world .game-map-lines {
+	position: absolute;
+	inset: 0;
+	pointer-events: none;
+	z-index: -1;
+}
+
+.game-world .game-tree {
+	position: absolute;
+	width: 20px;
+	height: 28px;
+	background: color-mix(in srgb, var(--vscode-charts-green) 35%, var(--vscode-editor-background));
+	clip-path: polygon(50% 0, 95% 60%, 75% 60%, 100% 85%, 56% 85%, 56% 100%, 44% 100%, 44% 85%, 0 85%, 25% 60%, 5% 60%);
+	filter: drop-shadow(2px 4px 0 color-mix(in srgb, var(--vscode-editor-background) 40%, transparent));
+}
+
+.game-world .game-home {
+	position: absolute;
+	left: 6%;
+	bottom: 7%;
+	font-size: var(--vscode-fontSize-label3);
+	letter-spacing: 0.24em;
+	color: var(--vscode-descriptionForeground);
+	border-top: 1px dashed var(--vscode-descriptionForeground);
+	padding-top: var(--vscode-spacing-size80);
+	width: 82%;
+	pointer-events: none;
+}
+
+.game-world .game-map-hint {
+	position: absolute;
+	top: 10px;
+	left: 50%;
+	transform: translateX(-50%);
+	padding: var(--vscode-spacing-size40) var(--vscode-spacing-size120);
+	background: color-mix(in srgb, var(--vscode-editor-background) 88%, transparent);
+	border-radius: var(--vscode-cornerRadius-circle);
+	color: var(--vscode-descriptionForeground);
+	font-size: var(--vscode-fontSize-label2);
+	white-space: nowrap;
+	pointer-events: none;
+}
+
+.game-world .game-map-node.monaco-button {
+	position: absolute;
+	width: 128px;
+	min-height: 76px;
+	transform: translate(-50%, -50%);
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: var(--vscode-spacing-size20);
+	border: none;
+	padding: var(--vscode-spacing-size40);
+	background: transparent !important;
+	color: var(--vscode-editor-foreground) !important;
+	touch-action: none;
+	user-select: none;
+	cursor: grab;
+	overflow: visible;
+}
+
+.game-world .game-map-node:active,
+.game-world .game-dragging.monaco-button {
+	cursor: grabbing;
+	z-index: 10;
+}
+
+.game-world .game-node-label,
+.game-world .game-node-detail {
+	max-width: 100%;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	border-radius: var(--vscode-cornerRadius-small);
+	padding: var(--vscode-spacing-size20) var(--vscode-spacing-size40);
+	background: color-mix(in srgb, var(--vscode-editor-background) 90%, transparent);
+}
+
+.game-world .game-node-label {
+	font-size: var(--vscode-fontSize-label1);
+	font-weight: var(--vscode-fontWeight-semiBold);
+}
+
+.game-world .game-node-detail {
+	font-size: var(--vscode-fontSize-label3);
+	color: var(--vscode-descriptionForeground);
+}
+
+.game-world .game-unit-art {
+	position: relative;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 44px;
+	height: 40px;
+	border-radius: 48% 52% 40% 44%;
+	background: linear-gradient(140deg, color-mix(in srgb, var(--game-blue) 55%, white), var(--game-blue) 65%, color-mix(in srgb, var(--game-blue) 70%, black));
+	box-shadow: inset -4px -5px 0 #0003, 0 7px 0 -3px #0005;
+	border: 1px solid color-mix(in srgb, var(--game-blue) 40%, white);
+}
+
+.game-world .game-blob-logo {
+	color: #fff;
+	transform: rotate(-12deg);
+	position: absolute;
+	top: -6px;
+	right: -3px;
+}
+
+.game-world .game-blob-eyes {
+	width: 5px;
+	height: 7px;
+	border-radius: 50%;
+	background: #102133;
+	box-shadow: 11px 0 #102133;
+	transform: translateX(-5px);
+}
+
+.game-world .game-child .game-unit-art {
+	width: 30px;
+	height: 28px;
+	background: var(--vscode-charts-purple);
+	border-color: var(--vscode-charts-purple);
+}
+
+.game-world .game-task-art {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 48px;
+	height: 36px;
+	border-radius: var(--vscode-cornerRadius-medium);
+	background: color-mix(in srgb, var(--game-gold) 22%, var(--vscode-editor-background));
+	border: 1px solid var(--game-gold);
+	box-shadow: 0 6px 0 color-mix(in srgb, var(--game-gold) 12%, var(--vscode-editor-background));
+	color: var(--game-gold);
+	transform: rotate(-6deg);
+}
+
+.game-world .game-selected .game-unit-art,
+.game-world .game-map-node:focus-visible .game-unit-art,
+.game-world .game-selected .game-task-art,
+.game-world .game-drop-target .game-task-art {
+	outline: 2px solid var(--vscode-focusBorder);
+	outline-offset: 5px;
+}
+
+.game-world .game-drop-target .game-task-art {
+	outline-color: var(--game-gold);
+}
+
+.game-world .game-drop-target::before {
+	content: '';
+	position: absolute;
+	left: 50%;
+	top: 50%;
+	transform: translate(-50%, -50%);
+	width: var(--game-assignment-width);
+	height: var(--game-assignment-height);
+	border: 1px dashed var(--game-gold);
+	border-radius: 50%;
+	background: color-mix(in srgb, var(--game-gold) 8%, transparent);
+	pointer-events: none;
+}
+
+.game-world .game-unit[data-status="ready"] .game-unit-art {
+	opacity: 0.7;
+	border-style: dashed;
+}
+
+.game-world .game-unit[data-status="1"] .game-unit-art,
+.game-world .game-unit[data-status="sending"] .game-unit-art {
+	animation: game-blob-work 1.8s ease-in-out infinite;
+}
+
+.game-world .game-unit[data-status="2"] .game-unit-art {
+	outline: 2px dashed var(--game-gold);
+	outline-offset: 5px;
+}
+
+.game-world .game-unit[data-status="2"] .game-node-detail {
+	color: var(--game-gold);
+}
+
+.game-world .game-unit[data-status="4"] .game-node-detail {
+	color: var(--vscode-errorForeground);
+}
+
+.game-world .game-unit[data-status="unavailable"] .game-unit-art {
+	filter: grayscale(1);
+	opacity: 0.6;
+}
+
+.game-world .game-tether {
+	position: absolute;
+	height: 0;
+	border-top: 1px solid color-mix(in srgb, var(--game-gold) 65%, transparent);
+	transform-origin: left center;
+}
+
+.game-world .game-tether-child {
+	border-top: 2px dotted var(--vscode-charts-purple);
+}
+
+.game-world .game-dock {
+	display: grid;
+	grid-template-columns: 160px minmax(0, 1fr) 200px;
+	gap: var(--vscode-spacing-size160);
+	padding: var(--vscode-spacing-size160);
+	border-top: 2px solid color-mix(in srgb, var(--game-gold) 40%, var(--vscode-panel-border));
+	background: var(--vscode-sideBar-background);
+	box-shadow: 0 -8px 24px #0002;
+	z-index: 20;
+}
+
+.game-world .game-panel-heading {
+	font-size: var(--vscode-fontSize-label3);
+	font-weight: var(--vscode-fontWeight-semiBold);
+	letter-spacing: 0.16em;
+	color: var(--game-gold);
+	margin-bottom: var(--vscode-spacing-size100);
+}
+
+.game-world .game-minimap {
+	position: relative;
+	height: 100px;
+	border: 1px solid var(--vscode-panel-border);
+	background: var(--game-grass);
+	border-radius: var(--vscode-cornerRadius-small);
+}
+
+.game-world .game-radar-unit,
+.game-world .game-radar-task {
+	position: absolute;
+	width: 5px;
+	height: 5px;
+	border-radius: 50%;
+	background: var(--game-blue);
+	transform: translate(-50%, -50%);
+}
+
+.game-world .game-radar-task {
+	background: var(--game-gold);
+	border-radius: 0;
+	width: 7px;
+	height: 7px;
+}
+
+.game-world .game-legend,
+.game-world .game-cost-hint {
+	white-space: pre-line;
+	font-size: var(--vscode-fontSize-label3);
+	color: var(--vscode-descriptionForeground);
+	line-height: 1.6;
+	margin-top: var(--vscode-spacing-size80);
+}
+
+.game-world .game-selection-header {
+	display: flex;
+	align-items: baseline;
+	gap: var(--vscode-spacing-size80);
+}
+
+.game-world .game-selection-title {
+	font-weight: var(--vscode-fontWeight-semiBold);
+	font-size: var(--vscode-fontSize-heading3);
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.game-world .game-selection-status {
+	color: var(--game-gold);
+	font-size: var(--vscode-fontSize-label3);
+	white-space: nowrap;
+}
+
+.game-world .game-selection-task,
+.game-world .game-selection-detail {
+	font-size: var(--vscode-fontSize-label2);
+	color: var(--vscode-descriptionForeground);
+	margin-top: var(--vscode-spacing-size40);
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.game-world .game-brief {
+	font-size: var(--vscode-fontSize-label2);
+	margin-top: var(--vscode-spacing-size60);
+}
+
+.game-world .game-brief summary {
+	cursor: pointer;
+	color: var(--vscode-descriptionForeground);
+}
+
+.game-world .game-order-preview {
+	white-space: pre-wrap;
+	max-height: 70px;
+	overflow: auto;
+	margin-top: var(--vscode-spacing-size40);
+}
+
+.game-world .game-inspector .monaco-inputbox {
+	width: 100%;
+	margin-top: var(--vscode-spacing-size100);
+}
+
+.game-world .game-unit-actions,
+.game-world .game-build-actions {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--vscode-spacing-size60);
+	margin-top: var(--vscode-spacing-size80);
+}
+
+.game-world .game-unit-actions .monaco-button {
+	width: auto;
+	font-size: var(--vscode-fontSize-label2);
+}
+
+.game-world .game-build-actions .monaco-button {
+	flex: 1;
+	font-size: var(--vscode-fontSize-label2);
+	padding: var(--vscode-spacing-size60) var(--vscode-spacing-size40);
+}
+
+.game-world .game-barracks > .monaco-button {
+	margin-top: var(--vscode-spacing-size80);
+}
+
+.game-world .game-spawn {
+	min-height: 36px;
+}
+
+.game-world .game-message {
+	font-size: var(--vscode-fontSize-label2);
+	color: var(--vscode-descriptionForeground);
+	margin-top: var(--vscode-spacing-size60);
+}
+
+.game-world .game-message-error {
+	color: var(--vscode-errorForeground);
+}
+
+.game-world.game-compact .game-dock {
+	grid-template-columns: minmax(0, 1fr) 160px;
+	padding: var(--vscode-spacing-size120);
+}
+
+.game-world.game-compact .game-radar-panel,
+.game-world.game-compact .game-prototype {
+	display: none;
+}
+
+.game-world.game-compact .game-census {
+	font-size: var(--vscode-fontSize-label3);
+}
+
+@keyframes game-blob-work {
+	0%, 100% { transform: translateY(0) rotate(-3deg); }
+	50% { transform: translateY(-5px) rotate(3deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.game-world .game-unit .game-unit-art {
+		animation: none;
+	}
+}
+
+.monaco-reduce-motion .game-world .game-unit .game-unit-art {
+	animation: none;
+}
+
+.hc-black .game-world .game-map-node,
+.hc-light .game-world .game-map-node {
+	border: 1px solid var(--vscode-contrastBorder);
+}

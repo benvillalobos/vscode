@@ -2109,6 +2109,39 @@ suite('SessionsManagementService', () => {
 		completeSendRequest?.();
 	});
 
+	test('sendBackgroundRequest awaits acceptance, preserves the composer draft, and propagates failures', async () => {
+		const chat = { ...stubChat, resource: URI.parse('test:///chat') };
+		const session = stubSession({ sessionId: 's1', providerId: 'test', mainChat: constObservable(chat) });
+		const gate = new DeferredPromise<void>();
+		const provider = new class extends TestSessionsProvider {
+			override resolveWorkspace(folder: URI): ISessionWorkspace {
+				return { uri: folder, label: 'Project', icon: Codicon.folder, folders: [], requiresWorkspaceTrust: false, isVirtualWorkspace: false };
+			}
+			override async sendRequest(): Promise<ISession> {
+				await gate.p;
+				return session;
+			}
+		}(session);
+		const { service } = createSessionsManagementService(session, disposables, provider);
+		const draft = service.createNewSession(URI.file('/project'));
+		let willSendCount = 0;
+		let accepted = false;
+		disposables.add(service.onWillSendRequest(() => willSendCount++));
+		const pending = service.sendBackgroundRequest(session, chat, { query: 'work' }).then(() => accepted = true);
+		const beforeAcceptance = accepted;
+		await gate.complete();
+		await pending;
+		assert.deepStrictEqual({
+			beforeAcceptance, accepted, willSendCount, draft: service.newSession.get(),
+		}, { beforeAcceptance: false, accepted: true, willSendCount: 0, draft });
+
+		const failingProvider = new class extends TestSessionsProvider {
+			override async sendRequest(): Promise<ISession> { throw new Error('Rejected'); }
+		}(session);
+		const failing = createSessionsManagementService(session, disposables, failingProvider).service;
+		await assert.rejects(failing.sendBackgroundRequest(session, chat, { query: 'work' }), /Rejected/);
+	});
+
 	test('mirrored follow-up requests preserve submitted attachments', () => {
 		const chat: IChat = { ...stubChat, resource: URI.parse('test:///chat') };
 		const session = stubSession({
