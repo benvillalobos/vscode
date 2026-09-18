@@ -38,7 +38,13 @@ import { IFileService } from '../../../../../platform/files/common/files.js';
 import { IStorageService, StorageScope, StorageTarget } from '../../../../../platform/storage/common/storage.js';
 import { IConfigurationService } from '../../../../../platform/configuration/common/configuration.js';
 import { ContextKeyExpr, IContextKey, IContextKeyService, RawContextKey } from '../../../../../platform/contextkey/common/contextkey.js';
-import { IContextMenuService } from '../../../../../platform/contextview/browser/contextView.js';
+import { IActionWidgetService } from '../../../../../platform/actionWidget/browser/actionWidget.js';
+import { ActionListItemKind, IActionListItem } from '../../../../../platform/actionWidget/browser/actionList.js';
+import { withActionWidgetDropdownMotion } from '../../../../../platform/actionWidget/browser/actionWidgetDropdown.js';
+import { getFlatContextMenuActions } from '../../../../../platform/actions/browser/menuEntryActionViewItem.js';
+import { INotificationService } from '../../../../../platform/notification/common/notification.js';
+import { ITelemetryService } from '../../../../../platform/telemetry/common/telemetry.js';
+import { isCancellationError } from '../../../../../base/common/errors.js';
 import { status } from '../../../../../base/browser/ui/aria/aria.js';
 import { Gesture, GestureEvent, EventType as TouchEventType } from '../../../../../base/browser/touch.js';
 import { extractEditorsDropData } from '../../../../../platform/dnd/browser/dnd.js';
@@ -51,11 +57,11 @@ import { AbstractCustomView } from '../../../../services/customView/browser/cust
 import { ICustomViewService } from '../../../../services/customView/browser/customViewService.js';
 import { SyncDescriptor } from '../../../../../platform/instantiation/common/descriptors.js';
 import { Menus } from '../../../../browser/menus.js';
-import { Action2, MenuItemAction, MenuRegistry, registerAction2 } from '../../../../../platform/actions/common/actions.js';
+import { Action2, IMenuService, MenuItemAction, MenuRegistry, registerAction2 } from '../../../../../platform/actions/common/actions.js';
 import { IActionViewItemService } from '../../../../../platform/actions/browser/actionViewItemService.js';
 import { ChatSessionArchiveActionWording, ChatSessionArchiveActionWordingSettingId, getChatSessionArchiveActionPresentation, getChatSessionArchiveActionWording } from '../../../../../platform/chat/common/sessionArchiveActions.js';
 import { BaseActionViewItem, IActionViewItemOptions } from '../../../../../base/browser/ui/actionbar/actionViewItems.js';
-import { IAction } from '../../../../../base/common/actions.js';
+import { IAction, Separator, SubmenuAction, WorkbenchActionExecutedClassification, WorkbenchActionExecutedEvent } from '../../../../../base/common/actions.js';
 import { AutomationsCustomViewFocusContext, AutomationsHasItemsContext, SessionIsArchivedContext, SessionIsReadContext, SessionSupportsRenameContext } from '../../../../common/contextkeys.js';
 import { SessionsFlatList, SessionItemStatusContext } from './sessionsList.js';
 import { AUTOMATIONS_CUSTOM_VIEW_ID } from '../automationsConstants.js';
@@ -296,7 +302,10 @@ class AutomationCardsSection extends Disposable {
 		@IStorageService private readonly storageService: IStorageService,
 		@IConfigurationService private readonly configurationService: IConfigurationService,
 		@IContextKeyService private readonly contextKeyService: IContextKeyService,
-		@IContextMenuService private readonly contextMenuService: IContextMenuService,
+		@IMenuService private readonly menuService: IMenuService,
+		@IActionWidgetService private readonly actionWidgetService: IActionWidgetService,
+		@INotificationService private readonly notificationService: INotificationService,
+		@ITelemetryService private readonly telemetryService: ITelemetryService,
 	) {
 		super();
 		this.seenPluginTemplateIds = this.readSeenPluginTemplateIds();
@@ -584,24 +593,10 @@ class AutomationCardsSection extends Disposable {
 		moreActionsButton.element.classList.add('automations-card-more-actions-button');
 		moreActionsButton.element.setAttribute('aria-haspopup', 'menu');
 		moreActionsButton.element.setAttribute('aria-expanded', 'false');
+		const menuDisposables = disposables.add(new MutableDisposable<DisposableStore>());
 		disposables.add(moreActionsButton.onDidClick(event => {
 			event?.stopPropagation();
-			const currentAutomation = this.latestAutomations.get(automation.id);
-			if (!currentAutomation) {
-				return;
-			}
-			actions.classList.add('menu-open');
-			moreActionsButton.element.setAttribute('aria-expanded', 'true');
-			this.contextMenuService.showContextMenu({
-				menuId: Menus.AutomationCardContext,
-				menuActionOptions: { shouldForwardArgs: true, arg: currentAutomation },
-				getAnchor: () => moreActionsButton.element,
-				contextKeyService: cardContextKeyService,
-				onHide: () => {
-					actions.classList.remove('menu-open');
-					moreActionsButton.element.setAttribute('aria-expanded', 'false');
-				},
-			});
+			this.showCardActions(automation.id, entry, cardContextKeyService, menuDisposables);
 		}));
 
 		for (const eventType of [DOM.EventType.CLICK, TouchEventType.Tap]) {
@@ -640,12 +635,92 @@ class AutomationCardsSection extends Disposable {
 		return entry;
 	}
 
-	private updateCard(card: IAutomationCardEntry, automation: IAutomationDescriptor, previous?: IAutomationDescriptor): void {
-		card.main.disabled = this.automationService.canUpdateAutomation?.(automation.id) === false;
-		card.runButton.enabled = this.automationService.canRunAutomation?.(automation.id) !== false;
+	private showCardActions(automationId: string, card: IAutomationCardEntry, contextKeyService: IContextKeyService, menuDisposables: MutableDisposable<DisposableStore>): void {
+		this.actionWidgetService.hide();
+		const store = menuDisposables.value = new DisposableStore();
+		const menu = store.add(this.menuService.createMenu(Menus.AutomationCardContext, contextKeyService));
+		const menuChanged = observableSignalFromEvent(menu, menu.onDidChange);
+		let visible = false;
+		store.add(toDisposable(() => {
+			if (visible) {
+				this.actionWidgetService.hide();
+			}
+		}));
+		store.add(autorun(reader => {
+			menuChanged.read(reader);
+			const automation = this.automationService.automations.read(reader).find(item => item.id === automationId);
+			this.automationService.runs.read(reader);
+			if (!automation) {
+				menuDisposables.clear();
+				return;
+			}
+			this.updateCardContextKeys(card, automation);
+			const activeRun = this.automationService.getActiveRunFor(automationId);
+			const items = getFlatContextMenuActions(menu.getActions({ shouldForwardArgs: true, arg: automation }))
+				.map((action): IActionListItem<IAction> => {
+					const reason = action.id === 'sessions.automations.delete' && !action.enabled && activeRun
+						? localize('automationDeleteRunning', "This automation can't be deleted while it's running.")
+						: undefined;
+					return {
+						kind: action instanceof Separator ? ActionListItemKind.Separator : ActionListItemKind.Action,
+						item: action,
+						label: action.label,
+						disabled: !action.enabled,
+						hideIcon: true,
+						submenuActions: action instanceof SubmenuAction ? [...action.actions] : undefined,
+						tooltip: reason,
+						ariaDescription: reason,
+					};
+				});
+			if (visible) {
+				this.actionWidgetService.updateItems(items);
+				return;
+			}
+			visible = true;
+			card.actions.classList.add('menu-open');
+			card.moreActionsButton.element.setAttribute('aria-expanded', 'true');
+			this.actionWidgetService.show<IAction>(
+				'automationCardActions', false, items, {
+				onSelect: async action => {
+					if (!action.enabled) {
+						return;
+					}
+					this.actionWidgetService.hide();
+					this.telemetryService.publicLog2<WorkbenchActionExecutedEvent, WorkbenchActionExecutedClassification>('workbenchActionExecuted', { id: action.id, from: 'contextMenu' });
+					try {
+						await action.run();
+					} catch (error) {
+						if (!isCancellationError(error)) {
+							this.notificationService.error(error);
+						}
+					}
+				},
+				onHide: () => {
+					visible = false;
+					card.actions.classList.remove('menu-open');
+					card.moreActionsButton.element.setAttribute('aria-expanded', 'false');
+					menuDisposables.clear();
+					card.moreActionsButton.element.focus();
+				},
+			}, card.moreActionsButton.element, undefined, [], {
+				getWidgetRole: () => 'menu',
+				getWidgetAriaLabel: () => localize('automationActions', "Actions for {0}", automation.name),
+				getRole: item => item.kind === ActionListItemKind.Separator ? 'separator' : 'menuitem',
+			}, withActionWidgetDropdownMotion({ hideDefaultKeybindingTooltip: true, className: 'automations-card-menu' }),
+			);
+		}));
+	}
+
+	private updateCardContextKeys(card: IAutomationCardEntry, automation: IAutomationDescriptor): void {
 		card.canDeleteContext.set(this.automationService.canDeleteAutomation?.(automation.id) !== false);
 		card.canUpdateContext.set(this.automationService.canUpdateAutomation?.(automation.id) !== false);
 		card.enabledContext.set(automation.enabled);
+	}
+
+	private updateCard(card: IAutomationCardEntry, automation: IAutomationDescriptor, previous?: IAutomationDescriptor): void {
+		card.main.disabled = this.automationService.canUpdateAutomation?.(automation.id) === false;
+		card.runButton.enabled = this.automationService.canRunAutomation?.(automation.id) !== false;
+		this.updateCardContextKeys(card, automation);
 		const schedule = formatSchedule(automation.schedule);
 		const scheduleChanged = !previous || formatSchedule(previous.schedule) !== schedule;
 		const nameChanged = !previous || previous.name !== automation.name;

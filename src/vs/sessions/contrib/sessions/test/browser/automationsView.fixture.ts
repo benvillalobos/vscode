@@ -13,6 +13,10 @@ import { URI } from '../../../../../base/common/uri.js';
 import { mock, upcastPartial } from '../../../../../base/test/common/mock.js';
 import { IActionViewItemFactory, IActionViewItemService } from '../../../../../platform/actions/browser/actionViewItemService.js';
 import { IMenuService, MenuId } from '../../../../../platform/actions/common/actions.js';
+import { ActionWidgetService, IActionWidgetService } from '../../../../../platform/actionWidget/browser/actionWidget.js';
+import { IContextViewService } from '../../../../../platform/contextview/browser/contextView.js';
+import { ContextViewService } from '../../../../../platform/contextview/browser/contextViewService.js';
+import { ILayoutService } from '../../../../../platform/layout/browser/layoutService.js';
 import { MenuService } from '../../../../../platform/actions/common/menuService.js';
 import { IConfigurationService } from '../../../../../platform/configuration/common/configuration.js';
 import { ContextKeyService } from '../../../../../platform/contextkey/browser/contextKeyService.js';
@@ -95,6 +99,14 @@ class FixtureAutomationService extends mock<IAutomationService>() {
 	}
 
 	override async deleteRun(): Promise<void> { }
+
+	override getActiveRunFor(automationId: string): IAutomationRun | undefined {
+		return this.runs.get().find(run => run.automationId === automationId && (run.status === 'pending' || run.status === 'running'));
+	}
+
+	override canDeleteAutomation(automationId: string): boolean {
+		return !this.getActiveRunFor(automationId);
+	}
 }
 
 class FixtureSessionsManagementService extends mock<ISessionsManagementService>() {
@@ -173,12 +185,19 @@ interface IAutomationsFixtureOptions {
 	readonly unavailableProviders?: readonly IAutomationProviderDescriptor[];
 	readonly pluginTemplate?: boolean;
 	readonly showDropTarget?: boolean;
+	readonly showActionsMenu?: boolean;
 }
 
 export default defineThemedFixtureGroup({ path: 'sessions/automations/' }, {
 	Populated: defineComponentFixture({
 		labels: { kind: 'screenshot' },
 		render: ctx => renderAutomations(ctx, { width: 1000, height: 720, populated: true }),
+	}),
+	RunningDeleteMenu: defineComponentFixture({
+		labels: { kind: 'screenshot' },
+		additionalThemes: ['darkHighContrast'],
+		expectedVisualDescriptions: ['The automation menu labels retain the standard context menu\'s empty leading gutter. Delete is disabled while the automation is running.'],
+		render: ctx => renderAutomations(ctx, { width: 1000, height: 720, populated: true, showActionsMenu: true }),
 	}),
 	Empty: defineComponentFixture({
 		labels: { kind: 'screenshot' },
@@ -274,6 +293,14 @@ function renderAutomations(ctx: ComponentFixtureContext, options: IAutomationsFi
 		colorTheme: ctx.theme,
 		additionalServices: reg => {
 			registerWorkbenchServices(reg);
+			reg.define(IActionWidgetService, ActionWidgetService);
+			reg.define(IContextViewService, ContextViewService);
+			reg.defineInstance(ILayoutService, new class extends mock<ILayoutService>() {
+				override readonly mainContainer = ctx.container;
+				override readonly activeContainer = ctx.container;
+				override readonly onDidLayoutContainer = Event.None;
+				override getContainer() { return ctx.container; }
+			}());
 			reg.defineInstance(IActionViewItemService, actionViewItemService);
 			reg.define(IListService, ListService);
 			reg.define(IMarkdownRendererService, MarkdownRendererService);
@@ -330,6 +357,7 @@ function renderAutomations(ctx: ComponentFixtureContext, options: IAutomationsFi
 	ctx.container.classList.add('monaco-workbench');
 	ctx.container.style.width = `${options.width}px`;
 	ctx.container.style.height = `${options.height}px`;
+	ctx.container.style.position = 'relative';
 	ctx.container.style.setProperty('--session-view-background', 'var(--vscode-agentsPanel-background, var(--vscode-sideBar-background))');
 	ctx.container.style.setProperty('--session-view-foreground', 'var(--vscode-agentsPanel-foreground, var(--vscode-sideBar-foreground))');
 	ctx.container.style.backgroundColor = 'var(--session-view-background)';
@@ -338,6 +366,9 @@ function renderAutomations(ctx: ComponentFixtureContext, options: IAutomationsFi
 	node.element.style.height = '100%';
 	ctx.container.appendChild(node.element);
 	node.layout(options.width, options.height);
+	if (options.showActionsMenu) {
+		node.element.querySelector<HTMLElement>('.automations-card-more-actions-button')!.click();
+	}
 	if (options.showDropTarget) {
 		const dataTransfer = new DataTransfer();
 		dataTransfer.setData(DataTransfers.RESOURCES, JSON.stringify([URI.file('/shared/review.automation.md').toString()]));
