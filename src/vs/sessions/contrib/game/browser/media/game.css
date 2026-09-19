@@ -3,6 +3,42 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+.game-layout {
+	width: 100%;
+	min-height: 480px;
+}
+
+.game-chat-sidebar {
+	display: flex;
+	flex-direction: column;
+	overflow: hidden;
+	box-sizing: border-box;
+	background: var(--vscode-sideBar-background);
+	color: var(--vscode-sideBar-foreground);
+	border-left: var(--vscode-strokeThickness) solid var(--vscode-contrastBorder, var(--vscode-panel-border));
+}
+
+.game-chat-header {
+	display: flex;
+	align-items: center;
+	gap: var(--vscode-spacing-size80);
+	padding: var(--vscode-spacing-size80);
+}
+
+.game-chat-title {
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	white-space: nowrap;
+	text-overflow: ellipsis;
+	font-size: var(--vscode-fontSize-heading3);
+	font-weight: var(--vscode-fontWeight-semiBold);
+}
+
+.game-chat-header .monaco-button {
+	width: auto;
+}
+
 .game-world {
 	--game-grass: color-mix(in srgb, var(--vscode-charts-green) 24%, var(--vscode-editor-background));
 	--game-gold: var(--vscode-charts-yellow);
@@ -59,11 +95,23 @@
 	min-height: 260px;
 }
 
-.game-world .game-map {
+.game-world .game-map-scrollable {
 	position: absolute;
 	inset: 0;
+}
+
+.game-world .game-map-viewport {
+	width: 100%;
+	height: 100%;
+	overflow: hidden;
+}
+
+.game-world .game-map {
+	position: relative;
 	overflow: hidden;
 	isolation: isolate;
+	touch-action: none;
+	user-select: none;
 	background-color: var(--game-grass);
 	background-image:
 		radial-gradient(ellipse at 78% 38%, color-mix(in srgb, var(--game-blue) 23%, transparent) 0%, transparent 34%),
@@ -76,6 +124,15 @@
 .game-world .game-map:focus-visible {
 	outline: 1px solid var(--vscode-focusBorder);
 	outline-offset: -2px;
+}
+
+.game-world .game-selection-rectangle {
+	position: absolute;
+	box-sizing: border-box;
+	z-index: 12;
+	pointer-events: none;
+	border: var(--vscode-strokeThickness) solid var(--vscode-list-focusOutline, var(--vscode-focusBorder));
+	background: color-mix(in srgb, var(--vscode-focusBorder) 15%, transparent);
 }
 
 .game-world .game-scenery,
@@ -147,6 +204,11 @@
 	z-index: 10;
 }
 
+/* Task sites stay above blobs, including while either node is being dragged. */
+.game-world .game-task.monaco-button {
+	z-index: 11;
+}
+
 .game-world .game-node-label,
 .game-world .game-node-detail {
 	max-width: 100%;
@@ -169,54 +231,116 @@
 }
 
 .game-world .game-unit-art {
+	--game-pet-size: 48px;
 	position: relative;
+	width: var(--game-pet-size);
+	height: var(--game-pet-size);
+	flex-shrink: 0;
+	background-image: var(--game-pet-image);
+	background-size: auto 100%;
+	background-repeat: no-repeat;
+	image-rendering: pixelated;
+	border-radius: var(--vscode-cornerRadius-small);
+}
+
+.game-world .game-unit-art[data-pet-state="sleep"] {
+	width: calc(var(--game-pet-size) * 1.25);
+}
+
+.game-world .game-unit-art[data-pet-state="typing"] {
+	width: calc(var(--game-pet-size) * 1.75);
+}
+
+.game-world .game-pet-animated .game-unit-art[data-pet-state="typing"] {
+	background-image: var(--game-pet-working-image);
+	animation: game-pet-type 800ms step-end infinite;
+}
+
+.game-world .game-unit-art[data-pet-state="rendering"]::after {
+	content: '';
+	position: absolute;
+	left: calc(var(--game-pet-size) / 12);
+	top: calc(var(--game-pet-size) * -2 / 3);
+	width: calc(var(--game-pet-size) * 1.5);
+	height: calc(var(--game-pet-size) * 1.5);
+	background-image: var(--game-pet-speech-image);
+	background-size: auto 100%;
+	background-repeat: no-repeat;
+	pointer-events: none;
+}
+
+.game-world .game-pet-animated .game-unit-art[data-pet-state="rendering"]::after {
+	background-image: var(--game-pet-speech-animation);
+	animation: game-pet-speak 1100ms steps(6, end) infinite;
+}
+
+.game-world .game-unit-art.game-pet-complete {
+	transform-origin: 50% 60%;
+	animation: chat-pet-complete-motion 960ms steps(1, end);
+}
+
+.game-world .game-unit.game-frustrated .game-unit-art {
+	width: var(--game-pet-size);
+	background-image: var(--game-pet-image);
+	animation: none;
+}
+
+.game-world .game-frustrated .game-unit-art::before {
+	content: '!';
+	position: absolute;
+	top: 0;
+	right: calc(var(--game-pet-size) / -4);
 	display: flex;
 	align-items: center;
 	justify-content: center;
-	width: 44px;
-	height: 40px;
-	border-radius: 48% 52% 40% 44%;
-	background: linear-gradient(140deg, color-mix(in srgb, var(--game-blue) 55%, white), var(--game-blue) 65%, color-mix(in srgb, var(--game-blue) 70%, black));
-	box-shadow: inset -4px -5px 0 #0003, 0 7px 0 -3px #0005;
-	border: 1px solid color-mix(in srgb, var(--game-blue) 40%, white);
+	width: calc(var(--game-pet-size) / 3);
+	height: calc(var(--game-pet-size) / 3);
+	font-size: var(--vscode-fontSize-label1);
+	font-weight: var(--vscode-fontWeight-semiBold);
+	color: var(--vscode-editorWarning-foreground);
+	background: var(--vscode-editor-background);
+	border: var(--vscode-strokeThickness) solid var(--vscode-editorWarning-foreground);
+	border-radius: var(--vscode-cornerRadius-circle);
+	pointer-events: none;
 }
 
-.game-world .game-blob-logo {
-	color: #fff;
-	transform: rotate(-12deg);
-	position: absolute;
-	top: -6px;
-	right: -3px;
+.game-world .game-selection-context {
+	font-size: var(--vscode-fontSize-body2);
+	color: var(--vscode-descriptionForeground);
 }
 
-.game-world .game-blob-eyes {
-	width: 5px;
-	height: 7px;
-	border-radius: 50%;
-	background: #102133;
-	box-shadow: 11px 0 #102133;
-	transform: translateX(-5px);
+.game-world .game-selection-context.game-context-warning {
+	color: var(--vscode-editorWarning-foreground);
 }
 
 .game-world .game-child .game-unit-art {
-	width: 30px;
-	height: 28px;
-	background: var(--vscode-charts-purple);
-	border-color: var(--vscode-charts-purple);
+	--game-pet-size: 36px;
 }
 
 .game-world .game-task-art {
 	display: flex;
 	align-items: center;
 	justify-content: center;
-	width: 48px;
-	height: 36px;
+	box-sizing: border-box;
+	width: 100px;
+	height: 76px;
+	flex-shrink: 0;
 	border-radius: var(--vscode-cornerRadius-medium);
 	background: color-mix(in srgb, var(--game-gold) 22%, var(--vscode-editor-background));
 	border: 1px solid var(--game-gold);
 	box-shadow: 0 6px 0 color-mix(in srgb, var(--game-gold) 12%, var(--vscode-editor-background));
 	color: var(--game-gold);
 	transform: rotate(-6deg);
+}
+
+.game-world .game-minimized .game-task-art {
+	opacity: 0.6;
+	border-style: dashed;
+}
+
+/* Blobs whose task is minimized are removed from layout, matching the task's "hidden crew" state. */
+.game-world .game-hidden {
+	display: none;
 }
 
 .game-world .game-selected .game-unit-art,
@@ -247,12 +371,7 @@
 
 .game-world .game-unit[data-status="ready"] .game-unit-art {
 	opacity: 0.7;
-	border-style: dashed;
-}
-
-.game-world .game-unit[data-status="1"] .game-unit-art,
-.game-world .game-unit[data-status="sending"] .game-unit-art {
-	animation: game-blob-work 1.8s ease-in-out infinite;
+	outline: var(--vscode-strokeThickness) dashed var(--vscode-descriptionForeground);
 }
 
 .game-world .game-unit[data-status="2"] .game-unit-art {
@@ -343,12 +462,135 @@
 	gap: var(--vscode-spacing-size80);
 }
 
+.game-world .game-inspector {
+	min-width: 0;
+}
+
+.game-world .game-group-hint {
+	margin-top: var(--vscode-spacing-size80);
+	color: var(--vscode-descriptionForeground);
+	font-size: var(--vscode-fontSize-body2);
+}
+
+.game-world .game-selection-roster {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--vscode-spacing-size60);
+	max-height: 132px;
+	overflow: hidden;
+	padding: var(--vscode-spacing-size80) var(--vscode-spacing-size20);
+}
+
+.game-world .game-portrait.monaco-button {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	box-sizing: border-box;
+	width: 60px;
+	height: 52px;
+	flex-shrink: 0;
+	padding: var(--vscode-spacing-size60);
+	border: var(--vscode-strokeThickness) solid var(--vscode-contrastBorder, var(--vscode-panel-border));
+	border-radius: var(--vscode-cornerRadius-small);
+}
+
+.game-world .game-portrait-container {
+	position: relative;
+	flex-shrink: 0;
+}
+
+.game-world .game-portrait-deselect.monaco-button {
+	position: absolute;
+	top: 0;
+	right: 0;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	box-sizing: border-box;
+	width: 20px;
+	height: 20px;
+	padding: 0;
+	opacity: 0;
+	pointer-events: none;
+	border-radius: var(--vscode-cornerRadius-small);
+}
+
+.game-world .game-portrait-deselect .codicon {
+	font-size: var(--vscode-codiconFontSize-compact);
+}
+
+.game-world .game-portrait-container:hover .game-portrait-deselect,
+.game-world .game-portrait-container:focus-within .game-portrait-deselect {
+	opacity: 1;
+	pointer-events: auto;
+}
+
+.game-world .game-portrait:focus-visible,
+.game-world .game-portrait-deselect:focus-visible {
+	outline: var(--vscode-strokeThickness) solid var(--vscode-focusBorder);
+	outline-offset: -1px;
+}
+
+.game-world .game-portrait .game-unit-art {
+	--game-pet-size: 32px;
+	animation: none;
+}
+
+.game-world .game-portrait.game-frustrated .game-unit-art {
+	width: var(--game-pet-size);
+}
+
+.game-world .game-portrait .game-node-label,
+.game-world .game-portrait .game-unit-art::after {
+	display: none;
+}
+
+.hc-black .game-world .game-selection-rectangle,
+.hc-light .game-world .game-selection-rectangle {
+	border: 2px solid var(--vscode-focusBorder);
+	background: transparent;
+}
+
 .game-world .game-selection-title {
+	min-width: 0;
 	font-weight: var(--vscode-fontWeight-semiBold);
 	font-size: var(--vscode-fontSize-heading3);
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;
+}
+
+.game-world .game-selection-name.monaco-button,
+.game-world .game-selection-description.monaco-button {
+	display: block;
+	width: auto;
+	padding: 0;
+	text-align: left;
+}
+
+.game-world .game-selection-description.monaco-button {
+	width: 100%;
+}
+
+.game-world .game-task-editor {
+	min-width: 0;
+	flex: 1;
+}
+
+.game-world .game-task-edit-hint {
+	margin-top: var(--vscode-spacing-size40);
+	font-size: var(--vscode-fontSize-label2);
+	color: var(--vscode-descriptionForeground);
+}
+
+.game-world .game-task-edit-actions {
+	display: flex;
+	gap: var(--vscode-spacing-size60);
+	margin-top: var(--vscode-spacing-size40);
+}
+
+.game-world .game-task-edit-actions .monaco-button {
+	width: auto;
 }
 
 .game-world .game-selection-status {
@@ -440,19 +682,39 @@
 	font-size: var(--vscode-fontSize-label3);
 }
 
-@keyframes game-blob-work {
-	0%, 100% { transform: translateY(0) rotate(-3deg); }
-	50% { transform: translateY(-5px) rotate(3deg); }
+@keyframes game-pet-type {
+	0% { background-position: 0 0; }
+	40%, 100% { background-position: 100% 0; }
+}
+
+@keyframes game-pet-speak {
+	to { background-position: calc(var(--game-pet-size) * -9) 0; }
 }
 
 @media (prefers-reduced-motion: reduce) {
 	.game-world .game-unit .game-unit-art {
 		animation: none;
+		background-image: var(--game-pet-image);
+		background-position: 0 0;
+	}
+
+	.game-world .game-unit .game-unit-art[data-pet-state="rendering"]::after {
+		animation: none;
+		background-image: var(--game-pet-speech-image);
+		background-position: 0 0;
 	}
 }
 
 .monaco-reduce-motion .game-world .game-unit .game-unit-art {
 	animation: none;
+	background-image: var(--game-pet-image);
+	background-position: 0 0;
+}
+
+.monaco-reduce-motion .game-world .game-unit .game-unit-art[data-pet-state="rendering"]::after {
+	animation: none;
+	background-image: var(--game-pet-speech-image);
+	background-position: 0 0;
 }
 
 .hc-black .game-world .game-map-node,

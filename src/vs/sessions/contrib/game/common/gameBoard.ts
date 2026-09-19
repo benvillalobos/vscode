@@ -12,6 +12,8 @@ export interface GameTask extends GamePoint {
 	readonly id: string;
 	readonly title: string;
 	readonly prompt: string;
+	/** When true, the task's assigned units are hidden from the map. */
+	readonly minimized?: boolean;
 }
 
 export interface GameUnit extends GamePoint {
@@ -22,6 +24,8 @@ export interface GameUnit extends GamePoint {
 	readonly chat?: string;
 	readonly parentId?: string;
 	readonly draft: string;
+	/** The task the unit's session already has as chat history context, so dispatch only re-briefs it when this changes. */
+	readonly briefedTaskId?: string;
 }
 
 export interface GameBoard {
@@ -31,9 +35,16 @@ export interface GameBoard {
 	readonly folder?: string;
 	readonly providerId?: string;
 	readonly sessionTypeId?: string;
+	/** Default model identifier applied to brand-new sessions dispatched from the map. */
+	readonly modelId?: string;
+	/** Default permission level (a {@link ChatPermissionLevel} value) applied to brand-new sessions dispatched from the map. */
+	readonly permissionLevel?: string;
 }
 
 export const emptyGameBoard: GameBoard = { version: 1, tasks: [], units: [] };
+
+/** Assignment radius in the map's normalized 0-100 coordinate space. */
+export const gameTaskAssignmentRadius = 44;
 
 export function clampGamePoint(point: GamePoint): GamePoint {
 	return {
@@ -45,7 +56,7 @@ export function clampGamePoint(point: GamePoint): GamePoint {
 export function nearestGameTask(tasks: readonly GameTask[], point: GamePoint): GameTask | undefined {
 	return tasks.reduce<GameTask | undefined>((nearest, task) => {
 		const distance = Math.hypot(task.x - point.x, task.y - point.y);
-		return distance <= 15 && (!nearest || distance < Math.hypot(nearest.x - point.x, nearest.y - point.y)) ? task : nearest;
+		return distance <= gameTaskAssignmentRadius && (!nearest || distance < Math.hypot(nearest.x - point.x, nearest.y - point.y)) ? task : nearest;
 	}, undefined);
 }
 
@@ -67,13 +78,15 @@ export function isGameBoard(value: unknown): value is GameBoard {
 	const board = value as Partial<GameBoard>;
 	const point = (value: GamePoint) => Number.isFinite(value.x) && Number.isFinite(value.y) && value.x >= 0 && value.x <= 100 && value.y >= 0 && value.y <= 100;
 	const optionalString = (value: unknown) => value === undefined || typeof value === 'string';
+	const optionalBoolean = (value: unknown) => value === undefined || typeof value === 'boolean';
 	return board.version === 1
 		&& Array.isArray(board.tasks) && board.tasks.length <= 200
 		&& Array.isArray(board.units) && board.units.length <= 500
 		&& optionalString(board.folder) && optionalString(board.providerId) && optionalString(board.sessionTypeId)
-		&& board.tasks.every(task => task && typeof task.id === 'string' && typeof task.title === 'string' && typeof task.prompt === 'string' && point(task))
+		&& optionalString(board.modelId) && optionalString(board.permissionLevel)
+		&& board.tasks.every(task => task && typeof task.id === 'string' && typeof task.title === 'string' && typeof task.prompt === 'string' && point(task) && optionalBoolean(task.minimized))
 		&& board.units.every(unit => unit && typeof unit.id === 'string' && typeof unit.name === 'string' && typeof unit.draft === 'string' && point(unit)
-			&& optionalString(unit.taskId) && optionalString(unit.session) && optionalString(unit.chat) && optionalString(unit.parentId))
+			&& optionalString(unit.taskId) && optionalString(unit.session) && optionalString(unit.chat) && optionalString(unit.parentId) && optionalString(unit.briefedTaskId))
 		&& new Set(board.tasks.map(task => task.id)).size === board.tasks.length
 		&& new Set(board.units.map(unit => unit.id)).size === board.units.length;
 }

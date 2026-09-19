@@ -25,6 +25,8 @@ import { ChatPillActionViewItem } from '../../../workbench/browser/chatPills.js'
  */
 export class CustomViewNode extends Disposable {
 
+	private static readonly CONTENT_PADDING = 10;
+
 	readonly element: HTMLElement = $('.custom-view-node');
 
 	private readonly _headerEl: HTMLElement;
@@ -90,6 +92,7 @@ export class CustomViewNode extends Disposable {
 
 		const scrollContent = $('.custom-view-scroll-content');
 		this._contentEl = $('.custom-view-content');
+		this._contentEl.style.padding = `${CustomViewNode.CONTENT_PADDING}px`;
 		this._contentEl.tabIndex = -1;
 		scrollContent.appendChild(this._contentEl);
 
@@ -158,7 +161,10 @@ export class CustomViewNode extends Disposable {
 
 		// The scroll container is sized by flex, so only the view needs to be told
 		// how much room is left below the header.
-		this._view.layout(bandWidth, Math.max(0, height - this._headerEl.offsetHeight));
+		this._view.layout(
+			Math.max(0, bandWidth - 2 * CustomViewNode.CONTENT_PADDING),
+			Math.max(0, height - this._headerEl.offsetHeight - 2 * CustomViewNode.CONTENT_PADDING),
+		);
 		this._scrollable.scanDomNode();
 	}
 }

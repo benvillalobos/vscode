@@ -4,7 +4,8 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { Disposable } from '../../../../base/common/lifecycle.js';
-import { derived, IObservable, observableSignalFromEvent, observableValue } from '../../../../base/common/observable.js';
+import { derived, IObservable, IReader, observableSignalFromEvent, observableValue } from '../../../../base/common/observable.js';
+import { ResourceMap } from '../../../../base/common/map.js';
 import { isEqual } from '../../../../base/common/resources.js';
 import { URI } from '../../../../base/common/uri.js';
 import { generateUuid } from '../../../../base/common/uuid.js';
@@ -15,11 +16,31 @@ import { ILogService } from '../../../../platform/log/common/log.js';
 import { IStorageService, StorageScope, StorageTarget } from '../../../../platform/storage/common/storage.js';
 import { IWorkspaceTrustManagementService } from '../../../../platform/workspace/common/workspaceTrust.js';
 import { IChatEntitlementService } from '../../../../workbench/services/chat/common/chatEntitlementService.js';
+import { resolveChatContextWindow } from '../../../../workbench/contrib/chat/common/chatContextUsage.js';
+import { IChatService } from '../../../../workbench/contrib/chat/common/chatService/chatService.js';
+import { ILanguageModelsService } from '../../../../workbench/contrib/chat/common/languageModels.js';
+import { IChatModel } from '../../../../workbench/contrib/chat/common/model/chatModel.js';
 import { ISessionsManagementService } from '../../../services/sessions/common/sessionsManagement.js';
 import { ChatInteractivity, IChat, ISession, SessionStatus } from '../../../services/sessions/common/session.js';
-import { clampGamePoint, emptyGameBoard, GameBoard, GamePoint, gameSatellitePoint, gameSpawnPoint, GameUnit, isGameBoard, nearestGameTask } from '../common/gameBoard.js';
+import { clampGamePoint, emptyGameBoard, GameBoard, GamePoint, gameSatellitePoint, gameSpawnPoint, GameTask, GameUnit, isGameBoard, nearestGameTask } from '../common/gameBoard.js';
 
 const BOARD_STORAGE_KEY = 'sessions.game.board.v1';
+
+/** Includes the full brief for a new session, changed task assignment, or edited task. */
+function buildGameDispatchQuery(task: GameTask | undefined, order: string, includeBrief: boolean): string {
+	const trimmed = order.trim();
+	if (!task) {
+		return trimmed;
+	}
+	if (!includeBrief) {
+		return trimmed ? `Continuing the task "${task.title}" for the user.\n\nHere is the user's request:\n${trimmed}` : '';
+	}
+	const lines = ['You are working on the following task for the user.', '', `Here is the task: ${task.title}`, task.prompt];
+	if (trimmed) {
+		lines.push('', "Here is the user's request:", trimmed);
+	}
+	return lines.join('\n');
+}
 
 export interface GameLiveUnit extends GameUnit {
 	readonly status: SessionStatus | 'ready' | 'sending' | 'unavailable';
@@ -28,6 +49,7 @@ export interface GameLiveUnit extends GameUnit {
 	readonly readOnly: boolean;
 	readonly canSpawnChild: boolean;
 	readonly automatic?: boolean;
+	readonly contextUsagePercent?: number;
 }
 
 export const IGameService = createDecorator<IGameService>('sessionsGameService');
@@ -38,10 +60,15 @@ export interface IGameService {
 	readonly units: IObservable<readonly GameLiveUnit[]>;
 	spawn(parentId?: string): string;
 	addTask(title: string, prompt: string): string;
+	updateTask(taskId: string, changes: Partial<Pick<GameTask, 'title' | 'prompt'>>): void;
 	move(id: string, point: GamePoint): void;
 	assign(unitId: string, taskId: string): void;
+	rename(unitId: string, name: string): void;
+	toggleMinimize(taskId: string): void;
 	setDraft(unitId: string, draft: string): void;
 	setTarget(folder: URI, providerId: string, sessionTypeId: string): void;
+	setDefaultModel(modelId: string | undefined): void;
+	setDefaultPermissionLevel(permissionLevel: string | undefined): void;
 	recruit(session: ISession): string;
 	remove(id: string): void;
 	dispatch(unitId: string): Promise<void>;
@@ -61,6 +88,8 @@ export class GameService extends Disposable implements IGameService {
 		@IWorkspaceTrustManagementService private readonly trustService: IWorkspaceTrustManagementService,
 		@IChatEntitlementService private readonly entitlementService: IChatEntitlementService,
 		@ILogService logService: ILogService,
+		@IChatService chatService: IChatService,
+		@ILanguageModelsService private readonly languageModelsService: ILanguageModelsService,
 	) {
 		super();
 		const saved = storageService.get(BOARD_STORAGE_KEY, StorageScope.WORKSPACE);
@@ -76,27 +105,52 @@ export class GameService extends Disposable implements IGameService {
 			}
 		}
 		this.sessionsChanged = observableSignalFromEvent(this, sessionsManagementService.onDidChangeSessions);
+		const removeSession = (session: ISession) => {
+			for (const unit of this.state.get().units) {
+				if (unit.session && isEqual(URI.parse(unit.session), session.resource)) {
+					this.removeFromMap(unit.id, false);
+				}
+			}
+		};
+		this._register(sessionsManagementService.onDidArchiveSession(removeSession));
+		this._register(sessionsManagementService.onDidDeleteSession(removeSession));
+		this._register(sessionsManagementService.onDidDeleteChat(session => {
+			for (const unit of this.state.get().units) {
+				if (unit.session && unit.chat && isEqual(URI.parse(unit.session), session.resource)
+					&& !session.chats.get().some(chat => isEqual(chat.resource, URI.parse(unit.chat!)))) {
+					this.removeFromMap(unit.id, false);
+				}
+			}
+		}));
+		const languageModelsChanged = observableSignalFromEvent(this, languageModelsService.onDidChangeLanguageModels);
 		this.units = derived(this, reader => {
 			this.sessionsChanged.read(reader);
+			languageModelsChanged.read(reader);
+			const chatModels = new ResourceMap<IChatModel>();
+			for (const model of chatService.chatModels.read(reader)) {
+				chatModels.set(model.sessionResource, model);
+			}
 			const board = this.state.read(reader);
 			const sending = this.sending.read(reader);
 			const result: GameLiveUnit[] = [];
 			const sessions = sessionsManagementService.getSessions();
 			const resolve = (unit: GameUnit) => unit.session ? sessionsManagementService.getSession(URI.parse(unit.session)) : undefined;
 			const add = (unit: GameUnit, session: ISession | undefined, chat: IChat | undefined, automatic = false) => {
-				if (chat?.interactivity.read(reader) === ChatInteractivity.Hidden) {
+				if (session?.isArchived.read(reader) || chat?.isArchived.read(reader) || chat?.interactivity.read(reader) === ChatInteractivity.Hidden) {
 					return;
 				}
 				const disconnected = session?.remoteConnectionStatus?.read(reader);
+				const status = sending.has(unit.id) ? 'sending' : unit.session && (!session || !chat || (disconnected && disconnected.kind !== 'connected')) ? 'unavailable' : chat?.status.read(reader) ?? 'ready';
 				result.push({
 					...unit,
 					name: chat?.title.read(reader) || session?.title.read(reader) || unit.name,
-					status: sending.has(unit.id) ? 'sending' : unit.session && (!session || !chat || (disconnected && disconnected.kind !== 'connected')) ? 'unavailable' : chat?.status.read(reader) ?? 'ready',
+					status,
 					activity: chat?.description.read(reader)?.value ?? '',
 					files: chat?.changes.read(reader).length ?? 0,
 					readOnly: !!session?.isArchived.read(reader) || !!chat?.isArchived.read(reader) || (!!chat && chat.interactivity.read(reader) !== ChatInteractivity.Full),
 					canSpawnChild: !!session?.capabilities.read(reader).supportsMultipleChats,
 					automatic,
+					contextUsagePercent: chat && status !== 'unavailable' ? this.contextUsage(chatModels.get(chat.resource), chat, reader) : undefined,
 				});
 			};
 			for (const unit of board.units) {
@@ -130,6 +184,35 @@ export class GameService extends Disposable implements IGameService {
 			}
 			return result;
 		});
+	}
+
+	private contextUsage(model: IChatModel | undefined, chat: IChat, reader: IReader): number | undefined {
+		if (!model) {
+			return undefined;
+		}
+		model.lastRequestObs.read(reader);
+		const input = model.inputModel.state.read(reader);
+		const selectedModelId = input?.selectedModel?.identifier ?? chat.modelId.read(reader);
+		const requests = model.getRequests();
+		for (let index = requests.length - 1; index >= 0; index--) {
+			const request = requests[index];
+			const usage = request.response?.usageObs.read(reader);
+			if (!usage) {
+				continue;
+			}
+			const resolveWindow = (modelId: string | undefined) => {
+				if (!modelId) {
+					return undefined;
+				}
+				const configuration = (modelId === input?.selectedModel?.identifier ? input.modelConfiguration : undefined)
+					?? (modelId === request.modelId ? request.modelConfiguration : undefined)
+					?? this.languageModelsService.getModelConfiguration(modelId);
+				return resolveChatContextWindow(this.languageModelsService.lookupLanguageModel(modelId), configuration);
+			};
+			const window = resolveWindow(selectedModelId) ?? resolveWindow(usage.actualModelId ?? request.modelId);
+			return window ? (usage.promptTokens + usage.completionTokens) / window.totalContextWindow * 100 : undefined;
+		}
+		return undefined;
 	}
 
 	private save(board: GameBoard): void {
@@ -179,6 +262,27 @@ export class GameService extends Disposable implements IGameService {
 		return id;
 	}
 
+	updateTask(taskId: string, changes: Partial<Pick<GameTask, 'title' | 'prompt'>>): void {
+		const board = this.state.get();
+		const task = board.tasks.find(task => task.id === taskId);
+		if (!task) {
+			throw new Error(localize('gameMissingTask', "This task is no longer on the map."));
+		}
+		const title = (changes.title ?? task.title).trim();
+		const prompt = (changes.prompt ?? task.prompt).trim();
+		if (!title || !prompt) {
+			throw new Error(localize('gameTaskEditInvalid', "Give the task a title and description."));
+		}
+		if (title === task.title && prompt === task.prompt) {
+			return;
+		}
+		this.save({
+			...board,
+			tasks: board.tasks.map(candidate => candidate.id === taskId ? { ...candidate, title, prompt } : candidate),
+			units: board.units.map(unit => unit.briefedTaskId === taskId ? { ...unit, briefedTaskId: undefined } : unit),
+		});
+	}
+
 	move(id: string, point: GamePoint): void {
 		const board = this.state.get();
 		const position = clampGamePoint(point);
@@ -215,10 +319,35 @@ export class GameService extends Disposable implements IGameService {
 		this.updateUnit(unitId, { taskId, ...gameSatellitePoint(task, this.state.get().units.filter(unit => unit.taskId === taskId).length) });
 	}
 
+	rename(unitId: string, name: string): void {
+		const trimmed = name.trim();
+		if (!trimmed) {
+			throw new Error(localize('gameUnitNameInvalid', "Give the unit a name."));
+		}
+		this.updateUnit(unitId, { name: trimmed });
+	}
+
+	toggleMinimize(taskId: string): void {
+		const board = this.state.get();
+		const task = board.tasks.find(task => task.id === taskId);
+		if (!task) {
+			throw new Error(localize('gameMissingTask', "This task is no longer on the map."));
+		}
+		this.save({ ...board, tasks: board.tasks.map(candidate => candidate.id === taskId ? { ...candidate, minimized: !candidate.minimized } : candidate) });
+	}
+
 	setDraft(unitId: string, draft: string): void { this.updateUnit(unitId, { draft }); }
 
 	setTarget(folder: URI, providerId: string, sessionTypeId: string): void {
 		this.save({ ...this.state.get(), folder: folder.toString(), providerId, sessionTypeId });
+	}
+
+	setDefaultModel(modelId: string | undefined): void {
+		this.save({ ...this.state.get(), modelId });
+	}
+
+	setDefaultPermissionLevel(permissionLevel: string | undefined): void {
+		this.save({ ...this.state.get(), permissionLevel });
 	}
 
 	recruit(session: ISession): string {
@@ -233,7 +362,11 @@ export class GameService extends Disposable implements IGameService {
 	}
 
 	remove(id: string): void {
-		if (this.sending.get().has(id)) {
+		this.removeFromMap(id, true);
+	}
+
+	private removeFromMap(id: string, protectDispatch: boolean): void {
+		if (protectDispatch && this.sending.get().has(id)) {
 			throw new Error(localize('gameSendingUnit', "Wait for dispatch to finish before removing this unit."));
 		}
 		const board = this.state.get();
@@ -242,7 +375,7 @@ export class GameService extends Disposable implements IGameService {
 			size = removed.size;
 			for (const unit of board.units) {
 				if (unit.parentId && removed.has(unit.parentId)) {
-					if (this.sending.get().has(unit.id)) {
+					if (protectDispatch && this.sending.get().has(unit.id)) {
 						throw new Error(localize('gameSendingChild', "A child unit is dispatching. Wait before removing its parent."));
 					}
 					removed.add(unit.id);
@@ -258,7 +391,8 @@ export class GameService extends Disposable implements IGameService {
 		const unit = board.units.find(unit => unit.id === unitId);
 		const live = this.units.get().find(unit => unit.id === unitId);
 		const task = board.tasks.find(task => task.id === unit?.taskId);
-		const query = [task?.prompt, unit?.draft.trim()].filter(Boolean).join('\n\n');
+		const includeBrief = !unit?.session || unit.taskId !== unit.briefedTaskId;
+		const query = buildGameDispatchQuery(task, unit?.draft ?? '', includeBrief);
 		if (!unit || !live || !query || this.sending.get().has(unitId) || live.status === SessionStatus.InProgress || live.status === SessionStatus.NeedsInput || live.readOnly || live.status === 'unavailable') {
 			throw new Error(localize('gameDispatchUnavailable', "Select an available unit and give it a task or instructions. Open its chat to handle approvals or an active turn."));
 		}
@@ -294,14 +428,21 @@ export class GameService extends Disposable implements IGameService {
 				}
 				const session = await this.sessionsManagementService.createAndSendNewChatRequest(
 					URI.parse(board.folder), { query, title: task?.title || unit.name },
-					{ providerId: board.providerId, sessionTypeId: board.sessionTypeId },
+					{
+						providerId: board.providerId, sessionTypeId: board.sessionTypeId,
+						isolationMode: 'workspace',
+						...(board.modelId ? { modelId: board.modelId } : {}),
+						...(board.permissionLevel ? { permissionLevel: board.permissionLevel } : {}),
+					},
 				);
 				if (!session) {
 					throw new Error(localize('gameSendInterrupted', "Session creation was interrupted. Check the sessions list before retrying."));
 				}
 				this.updateUnit(unitId, { session: session.resource.toString() });
 			}
-			this.updateUnit(unitId, { draft: '' });
+			const currentTask = this.state.get().tasks.find(candidate => candidate.id === task?.id);
+			const briefUnchanged = currentTask?.title === task?.title && currentTask?.prompt === task?.prompt;
+			this.updateUnit(unitId, { draft: '', briefedTaskId: briefUnchanged ? task?.id : undefined });
 		} finally {
 			const sending = new Set(this.sending.get());
 			sending.delete(unitId);

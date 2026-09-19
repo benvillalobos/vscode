@@ -26,12 +26,14 @@ import { IContextMenuService } from '../../../../../platform/contextview/browser
 import { ILogService } from '../../../../../platform/log/common/log.js';
 import { IHostService } from '../../../../services/host/browser/host.js';
 import { IChatModel } from '../../common/model/chatModel.js';
+import { ChatPetState, getChatPetSpriteName } from '../../common/chatPet.js';
 import { CHAT_PET_OPEN_ACHIEVEMENTS_COMMAND_ID, ChatPetAccessoryId, getChatPetAccessory, getChatPetAchievement } from '../chatPetAchievements.js';
 import { CHAT_PET_DEFAULT_SCALE, ChatPetVariant, IChatPetService } from '../chatPetService.js';
 import { drawChatPetComposite, drawChatPetEyeAccessory, getChatPetAccessoryImageSource, hasChatPetAccessoryImageDimensions, hasChatPetBodyImageDimensions, IChatPetAccessoryImageSource, IChatPetFixedOrientationDecoration } from './chatPetAccessoryRenderer.js';
 import { getChatPetAccessoryRigFrame, getChatPetReducedMotionRigFrame } from './chatPetAccessoryRig.js';
 
-export type ChatPetState = 'idle' | 'sleep' | 'waking' | 'typing' | 'rendering' | 'achievementUnlocked' | 'buttonPress' | 'complete' | 'love' | 'clapping' | 'jump' | 'cool' | 'yapping' | 'yappingMouthOpen' | 'sing' | 'speechless' | 'worry' | 'dizzy' | 'falling' | 'wallImpact' | 'splat' | 'onTheRun' | 'searching' | 'searchingDown';
+export type { ChatPetState } from '../../common/chatPet.js';
+export { getChatPetBuddyName, getChatPetSpriteName } from '../../common/chatPet.js';
 export type ChatPetClickInteraction = Extract<ChatPetState, 'buttonPress' | 'complete' | 'love' | 'cool' | 'yapping' | 'sing' | 'speechless' | 'worry'>;
 
 export interface IChatPetWidgetHost {
@@ -247,10 +249,6 @@ interface ChatPetThrowStep extends ChatPetThrowMotion {
 	readonly wall: ChatPetWall | undefined;
 }
 
-export function getChatPetBuddyName(quality: string | undefined): 'buddy-idle-stable' | 'buddy-idle-insiders' {
-	return quality === 'stable' ? 'buddy-idle-stable' : 'buddy-idle-insiders';
-}
-
 const spriteSources = new Map<ChatPetVariant, Record<ChatPetState, ChatPetSpriteSources>>();
 const speechSpriteSources = new Map<ChatPetVariant, ChatPetSpriteSources>();
 const respawnSpriteSources = new Map<ChatPetVariant, ChatPetSpriteSources>();
@@ -262,51 +260,6 @@ export function doesChatPetStateTrackCursor(state: ChatPetState | undefined): bo
 export function doesChatPetStateBlink(state: ChatPetState | undefined, frameIndex?: number): boolean {
 	return (state === 'typing' || state === 'buttonPress' || state === 'love')
 		&& (state !== 'buttonPress' || frameIndex !== BUTTON_PRESS_FRAME_DURATIONS.length - 1);
-}
-
-export function getChatPetSpriteName(state: ChatPetState, quality: string | undefined): string {
-	const variant = quality === 'stable' ? 'stable' : 'insiders';
-	switch (state) {
-		case 'love':
-			return `buddy-love-${variant}`;
-		case 'clapping':
-			return `buddy-clapping-${variant}`;
-		case 'cool':
-			return `buddy-cool-${variant}`;
-		case 'buttonPress':
-			return `buddy-press-button-${variant}`;
-		case 'falling':
-			return `buddy-falling-${variant}`;
-		case 'jump':
-			return `buddy-jump-${variant}`;
-		case 'dizzy':
-			return `buddy-dizzy-${variant}`;
-		case 'wallImpact':
-			return `buddy-wall-impact-${variant}`;
-		case 'splat':
-			return `buddy-splat-${variant}`;
-		case 'onTheRun':
-		case 'searching':
-		case 'searchingDown':
-			return `buddy-search-${variant}`;
-		case 'sleep':
-			return `buddy-sleep-${variant}`;
-		case 'waking':
-			return `buddy-waking-${variant}`;
-		case 'typing':
-			return `buddy-typing-${variant}`;
-		case 'rendering':
-		case 'achievementUnlocked':
-			return `buddy-rendering-${variant}`;
-		case 'yappingMouthOpen':
-			return `buddy-yapping-${variant}`;
-		case 'sing':
-		case 'speechless':
-		case 'worry':
-			return `buddy-${state}-${variant}`;
-		default:
-			return getChatPetBuddyName(quality);
-	}
 }
 
 export function getChatPetFrameDurations(state: ChatPetState): readonly number[] {

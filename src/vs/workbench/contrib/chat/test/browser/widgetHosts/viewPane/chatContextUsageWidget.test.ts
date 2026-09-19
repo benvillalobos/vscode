@@ -17,7 +17,8 @@ import { MockContextKeyService } from '../../../../../../../platform/keybinding/
 import { InMemoryStorageService } from '../../../../../../../platform/storage/common/storage.js';
 import { AgentHostLanguageModelProvider } from '../../../../browser/agentSessions/agentHost/agentHostLanguageModelProvider.js';
 import { usageInfoToChatUsage } from '../../../../browser/agentSessions/agentHost/stateToProgressAdapter.js';
-import { ChatContextUsageWidget, isSameContextUsageData, resolveContextWindowInputTokens } from '../../../../browser/widgetHosts/viewPane/chatContextUsageWidget.js';
+import { ChatContextUsageWidget, isSameContextUsageData } from '../../../../browser/widgetHosts/viewPane/chatContextUsageWidget.js';
+import { resolveContextWindowInputTokens } from '../../../../common/chatContextUsage.js';
 import { ChatContextUsageDetails, IChatContextUsageData } from '../../../../browser/widgetHosts/viewPane/chatContextUsageDetails.js';
 import { IChatUsage } from '../../../../common/chatService/chatService.js';
 import { ILanguageModelChatMetadata, ILanguageModelConfigurationSchema, ILanguageModelsService } from '../../../../common/languageModels.js';

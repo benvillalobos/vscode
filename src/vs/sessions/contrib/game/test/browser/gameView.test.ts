@@ -23,10 +23,29 @@ import { GAME_CUSTOM_VIEW_ID } from '../../common/game.js';
 import { IGameService } from '../../browser/gameService.js';
 import { ISessionsManagementService } from '../../../../services/sessions/common/sessionsManagement.js';
 import { ISessionsService } from '../../../../services/sessions/browser/sessionsService.js';
-import { createGameHarness } from './gameTestUtils.js';
+import { createGameHarness, gameTestChatModel, gameTestSession } from './gameTestUtils.js';
 
 suite('Sessions - Game custom view', () => {
 	const disposables = ensureNoDisposablesAreLeakedInTestSuite();
+
+	test('accessible view describes context frustration and clears it after compaction', () => {
+		const game = createGameHarness(disposables);
+		const session = gameTestSession('Builder');
+		game.sessions.push(session);
+		game.service.recruit(session);
+		const { model, usage } = gameTestChatModel(session.mainChat.get().resource, 650);
+		game.chatModels.set([model], undefined);
+		const instantiation = workbenchInstantiationService(undefined, disposables.add(new DisposableStore()));
+		instantiation.stub(IGameService, game.service);
+		const implementation = AccessibleViewRegistry.getImplementations().find(implementation => implementation.name === 'sessions-game-view')!;
+		const provider = disposables.add(instantiation.invokeFunction(accessor => implementation.getProvider(accessor))!);
+		const frustrated = provider.provideContent().includes('Frustrated: context window 65% full (above 50%).');
+		usage.set({ kind: 'usage', promptTokens: 300, completionTokens: 0 }, undefined);
+		assert.deepStrictEqual({
+			frustrated, cleared: !provider.provideContent().includes('Frustrated'),
+			compacted: provider.provideContent().includes('Context window 30% full.'), requests: game.requests,
+		}, { frustrated: true, cleared: true, compacted: true, requests: [] });
+	});
 
 	test('registers the playable view with scoped accessibility help and restores it after reload', () => {
 		const configuration = new TestConfigurationService();

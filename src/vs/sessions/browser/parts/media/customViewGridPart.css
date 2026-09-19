@@ -98,7 +98,6 @@
 .custom-view-content {
 	box-sizing: border-box;
 	margin: 0 auto;
-	padding: 10px;
 }
 
 /* The content is the focus fallback when a view does not focus a child of its own. */

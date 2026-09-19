@@ -11,7 +11,7 @@ import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../../../ba
 import { InMemoryStorageService, StorageScope, StorageTarget } from '../../../../../../../platform/storage/common/storage.js';
 import { ChatInputPart } from '../../../../browser/widget/input/chatInputPart.js';
 import { ChatModelConfigurationStore } from '../../../../browser/widget/input/chatModelConfigurationStore.js';
-import { resolveContextWindowInputTokens } from '../../../../browser/widgetHosts/viewPane/chatContextUsageWidget.js';
+import { resolveContextWindowInputTokens } from '../../../../common/chatContextUsage.js';
 import { ILanguageModelChatMetadata, ILanguageModelConfigurationSchema, ILanguageModelsService } from '../../../../common/languageModels.js';
 
 const schema: ILanguageModelConfigurationSchema = {
