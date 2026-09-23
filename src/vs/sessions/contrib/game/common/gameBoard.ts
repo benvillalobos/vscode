@@ -3,6 +3,9 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import { basename } from '../../../../base/common/resources.js';
+import { URI } from '../../../../base/common/uri.js';
+
 export interface GamePoint {
 	readonly x: number;
 	readonly y: number;
@@ -16,7 +19,14 @@ export interface GameTask extends GamePoint {
 	readonly minimized?: boolean;
 }
 
-export interface GameUnit extends GamePoint {
+/** Where a dispatch creates its session: a workspace folder and the provider that serves it. */
+export interface GameTarget {
+	readonly folder?: string;
+	readonly providerId?: string;
+	readonly sessionTypeId?: string;
+}
+
+export interface GameUnit extends GamePoint, GameTarget {
 	readonly id: string;
 	readonly name: string;
 	readonly taskId?: string;
@@ -28,13 +38,10 @@ export interface GameUnit extends GamePoint {
 	readonly briefedTaskId?: string;
 }
 
-export interface GameBoard {
+export interface GameBoard extends GameTarget {
 	readonly version: 1;
 	readonly tasks: readonly GameTask[];
 	readonly units: readonly GameUnit[];
-	readonly folder?: string;
-	readonly providerId?: string;
-	readonly sessionTypeId?: string;
 	/** Default model identifier applied to brand-new sessions dispatched from the map. */
 	readonly modelId?: string;
 	/** Default permission level (a {@link ChatPermissionLevel} value) applied to brand-new sessions dispatched from the map. */
@@ -42,6 +49,18 @@ export interface GameBoard {
 }
 
 export const emptyGameBoard: GameBoard = { version: 1, tasks: [], units: [] };
+
+/** The workspace a unit dispatches into: its own target, or the board default for units saved before per-unit targets. */
+export function gameUnitTarget(board: GameBoard, unit: GameTarget): GameTarget {
+	return unit.folder ? { folder: unit.folder, providerId: unit.providerId, sessionTypeId: unit.sessionTypeId } : board;
+}
+
+/** Short label for a workspace folder URI, qualified by the remote authority so dev box targets are distinguishable. */
+export function gameWorkspaceLabel(folder: string): string {
+	const uri = URI.parse(folder);
+	const name = basename(uri) || uri.path;
+	return uri.authority ? `${name} (${uri.authority})` : name;
+}
 
 /** Assignment radius in the map's normalized 0-100 coordinate space. */
 export const gameTaskAssignmentRadius = 44;
@@ -86,7 +105,8 @@ export function isGameBoard(value: unknown): value is GameBoard {
 		&& optionalString(board.modelId) && optionalString(board.permissionLevel)
 		&& board.tasks.every(task => task && typeof task.id === 'string' && typeof task.title === 'string' && typeof task.prompt === 'string' && point(task) && optionalBoolean(task.minimized))
 		&& board.units.every(unit => unit && typeof unit.id === 'string' && typeof unit.name === 'string' && typeof unit.draft === 'string' && point(unit)
-			&& optionalString(unit.taskId) && optionalString(unit.session) && optionalString(unit.chat) && optionalString(unit.parentId) && optionalString(unit.briefedTaskId))
+			&& optionalString(unit.taskId) && optionalString(unit.session) && optionalString(unit.chat) && optionalString(unit.parentId) && optionalString(unit.briefedTaskId)
+			&& optionalString(unit.folder) && optionalString(unit.providerId) && optionalString(unit.sessionTypeId))
 		&& new Set(board.tasks.map(task => task.id)).size === board.tasks.length
 		&& new Set(board.units.map(unit => unit.id)).size === board.units.length;
 }

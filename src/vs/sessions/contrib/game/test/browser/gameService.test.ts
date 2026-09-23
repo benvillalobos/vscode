@@ -383,8 +383,84 @@ suite('Sessions - Game service', () => {
 		assert.deepStrictEqual(harness.requests, []);
 	});
 
-	test('restores coordinates, assignments, and unsent orders without dispatching', () => {
-		const { service, storage } = createGameHarness(store);
+	test('a blob never shows a workspace it would not actually run in', () => {
+		const harness = createGameHarness(store);
+		harness.service.setTarget(folder, 'test', 'local');
+		const remote = gameTestSession('remote', 'vscode (devbox)');
+		harness.sessions.push(remote);
+		const brought = harness.service.recruit(remote);
+		const child = harness.service.spawn(brought);
+		const live = harness.service.units.get().find(unit => unit.id === child)!;
+		// A board reloaded without its sessions must not fall back to the local dock default for either unit.
+		const restored = createGameHarness(store, harness.storage);
+		const [broughtUnit, childUnit] = restored.service.units.get();
+		assert.deepStrictEqual({
+			childLabel: live.workspaceLabel, childEditable: live.canChooseWorkspace,
+			unavailableBrought: broughtUnit.workspaceLabel, unavailableChild: childUnit.workspaceLabel,
+		}, {
+			childLabel: 'vscode (devbox)', childEditable: false,
+			unavailableBrought: undefined, unavailableChild: undefined,
+		});
+	});
+
+	test('each blob keeps its own workspace, and the dock target only seeds new blobs', async () => {
+		const devBox = URI.parse('vscode-remote://ssh-remote+devbox/home/ben/vscode');
+		const { service, requests } = createGameHarness(store);
+		service.setTarget(folder, 'test', 'local');
+		const local = service.spawn();
+		const remote = service.spawn();
+		service.setUnitTarget(remote, devBox, 'test', 'remote');
+		// Changing the dock default afterwards must not move blobs that already recorded a workspace.
+		service.setTarget(URI.file('C:\\work\\other'), 'test', 'other');
+		service.setDraft(local, 'Do work here');
+		service.setDraft(remote, 'Do work there');
+		await service.dispatch(local);
+		await service.dispatch(remote);
+		assert.deepStrictEqual(requests.map(request => ({ folder: request.folder?.toString(), sessionTypeId: request.createOptions?.sessionTypeId })), [
+			{ folder: folder.toString(), sessionTypeId: 'local' },
+			{ folder: devBox.toString(), sessionTypeId: 'remote' },
+		]);
+	});
+
+	test('a blob reports the workspace it works in, and stops being retargetable once bound to a session', async () => {
+		const devBox = URI.parse('vscode-remote://ssh-remote+devbox/home/ben/vscode');
+		const harness = createGameHarness(store);
+		const draft = harness.service.spawn();
+		harness.service.setUnitTarget(draft, devBox, 'test', 'remote');
+		const beforeDispatch = harness.service.units.get()[0];
+		harness.service.setDraft(draft, 'Do work');
+		await harness.service.dispatch(draft);
+		const brought = gameTestSession('existing', 'org/repo');
+		harness.sessions.push(brought);
+		harness.service.recruit(brought);
+		const [dispatched, recruited] = harness.service.units.get();
+		assert.deepStrictEqual({
+			draftLabel: beforeDispatch.workspaceLabel, draftEditable: beforeDispatch.canChooseWorkspace,
+			dispatchedEditable: dispatched.canChooseWorkspace,
+			recruitedLabel: recruited.workspaceLabel, recruitedEditable: recruited.canChooseWorkspace,
+		}, {
+			draftLabel: 'vscode (ssh-remote+devbox)', draftEditable: true,
+			dispatchedEditable: false,
+			recruitedLabel: 'org/repo', recruitedEditable: false,
+		});
+		assert.throws(() => harness.service.setUnitTarget(draft, folder, 'test', 'local'), /already works in its session's workspace/);
+	});
+
+	test('blobs saved before per-blob workspaces fall back to the dock target', async () => {
+		const { service, storage, requests } = createGameHarness(store);
+		const id = service.spawn();
+		service.setDraft(id, 'Do work');
+		const restored = createGameHarness(store, storage);
+		restored.service.setTarget(folder, 'test', 'local');
+		await restored.service.dispatch(id);
+		assert.deepStrictEqual({
+			legacy: service.board.get().units[0].folder,
+			folder: restored.requests[0].folder?.toString(),
+			untouched: requests,
+		}, { legacy: undefined, folder: folder.toString(), untouched: [] });
+	});
+
+	test('restores coordinates, assignments, and unsent orders without dispatching', () => {		const { service, storage } = createGameHarness(store);
 		const task = service.addTask('Test', 'Run the tests');
 		const unit = service.spawn();
 		service.assign(unit, task);

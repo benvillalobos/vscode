@@ -16,7 +16,7 @@ import { IChatEntitlementService } from '../../../../../workbench/services/chat/
 import { IChatService, IChatUsage } from '../../../../../workbench/contrib/chat/common/chatService/chatService.js';
 import { ILanguageModelChatMetadata, ILanguageModelsService } from '../../../../../workbench/contrib/chat/common/languageModels.js';
 import { IChatModel, IChatModelInputState, IChatRequestModel, IChatResponseModel, IInputModel } from '../../../../../workbench/contrib/chat/common/model/chatModel.js';
-import { ChatInteractivity, IChat, ISession, SessionStatus } from '../../../../services/sessions/common/session.js';
+import { ChatInteractivity, IChat, ISession, ISessionWorkspace, SessionStatus } from '../../../../services/sessions/common/session.js';
 import { ICreateNewSessionOptions, ISendRequestOptions, ISessionsManagementService, NewSessionRequestOptions } from '../../../../services/sessions/common/sessionsManagement.js';
 import { GameService } from '../../browser/gameService.js';
 
@@ -56,7 +56,7 @@ export function gameTestChatModel(resource: URI, promptTokens = 0, completionTok
 	return { model, usage, inputState };
 }
 
-export function gameTestSession(id: string): ISession & { readonly chats: ISettableObservable<readonly IChat[]> } {
+export function gameTestSession(id: string, workspaceLabel?: string): ISession & { readonly chats: ISettableObservable<readonly IChat[]> } {
 	const chat = gameTestChat(id);
 	return new class extends mock<ISession>() {
 		override readonly resource = URI.parse(`game-test:/session/${id}`);
@@ -68,7 +68,7 @@ export function gameTestSession(id: string): ISession & { readonly chats: ISetta
 		override readonly chats = observableValue<readonly IChat[]>(this, [chat]);
 		override readonly capabilities = constObservable({ supportsMultipleChats: true, supportsDelete: true });
 		override readonly isArchived = constObservable(false);
-		override readonly workspace = constObservable(undefined);
+		override readonly workspace = constObservable(workspaceLabel ? { label: workspaceLabel } as ISessionWorkspace : undefined);
 	};
 }
 

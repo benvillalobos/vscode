@@ -13,6 +13,7 @@ import { fixtureResourceUri } from '../../../../../workbench/test/browser/compon
 import { ISessionsManagementService } from '../../../../services/sessions/common/sessionsManagement.js';
 import { ISessionsService } from '../../../../services/sessions/browser/sessionsService.js';
 import { ISessionsProvidersService } from '../../../../services/sessions/browser/sessionsProvidersService.js';
+import { ISessionsRecentWorkspacesService } from '../../../../services/sessions/browser/sessionsRecentWorkspacesService.js';
 import { ChatInteractivity, SessionStatus } from '../../../../services/sessions/common/session.js';
 import { IGameService } from '../../browser/gameService.js';
 import { GameWidget } from '../../browser/gameWidget.js';
@@ -90,6 +91,9 @@ function renderGame(ctx: ComponentFixtureContext, width: number, minimized = fal
 			reg.defineInstance(ISessionsService, new class extends mock<ISessionsService>() { }());
 			reg.defineInstance(ISessionsProvidersService, new class extends mock<ISessionsProvidersService>() { }());
 			reg.defineInstance(IFileDialogService, new class extends mock<IFileDialogService>() { }());
+			reg.defineInstance(ISessionsRecentWorkspacesService, new class extends mock<ISessionsRecentWorkspacesService>() {
+				override getRecentWorkspaces() { return []; }
+			}());
 			reg.defineInstance(IQuickInputService, new class extends mock<IQuickInputService>() { }());
 		},
 	});

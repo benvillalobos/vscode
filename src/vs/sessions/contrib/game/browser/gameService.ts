@@ -22,7 +22,7 @@ import { ILanguageModelsService } from '../../../../workbench/contrib/chat/commo
 import { IChatModel } from '../../../../workbench/contrib/chat/common/model/chatModel.js';
 import { ISessionsManagementService } from '../../../services/sessions/common/sessionsManagement.js';
 import { ChatInteractivity, IChat, ISession, SessionStatus } from '../../../services/sessions/common/session.js';
-import { clampGamePoint, emptyGameBoard, GameBoard, GamePoint, gameSatellitePoint, gameSpawnPoint, GameTask, GameUnit, isGameBoard, nearestGameTask } from '../common/gameBoard.js';
+import { clampGamePoint, emptyGameBoard, GameBoard, GamePoint, gameSatellitePoint, gameSpawnPoint, GameTask, GameUnit, gameUnitTarget, gameWorkspaceLabel, isGameBoard, nearestGameTask } from '../common/gameBoard.js';
 
 const BOARD_STORAGE_KEY = 'sessions.game.board.v1';
 
@@ -50,6 +50,10 @@ export interface GameLiveUnit extends GameUnit {
 	readonly canSpawnChild: boolean;
 	readonly automatic?: boolean;
 	readonly contextUsagePercent?: number;
+	/** Where the unit works: the live session's workspace once dispatched, otherwise its pending target. */
+	readonly workspaceLabel?: string;
+	/** Whether the unit's workspace can still be changed, which stops once it is bound to a real session or parent. */
+	readonly canChooseWorkspace: boolean;
 }
 
 export const IGameService = createDecorator<IGameService>('sessionsGameService');
@@ -67,6 +71,7 @@ export interface IGameService {
 	toggleMinimize(taskId: string): void;
 	setDraft(unitId: string, draft: string): void;
 	setTarget(folder: URI, providerId: string, sessionTypeId: string): void;
+	setUnitTarget(unitId: string, folder: URI, providerId: string, sessionTypeId: string): void;
 	setDefaultModel(modelId: string | undefined): void;
 	setDefaultPermissionLevel(permissionLevel: string | undefined): void;
 	recruit(session: ISession): string;
@@ -135,6 +140,17 @@ export class GameService extends Disposable implements IGameService {
 			const result: GameLiveUnit[] = [];
 			const sessions = sessionsManagementService.getSessions();
 			const resolve = (unit: GameUnit) => unit.session ? sessionsManagementService.getSession(URI.parse(unit.session)) : undefined;
+			/** A unit's stored target only describes where it runs while it is still a free draft. Children run in their parent's session. */
+			const workspaceLabel = (unit: GameUnit, session: ISession | undefined) => {
+				if (session) {
+					return session.workspace.read(reader)?.label;
+				}
+				if (unit.parentId) {
+					return resolve(board.units.find(candidate => candidate.id === unit.parentId) ?? unit)?.workspace.read(reader)?.label;
+				}
+				const target = unit.session ? undefined : gameUnitTarget(board, unit).folder;
+				return target ? gameWorkspaceLabel(target) : undefined;
+			};
 			const add = (unit: GameUnit, session: ISession | undefined, chat: IChat | undefined, automatic = false) => {
 				if (session?.isArchived.read(reader) || chat?.isArchived.read(reader) || chat?.interactivity.read(reader) === ChatInteractivity.Hidden) {
 					return;
@@ -151,6 +167,8 @@ export class GameService extends Disposable implements IGameService {
 					canSpawnChild: !!session?.capabilities.read(reader).supportsMultipleChats,
 					automatic,
 					contextUsagePercent: chat && status !== 'unavailable' ? this.contextUsage(chatModels.get(chat.resource), chat, reader) : undefined,
+					workspaceLabel: workspaceLabel(unit, session),
+					canChooseWorkspace: !automatic && !unit.session && !unit.parentId,
 				});
 			};
 			for (const unit of board.units) {
@@ -246,6 +264,8 @@ export class GameService extends Disposable implements IGameService {
 		this.save({ ...board, units: [...board.units, {
 			id, name: localize('gameUnitName', "Blob {0}", board.units.length + 1), draft: '',
 			parentId, taskId: parent?.taskId, ...point,
+			// Snapshot the dock's target so each recruit records its own workspace and later default changes leave it alone.
+			...(parent ? {} : { folder: board.folder, providerId: board.providerId, sessionTypeId: board.sessionTypeId }),
 		}] });
 		return id;
 	}
@@ -342,6 +362,14 @@ export class GameService extends Disposable implements IGameService {
 		this.save({ ...this.state.get(), folder: folder.toString(), providerId, sessionTypeId });
 	}
 
+	setUnitTarget(unitId: string, folder: URI, providerId: string, sessionTypeId: string): void {
+		const unit = this.state.get().units.find(unit => unit.id === unitId);
+		if (!unit || unit.session || unit.parentId) {
+			throw new Error(localize('gameUnitTargetFixed', "This blob already works in its session's workspace. Spawn a new blob to target a different one."));
+		}
+		this.updateUnit(unitId, { folder: folder.toString(), providerId, sessionTypeId });
+	}
+
 	setDefaultModel(modelId: string | undefined): void {
 		this.save({ ...this.state.get(), modelId });
 	}
@@ -423,13 +451,14 @@ export class GameService extends Disposable implements IGameService {
 				this.updateUnit(unitId, { session: session.resource.toString(), chat: chat.resource.toString() });
 				await this.sessionsManagementService.sendBackgroundRequest(session, chat, { query });
 			} else {
-				if (!board.folder) {
-					throw new Error(localize('gameChooseWorkspace', "Choose a workspace in the command dock before dispatching."));
+				const target = gameUnitTarget(board, unit);
+				if (!target.folder) {
+					throw new Error(localize('gameChooseWorkspace', "Choose a workspace for this blob, or set a default in the command dock, before dispatching."));
 				}
 				const session = await this.sessionsManagementService.createAndSendNewChatRequest(
-					URI.parse(board.folder), { query, title: task?.title || unit.name },
+					URI.parse(target.folder), { query, title: task?.title || unit.name },
 					{
-						providerId: board.providerId, sessionTypeId: board.sessionTypeId,
+						providerId: target.providerId, sessionTypeId: target.sessionTypeId,
 						isolationMode: 'workspace',
 						...(board.modelId ? { modelId: board.modelId } : {}),
 						...(board.permissionLevel ? { permissionLevel: board.permissionLevel } : {}),

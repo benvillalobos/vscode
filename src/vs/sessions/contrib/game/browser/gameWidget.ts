@@ -23,7 +23,7 @@ import { FileAccess } from '../../../../base/common/network.js';
 import { Disposable, DisposableMap, DisposableStore, MutableDisposable, toDisposable } from '../../../../base/common/lifecycle.js';
 import { autorun, observableValue } from '../../../../base/common/observable.js';
 import { ResourceMap } from '../../../../base/common/map.js';
-import { basename, isEqual } from '../../../../base/common/resources.js';
+import { isEqual } from '../../../../base/common/resources.js';
 import { ThemeIcon } from '../../../../base/common/themables.js';
 import { URI } from '../../../../base/common/uri.js';
 import { localize } from '../../../../nls.js';
@@ -35,15 +35,16 @@ import { IInstantiationService } from '../../../../platform/instantiation/common
 import { getDefaultHoverDelegate } from '../../../../base/browser/ui/hover/hoverDelegateFactory.js';
 import { INotificationService } from '../../../../platform/notification/common/notification.js';
 import { IProductService } from '../../../../platform/product/common/productService.js';
-import { IQuickInputService } from '../../../../platform/quickinput/common/quickInput.js';
+import { IQuickInputService, IQuickPickItem, IQuickPickSeparator } from '../../../../platform/quickinput/common/quickInput.js';
 import { defaultButtonStyles, defaultInputBoxStyles } from '../../../../platform/theme/browser/defaultStyles.js';
 import { ChatPermissionLevel } from '../../../../workbench/contrib/chat/common/constants.js';
 import { ChatPetState, getChatPetSpriteName } from '../../../../workbench/contrib/chat/common/chatPet.js';
 import { ISessionsProvidersService } from '../../../services/sessions/browser/sessionsProvidersService.js';
+import { ISessionsRecentWorkspacesService } from '../../../services/sessions/browser/sessionsRecentWorkspacesService.js';
 import { ISessionsManagementService } from '../../../services/sessions/common/sessionsManagement.js';
 import { ISession, SessionStatus, SessionTypeAuthRequirement } from '../../../services/sessions/common/session.js';
 import { ARCHIVE_SESSION_COMMAND_ID } from '../../../common/sessionCommands.js';
-import { clampGamePoint, GamePoint, GameTask, gameTaskAssignmentRadius, nearestGameTask } from '../common/gameBoard.js';
+import { clampGamePoint, GamePoint, GameTask, gameTaskAssignmentRadius, gameWorkspaceLabel, nearestGameTask } from '../common/gameBoard.js';
 import { GameLiveUnit, IGameService } from './gameService.js';
 import { GameChatSideBar } from './gameChatSideBar.js';
 
@@ -195,6 +196,7 @@ export class GameWidget extends Disposable {
 	private readonly selectionStatus = $('.game-selection-status');
 	private readonly selectionDetail = $('.game-selection-detail');
 	private readonly selectionContext = $('.game-selection-context');
+	private readonly selectionWorkspaceButton: Button;
 	private readonly selectionDescriptionButton: Button;
 	private readonly taskEditStore = this._register(new DisposableStore());
 	private editingTask: { id: string; field: 'title' | 'prompt' } | undefined;
@@ -239,6 +241,7 @@ export class GameWidget extends Disposable {
 		@IInstantiationService private readonly instantiationService: IInstantiationService,
 		@ISessionsManagementService private readonly managementService: ISessionsManagementService,
 		@ISessionsProvidersService private readonly providersService: ISessionsProvidersService,
+		@ISessionsRecentWorkspacesService private readonly recentWorkspacesService: ISessionsRecentWorkspacesService,
 		@INotificationService private readonly notificationService: INotificationService,
 		@IHoverService private readonly hoverService: IHoverService,
 		@IContextMenuService private readonly contextMenuService: IContextMenuService,
@@ -410,6 +413,9 @@ export class GameWidget extends Disposable {
 			}
 		}));
 		this.singleSelection.append(this.selectionTask, this.selectionDetail, this.selectionContext);
+		this.selectionWorkspaceButton = this._register(new Button(this.singleSelection, editableTextStyles));
+		this.selectionWorkspaceButton.element.classList.add('game-selection-detail', 'game-selection-workspace');
+		this._register(this.selectionWorkspaceButton.onDidClick(() => this.run(() => this.chooseUnitWorkspace())));
 		this.selectionDescriptionButton = this._register(new Button(this.singleSelection, {
 			...editableTextStyles,
 			buttonForeground: 'var(--vscode-descriptionForeground)',
@@ -729,8 +735,8 @@ export class GameWidget extends Disposable {
 			node.button.element.setAttribute('aria-label', contextLabel ? localize('gameUnitContextAria', "{0}. {1}", label, contextLabel) : label);
 		}
 		this.census.textContent = localize('gameCensusResults', "{0} units   /   {1} working   /   {2} need you   /   {3}", units.length, working, needsInput, gameResultCountLabel(resultsReady));
-		this.workspaceButton.label = `$(${Codicon.folder.id}) ${board.folder ? basename(URI.parse(board.folder)) : localize('gameWorkspace', "Choose Workspace")}`;
-		this.workspaceButton.element.setAttribute('aria-label', board.folder ? localize('gameTarget', "Workspace: {0}. Provider: {1}. Change deployment target.", URI.parse(board.folder).fsPath, board.sessionTypeId ?? '') : localize('gameWorkspace', "Choose Workspace"));
+		this.workspaceButton.label = `$(${Codicon.folder.id}) ${board.folder ? gameWorkspaceLabel(board.folder) : localize('gameWorkspace', "Choose Workspace")}`;
+		this.workspaceButton.element.setAttribute('aria-label', board.folder ? localize('gameTarget', "Default workspace: {0}. Provider: {1}. New blobs start here; each blob can be pointed elsewhere.", URI.parse(board.folder).fsPath, board.sessionTypeId ?? '') : localize('gameWorkspace', "Choose Workspace"));
 		this.modelButton.label = `$(${Codicon.sparkle.id}) ${board.modelId ? this.gameDefaultModelLabel(board.modelId) : localize('gameDefaultModel', "Default Model")}`;
 		this.modelButton.element.setAttribute('aria-label', board.modelId ? localize('gameModelSet', "Default model: {0}. Change the model new recruits are dispatched with.", this.gameDefaultModelLabel(board.modelId)) : localize('gameDefaultModelHint', "Set the model new recruits are dispatched with."));
 		this.permissionButton.label = `$(${Codicon.shield.id}) ${gamePermissionLabel(board.permissionLevel)}`;
@@ -778,6 +784,7 @@ export class GameWidget extends Disposable {
 		this.selectionContext.classList.toggle('game-context-warning', unit?.contextUsagePercent !== undefined && unit.contextUsagePercent > 50);
 		this.selectionTask.textContent = unit ? task ? localize('gameAssignedTo', "Assigned to {0}", task.title) : localize('gameNoAssignment', "No task assigned. Drag near a flag or choose Assign Task.") : '';
 		this.orderPreview.textContent = task?.prompt ?? localize('gameNoTaskBrief', "No task brief. Only your typed orders will be sent.");
+		this.refreshWorkspace(unit);
 		this.selectionDetail.textContent = unit ? unit.activity || (unit.session ? localize('gameFiles', "{0} files changed. {1}", unit.files, unit.readOnly ? localize('gameReadOnly', "Read-only worker. Open Chat to observe.") : localize('gameLiveStatus', "Status is live, not simulated progress.")) : localize('gameDraftUnit', "Local recruit. Dispatch creates a real session; spawning and movement are free.")) : task?.prompt ?? localize('gameIntro', "Create task sites, deploy blobs, and watch real work unfold. Nearby units belong to a task; smaller linked units are child chats.");
 		this.changingPrompt = true;
 		this.prompt.value = unit?.draft ?? '';
@@ -790,6 +797,25 @@ export class GameWidget extends Disposable {
 		this.childButton.enabled = !!unit?.session && !unit.chat && !unit.automatic && unit.canSpawnChild && !unit.readOnly;
 		this.assignButton.enabled = !!unit && !unit.automatic && tasks.length > 0 && !busy;
 		this.removeButton.enabled = !!this.selected && (!unit || !unit.automatic) && unit?.status !== 'sending';
+	}
+
+	/** Shows the selected blob's workspace, editable only while it is still a draft that has not bound to a session. */
+	private refreshWorkspace(unit: GameLiveUnit | undefined): void {
+		const element = this.selectionWorkspaceButton.element;
+		element.style.display = unit ? '' : 'none';
+		if (!unit) {
+			return;
+		}
+		const editable = unit.canChooseWorkspace;
+		const label = unit.workspaceLabel
+			?? (editable ? localize('gameNoWorkspace', "Choose Workspace") : localize('gameUnknownWorkspace', "Unknown"));
+		this.selectionWorkspaceButton.label = localize('gameUnitWorkspace', "Workspace: {0}", label);
+		this.selectionWorkspaceButton.enabled = editable;
+		const description = editable
+			? localize('gameUnitWorkspaceEditAria', "Workspace: {0}. Choose where this blob works. Nothing is dispatched.", label)
+			: localize('gameUnitWorkspaceFixedAria', "Workspace: {0}. Set by this blob's session.", label);
+		this.selectionWorkspaceButton.setAriaLabel(description);
+		this.selectionWorkspaceButton.setTitle(description);
 	}
 
 	private refreshRoster(units: readonly GameLiveUnit[]): void {
@@ -1302,19 +1328,65 @@ export class GameWidget extends Disposable {
 		status(task.minimized ? localize('gameExpanded', "{0} expanded. Blobs are visible again.", task.title) : localize('gameMinimized', "{0} minimized. Its blobs are hidden.", task.title));
 	}
 
-	private async chooseWorkspace(): Promise<void> {
-		const folders = await this.fileDialogService.showOpenDialog({ canSelectFiles: false, canSelectFolders: true, canSelectMany: false, title: localize('gameChooseFolder', "Choose Deployment Workspace") });
-		if (!folders?.[0]) {
-			return;
+	/**
+	 * Picks a deployment target. Recent workspaces come first so remote entries like a dev box are reachable;
+	 * the folder dialog only ever sees this window's file system.
+	 */
+	private async pickTarget(title: string): Promise<{ folder: URI; providerId: string; sessionTypeId: string } | undefined> {
+		type TargetPick = IQuickPickItem & { readonly folder?: URI };
+		const recents = this.recentWorkspacesService.getRecentWorkspaces();
+		const items: (TargetPick | IQuickPickSeparator)[] = recents.map((recent): TargetPick => ({
+			label: recent.workspace.label,
+			description: recent.workspace.description,
+			detail: recent.workspace.group,
+			folder: recent.workspace.uri,
+		}));
+		if (items.length) {
+			items.push({ type: 'separator' });
 		}
-		const folder = folders[0];
+		items.push({ label: localize('gameBrowseWorkspace', "Browse...") });
+		const picked = await this.quickInputService.pick(items, { title, placeHolder: localize('gameWorkspaceHint', "Pick where this work runs. Tasks and the map stay on this machine.") });
+		if (!picked) {
+			return undefined;
+		}
+		let folder = picked.folder;
+		if (!folder) {
+			const folders = await this.fileDialogService.showOpenDialog({ canSelectFiles: false, canSelectFolders: true, canSelectMany: false, title });
+			folder = folders?.[0];
+		}
+		if (!folder) {
+			return undefined;
+		}
 		const targets = this.managementService.getSessionTypesForFolder(folder).filter(target => target.sessionType.authRequirement !== SessionTypeAuthRequirement.Unusable);
 		if (!targets.length) {
 			throw new Error(localize('gameNoProvider', "No agent provider can work in this folder. Configure a provider in the Agents window first."));
 		}
-		const target = await this.quickInputService.pick(targets.map(target => ({ label: target.sessionType.label, description: target.providerId, target })), { title: localize('gameChooseProvider', "Choose Agent Provider"), placeHolder: localize('gameProviderHint', "Uses this provider's existing model and approval defaults") });
+		const target = targets.length === 1 ? { target: targets[0] } : await this.quickInputService.pick(
+			targets.map(target => ({ label: target.sessionType.label, description: target.providerId, target })),
+			{ title: localize('gameChooseProvider', "Choose Agent Provider"), placeHolder: localize('gameProviderHint', "Uses this provider's existing model and approval defaults") });
+		if (!target) {
+			return undefined;
+		}
+		this.recentWorkspacesService.addRecentWorkspace(folder, target.target.providerId, false);
+		return { folder, providerId: target.target.providerId, sessionTypeId: target.target.sessionType.id };
+	}
+
+	private async chooseWorkspace(): Promise<void> {
+		const target = await this.pickTarget(localize('gameChooseFolder', "Choose Default Deployment Workspace"));
 		if (target) {
-			this.gameService.setTarget(folder, target.target.providerId, target.target.sessionType.id);
+			this.gameService.setTarget(target.folder, target.providerId, target.sessionTypeId);
+		}
+	}
+
+	private async chooseUnitWorkspace(): Promise<void> {
+		const id = this.selected;
+		if (!id) {
+			return;
+		}
+		const target = await this.pickTarget(localize('gameChooseUnitFolder', "Choose Workspace for This Blob"));
+		if (target && this.selected === id) {
+			this.gameService.setUnitTarget(id, target.folder, target.providerId, target.sessionTypeId);
+			status(localize('gameUnitWorkspaceSet', "Blob will work in {0}.", gameWorkspaceLabel(target.folder.toString())));
 		}
 	}
 

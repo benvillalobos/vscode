@@ -609,6 +609,14 @@
 	white-space: nowrap;
 }
 
+.game-world .game-selection-workspace.monaco-button {
+	display: block;
+	width: 100%;
+	padding: 0;
+	text-align: left;
+	color: var(--vscode-descriptionForeground);
+}
+
 .game-world .game-brief {
 	font-size: var(--vscode-fontSize-label2);
 	margin-top: var(--vscode-spacing-size60);
