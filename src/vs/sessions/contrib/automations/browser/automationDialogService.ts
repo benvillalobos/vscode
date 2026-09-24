@@ -100,6 +100,8 @@ export class AutomationDialogService implements IAutomationDialogService {
 		const state: IFormState = {
 			name: initial?.name ?? '',
 			interval: initial?.schedule.interval ?? 'daily',
+			cronExpression: initial?.schedule.cronExpression ?? '',
+			cronTimeZone: initial?.schedule.cronTimeZone,
 			hour: initial?.schedule.scheduleHour ?? 9,
 			minute: initial?.schedule.scheduleMinute ?? 0,
 			day: initial?.schedule.scheduleDay ?? 1,
@@ -147,6 +149,7 @@ export class AutomationDialogService implements IAutomationDialogService {
 				scheduleHour: state.hour,
 				scheduleMinute: state.minute,
 				scheduleDay: state.day,
+				...(state.interval === 'cron' ? { cronExpression: state.cronExpression?.trim(), cronTimeZone: state.cronTimeZone } : {}),
 			};
 			const prompt = getPrompt();
 			const sessionConfiguration = sessionConfigurationCapture.configuration;
@@ -199,7 +202,8 @@ export class AutomationDialogService implements IAutomationDialogService {
 				return;
 			}
 			revalidate();
-			if (validation.nameError || validation.promptError || validation.folderError || validation.sessionTypeError || validation.branchError) {
+			if (validation.nameError || validation.promptError || validation.folderError || validation.sessionTypeError || validation.branchError || validation.cronError
+				|| (state.interval === 'cron' && !state.cronExpression?.trim())) {
 				return;
 			}
 			if ((!state.isQuickChat && !state.folderUri) || !state.sessionTypeId || (state.isQuickChat && !state.providerId)) {

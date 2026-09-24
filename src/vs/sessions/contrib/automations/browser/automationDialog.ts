@@ -8,7 +8,7 @@ import { raceCancellationError, raceTimeout } from '../../../../base/common/asyn
 import { BaseActionViewItem, IBaseActionViewItemOptions } from '../../../../base/browser/ui/actionbar/actionViewItems.js';
 import { renderIcon } from '../../../../base/browser/ui/iconLabel/iconLabels.js';
 import { IButton } from '../../../../base/browser/ui/button/button.js';
-import { InputBox } from '../../../../base/browser/ui/inputbox/inputBox.js';
+import { InputBox, MessageType } from '../../../../base/browser/ui/inputbox/inputBox.js';
 import { ISelectOptionItem, SelectBox } from '../../../../base/browser/ui/selectBox/selectBox.js';
 import { Checkbox } from '../../../../base/browser/ui/toggle/toggle.js';
 import { IAction } from '../../../../base/common/actions.js';
@@ -48,7 +48,7 @@ import { ISession, ISessionWorkspaceBrowseAction, SESSION_WORKSPACE_GROUP_LOCAL 
 import { IGitRepository, IGitService } from '../../../../workbench/contrib/git/common/gitService.js';
 import { AutomationInterval, AutomationTarget, IAutomationDescriptor } from '../../../../workbench/contrib/chat/common/automations/automation.js';
 import { IAutomationService } from '../../../../workbench/contrib/chat/common/automations/automationService.js';
-import { DAYS_OF_WEEK } from '../../../../workbench/contrib/chat/common/automations/schedule.js';
+import { DAYS_OF_WEEK, getAutomationCronValidationError } from '../../../../workbench/contrib/chat/common/automations/schedule.js';
 import { ChatContextKeys } from '../../../../workbench/contrib/chat/common/actions/chatContextKeys.js';
 import { ChatAgentLocation } from '../../../../workbench/contrib/chat/common/constants.js';
 import { AgentSessionTarget } from '../../../../workbench/contrib/chat/browser/agentSessions/agentSessions.js';
@@ -77,6 +77,7 @@ const INTERVALS: { readonly value: AutomationInterval; readonly label: string }[
 	{ value: 'hourly', label: localize('automation.interval.hourly', "Hourly") },
 	{ value: 'daily', label: localize('automation.interval.daily', "Daily") },
 	{ value: 'weekly', label: localize('automation.interval.weekly', "Weekly") },
+	{ value: 'cron', label: localize('automation.interval.cron', "Cron") },
 ];
 
 // Picker popups mount outside the dialog, so allow their focus targets through its focus trap.
@@ -204,6 +205,8 @@ export function registerAutomationDialogKeyboardNavigation(
 export interface IFormState {
 	name: string;
 	interval: AutomationInterval;
+	cronExpression?: string;
+	cronTimeZone?: string;
 	hour: number;
 	minute: number;
 	day: number;
@@ -217,6 +220,7 @@ export interface IFormState {
 }
 
 export interface IValidationState {
+	cronError?: string;
 	nameError: string | undefined;
 	promptError: string | undefined;
 	folderError: string | undefined;
@@ -1090,13 +1094,54 @@ export function renderForm(
 		state.day = e.index;
 	}));
 
+	const cronRow = DOM.append(formContent, $('.automation-form-row.automation-form-cron-row'));
+	DOM.append(cronRow, $('span.automation-form-label', undefined, localize('automation.form.cron', "Cron expression")));
+	const cronInputContainer = DOM.append(cronRow, $('.automation-form-input-host'));
+	const cronInput = disposables.add(new InputBox(cronInputContainer, contextViewService, {
+		inputBoxStyles: defaultInputBoxStyles,
+		placeholder: '*/2 * * * *',
+		ariaLabel: localize('automation.form.cron', "Cron expression"),
+	}));
+	cronInput.value = state.cronExpression ?? '';
+	const cronTimeZone = state.cronTimeZone ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
+	const cronHint = DOM.append(cronRow, $('.automation-form-hint', { id: 'automation-cron-hint' }, localize(
+		'automation.form.cronHint',
+		"Minute (0-59), hour (0-23), day of month (1-31), month (1-12 or JAN-DEC), day of week (0-7 or SUN-SAT; 0 and 7 are Sunday). Use *, lists (,), ranges (-), and steps (/) on * or ranges. Time zone: {0}.",
+		cronTimeZone,
+	)));
+	const cronError = DOM.append(cronRow, $('.automation-form-hint.automation-form-cron-error', { id: 'automation-cron-error', 'aria-live': 'polite' }));
+	cronInput.inputElement.setAttribute('aria-describedby', `${cronHint.id} ${cronError.id}`);
+	const updateCronValidation = () => {
+		const error = state.interval === 'cron' ? getAutomationCronValidationError(cronInput.value, cronTimeZone) : undefined;
+		cronError.textContent = error ?? '';
+		DOM.setVisibility(!!error, cronError);
+		cronInput.inputElement.setAttribute('aria-invalid', String(!!error));
+		if (error) {
+			cronInput.showMessage({ type: MessageType.ERROR, content: '' });
+		} else {
+			cronInput.hideMessage();
+		}
+	};
+	disposables.add(DOM.addDisposableListener(cronInput.inputElement, 'beforeinput', (event: InputEvent) => {
+		if (!event.isComposing && event.data && /[^a-zA-Z0-9\s*,/-]/.test(event.data)) {
+			event.preventDefault();
+		}
+	}));
+	disposables.add(cronInput.onDidChange(value => {
+		state.cronExpression = value;
+		updateCronValidation();
+		revalidate();
+	}));
 	const applyIntervalVisibility = () => {
 		const showTime = state.interval === 'daily' || state.interval === 'weekly';
 		const showDay = state.interval === 'weekly';
 		timeGroup.style.display = showTime ? '' : 'none';
 		dayGroup.style.display = showDay ? '' : 'none';
+		cronRow.style.display = state.interval === 'cron' ? '' : 'none';
+		updateCronValidation();
 	};
 	applyIntervalVisibility();
+	revalidate();
 	disposables.add(intervalSelect.onDidSelect(e => {
 		state.interval = INTERVALS[e.index].value;
 		applyIntervalVisibility();
@@ -1626,7 +1671,11 @@ export function updateSaveButtonState(
 		? localize('automation.form.branchRequired', "A branch is required for Worktree isolation.")
 		: undefined;
 
-	const valid = !validation.nameError && !validation.promptError && !validation.folderError && !validation.sessionTypeError && !validation.branchError;
+	validation.cronError = state.interval === 'cron'
+		? getAutomationCronValidationError(state.cronExpression ?? '', state.cronTimeZone ?? Intl.DateTimeFormat().resolvedOptions().timeZone)
+		: undefined;
+	const cronComplete = state.interval !== 'cron' || !!state.cronExpression?.trim();
+	const valid = cronComplete && !validation.cronError && !validation.nameError && !validation.promptError && !validation.folderError && !validation.sessionTypeError && !validation.branchError;
 	if (saveButton) {
 		saveButton.enabled = valid;
 	}

@@ -584,6 +584,10 @@
 	min-height: 1em;
 }
 
+.automation-form-cron-error {
+	color: var(--vscode-errorForeground);
+}
+
 .automation-form-checkbox-label {
 	font-size: var(--vscode-fontSize-body1, 13px);
 	color: var(--vscode-foreground);
