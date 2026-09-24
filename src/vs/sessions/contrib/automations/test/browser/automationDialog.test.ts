@@ -208,6 +208,7 @@ suite('Automation dialog layout', () => {
 		const scheduleSelect = form.querySelector<HTMLSelectElement>('.automation-form-schedule-select-container select')!;
 		const cronRow = form.querySelector<HTMLElement>('.automation-form-cron-row')!;
 		const cronInput = cronRow.querySelector('input')!;
+		const cronInputs = Array.from(cronRow.querySelectorAll('input'));
 		const cronError = cronRow.querySelector('.automation-form-cron-error')!;
 		const targetWindow = DOM.getWindow(form);
 		const selectInterval = (index: number) => {
@@ -215,20 +216,23 @@ suite('Automation dialog layout', () => {
 			scheduleSelect.dispatchEvent(new targetWindow.Event('change'));
 		};
 		const enterCron = (value: string) => {
-			cronInput.value = value;
-			cronInput.dispatchEvent(new targetWindow.Event('input'));
+			const parts = value ? value.split(' ') : [];
+			for (const [index, input] of cronInputs.entries()) {
+				input.value = parts[index] ?? '';
+				input.dispatchEvent(new targetWindow.Event('input'));
+			}
 			return {
 				value: state.cronExpression,
 				invalid: cronInput.getAttribute('aria-invalid'),
 				error: cronError.textContent,
-				borderError: !!cronRow.querySelector('.monaco-inputbox.error'),
+				borderError: !!cronRow.querySelector('.automation-cron-segments.invalid'),
 			};
 		};
 		selectInterval(4);
 		const empty = enterCron('');
-		assert.strictEqual(cronInput.placeholder, 'minute hour day month weekday');
+		assert.strictEqual(cronInput.placeholder, '*');
 		cronInput.dispatchEvent(new FocusEvent('focus'));
-		assert.strictEqual(cronRow.querySelector('#automation-cron-hint')?.textContent, 'Minute: * for every minute, 0-59, or */2 for every two minutes.');
+		assert.strictEqual(cronRow.querySelector('#automation-cron-hint')?.textContent, 'Every minute (*), 0-59, or */2 for every two minutes.');
 		assert.notStrictEqual(cronRow.style.display, 'none');
 		const invalid = enterCron('0 24 * * *');
 		const valid = enterCron('*/2 * * * *');
@@ -237,7 +241,7 @@ suite('Automation dialog layout', () => {
 		selectInterval(2);
 		const hidden = cronRow.style.display === 'none';
 		selectInterval(4);
-		assert.deepStrictEqual({ empty, invalid, valid, prevented: disallowed.defaultPrevented, hidden, restored: cronInput.value }, {
+		assert.deepStrictEqual({ empty, invalid, valid, prevented: disallowed.defaultPrevented, hidden, restored: cronInputs.map(input => input.value).join(' ') }, {
 			empty: { value: '', invalid: 'false', error: '', borderError: false },
 			invalid: { value: '0 24 * * *', invalid: 'true', error: 'Hour value is outside 0-23: 24', borderError: true },
 			valid: { value: '*/2 * * * *', invalid: 'false', error: '', borderError: false },
