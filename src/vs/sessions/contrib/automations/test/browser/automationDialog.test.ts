@@ -226,6 +226,9 @@ suite('Automation dialog layout', () => {
 		};
 		selectInterval(4);
 		const empty = enterCron('');
+		assert.strictEqual(cronInput.placeholder, 'minute hour day month weekday');
+		cronInput.dispatchEvent(new FocusEvent('focus'));
+		assert.strictEqual(cronRow.querySelector('#automation-cron-hint')?.textContent, 'Minute: * for every minute, 0-59, or */2 for every two minutes.');
 		assert.notStrictEqual(cronRow.style.display, 'none');
 		const invalid = enterCron('0 24 * * *');
 		const valid = enterCron('*/2 * * * *');

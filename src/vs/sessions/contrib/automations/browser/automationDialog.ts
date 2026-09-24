@@ -1099,16 +1099,32 @@ export function renderForm(
 	const cronInputContainer = DOM.append(cronRow, $('.automation-form-input-host'));
 	const cronInput = disposables.add(new InputBox(cronInputContainer, contextViewService, {
 		inputBoxStyles: defaultInputBoxStyles,
-		placeholder: '*/2 * * * *',
+		placeholder: localize('automation.form.cronPlaceholder', "minute hour day month weekday"),
 		ariaLabel: localize('automation.form.cron', "Cron expression"),
 	}));
 	cronInput.value = state.cronExpression ?? '';
 	const cronTimeZone = state.cronTimeZone ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
-	const cronHint = DOM.append(cronRow, $('.automation-form-hint', { id: 'automation-cron-hint' }, localize(
-		'automation.form.cronHint',
-		"Minute (0-59), hour (0-23), day of month (1-31), month (1-12 or JAN-DEC), day of week (0-7 or SUN-SAT; 0 and 7 are Sunday). Use *, lists (,), ranges (-), and steps (/) on * or ranges. Time zone: {0}.",
-		cronTimeZone,
-	)));
+	const cronHint = DOM.append(cronRow, $('.automation-form-hint', { id: 'automation-cron-hint' }));
+	const fieldHints = [
+		localize('automation.form.cronMinute', "Minute: * for every minute, 0-59, or */2 for every two minutes."),
+		localize('automation.form.cronHour', "Hour: * for every hour, or 0-23."),
+		localize('automation.form.cronDay', "Day of month: * for every day, or 1-31."),
+		localize('automation.form.cronMonth', "Month: * for every month, 1-12, or JAN-DEC."),
+		localize('automation.form.cronWeekday', "Weekday: * for every day, 0-7, or SUN-SAT. 0 and 7 are Sunday."),
+	];
+	const updateCronHint = (focused = DOM.getActiveElement() === cronInput.inputElement) => {
+		const prefix = cronInput.value.slice(0, cronInput.inputElement.selectionStart ?? 0).trimStart();
+		const field = prefix.split(/\s+/).length - 1;
+		cronHint.textContent = focused
+			? fieldHints[Math.min(field, fieldHints.length - 1)]
+			: localize('automation.form.cronTimeZone', "Evaluated in {0}.", cronTimeZone);
+	};
+	disposables.add(DOM.addDisposableListener(cronInput.inputElement, 'focus', () => updateCronHint(true)));
+	disposables.add(DOM.addDisposableListener(cronInput.inputElement, 'blur', () => updateCronHint(false)));
+	for (const event of ['click', 'keyup']) {
+		disposables.add(DOM.addDisposableListener(cronInput.inputElement, event, () => updateCronHint()));
+	}
+	updateCronHint();
 	const cronError = DOM.append(cronRow, $('.automation-form-hint.automation-form-cron-error', { id: 'automation-cron-error', 'aria-live': 'polite' }));
 	cronInput.inputElement.setAttribute('aria-describedby', `${cronHint.id} ${cronError.id}`);
 	const updateCronValidation = () => {
@@ -1129,6 +1145,7 @@ export function renderForm(
 	}));
 	disposables.add(cronInput.onDidChange(value => {
 		state.cronExpression = value;
+		updateCronHint();
 		updateCronValidation();
 		revalidate();
 	}));
