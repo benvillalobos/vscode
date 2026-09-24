@@ -612,6 +612,37 @@ suite('AgentHostAutomationStore', () => {
 		});
 	});
 
+	test('round trips cron expressions and their time zone through host create and update', async () => {
+		const connection = disposables.add(new TestAutomationConnection());
+		const storage = disposables.add(new InMemoryStorageService());
+		const store = disposables.add(new AgentHostAutomationStore('local-agent-host', connection, undefined, new NullLogService(), storage));
+		const schedule = {
+			interval: 'cron' as const, cronExpression: '*/2 * * * MON-FRI', cronTimeZone: 'Europe/Berlin',
+			scheduleHour: 0, scheduleMinute: 0, scheduleDay: 0,
+		};
+		const created = await store.createAutomation({
+			name: 'Cron review', prompt: 'Review changes.', schedule,
+			target: { kind: 'quickChat', providerId: 'local-agent-host', sessionTypeId: 'mock' },
+		});
+		const updated = await store.updateAutomation(created.id, { name: 'Renamed cron review', schedule: created.schedule });
+		const create = connection.dispatched[0].action;
+		const trigger = create.type === ActionType.AutomationCreateRequested ? create.definition.triggers[0] : undefined;
+		assert.deepStrictEqual({
+			created: created.schedule,
+			updated: updated.schedule,
+			wire: trigger?.kind === AutomationTriggerKind.Schedule ? trigger.schedule : undefined,
+		}, {
+			created: schedule,
+			updated: schedule,
+			wire: { expression: schedule.cronExpression, timeZone: schedule.cronTimeZone },
+		});
+		for (const change of [{ cronExpression: '*/3 * * * MON-FRI' }, { cronTimeZone: 'UTC' }]) {
+			const current = store.getAutomation(created.id)!;
+			await store.updateAutomation(created.id, { schedule: { ...current.schedule, ...change } });
+			assert.strictEqual((await store.updateAutomationIfUnchanged(created.id, { name: 'Stale edit' }, current)).kind, 'conflict');
+		}
+	});
+
 	test('does not forward generic chat modes to Agent Host session config', async () => {
 		const connection = disposables.add(new TestAutomationConnection());
 		const storage = disposables.add(new InMemoryStorageService());

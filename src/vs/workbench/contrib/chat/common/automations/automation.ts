@@ -8,9 +8,10 @@ import type { JsonPrimitive } from '../../../../../platform/agentHost/common/sta
 
 /**
  * How often an automation runs. `hourly` fires every hour from creation/update;
- * `daily`/`weekly` fire at the configured local-time hour/minute (and day-of-week).
+ * `daily`/`weekly` fire at the configured local-time hour/minute (and day-of-week);
+ * `cron` uses the Agent Host's five-field cron grammar.
  */
-export type AutomationInterval = 'manual' | 'hourly' | 'daily' | 'weekly';
+export type AutomationInterval = 'manual' | 'hourly' | 'daily' | 'weekly' | 'cron';
 
 /**
  * Describes the cadence at which an automation should fire.
@@ -22,10 +23,16 @@ export type AutomationInterval = 'manual' | 'hourly' | 'daily' | 'weekly';
 export interface IAutomationSchedule {
 	readonly interval: AutomationInterval;
 
-	/** Hour-of-day, 0-23. Ignored for `manual` and `hourly`. */
+	/** Five-field AHP cron expression. Required for `cron`. */
+	readonly cronExpression?: string;
+
+	/** Preserved host time zone for `cron`; defaults to the local time zone on creation. */
+	readonly cronTimeZone?: string;
+
+	/** Hour-of-day, 0-23. Only used for `daily` and `weekly`. */
 	readonly scheduleHour: number;
 
-	/** Minute-of-hour, 0-59. Ignored for `manual` and `hourly`. */
+	/** Minute-of-hour, 0-59. Ignored for `manual` and `cron`. */
 	readonly scheduleMinute: number;
 
 	/** Day-of-week, 0 (Sunday) through 6 (Saturday). Only used for `weekly`. */

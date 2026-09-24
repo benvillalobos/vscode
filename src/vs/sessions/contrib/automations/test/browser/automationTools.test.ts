@@ -788,6 +788,28 @@ suite('AutomationTools', () => {
 		});
 	});
 
+	test('configureAutomation validates cron schedules with the host parser', async () => {
+		const service = new FakeAutomationService();
+		const tool = new ConfigureAutomationTool(service, new FakeSessionsManagementService(createSession({ quickChat: true }), true), createConfigurationService());
+		const valid = await invoke(tool, {
+			name: 'Cron review', prompt: 'Review changes',
+			schedule: { interval: 'cron', cronExpression: '*/2 * * * *', cronTimeZone: 'UTC' },
+		}, CHAT_RESOURCE);
+		const invalid = await invoke(tool, {
+			name: 'Cron review', prompt: 'Review changes',
+			schedule: { interval: 'cron', cronExpression: '0 24 * * *' },
+		}, CHAT_RESOURCE);
+		assert.deepStrictEqual({
+			status: JSON.parse(getText(valid)).status,
+			schedules: service.created.map(automation => automation.schedule),
+			error: getText(invalid).includes('Hour value is outside 0-23'),
+		}, {
+			status: 'created',
+			schedules: [{ interval: 'cron', cronExpression: '*/2 * * * *', cronTimeZone: 'UTC', scheduleHour: 9, scheduleMinute: 0, scheduleDay: 1 }],
+			error: true,
+		});
+	});
+
 	test('configureAutomation rejects a current session without an available Automation authority', async () => {
 		const automationService = new FakeAutomationService();
 		automationService.available = false;
