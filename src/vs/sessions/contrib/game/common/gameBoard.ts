@@ -19,12 +19,18 @@ export interface GameTask extends GamePoint {
 	readonly minimized?: boolean;
 }
 
+export type GameIsolation = 'worktree' | 'workspace';
+
 /** Where a dispatch creates its session: a workspace folder and the provider that serves it. */
 export interface GameTarget {
 	readonly folder?: string;
 	readonly providerId?: string;
 	readonly sessionTypeId?: string;
+	/** Whether the dispatch gets its own worktree. Defaults to {@link gameDefaultIsolation}. */
+	readonly isolation?: GameIsolation;
 }
+
+export const gameDefaultIsolation: GameIsolation = 'workspace';
 
 export interface GameUnit extends GamePoint, GameTarget {
 	readonly id: string;
@@ -52,7 +58,7 @@ export const emptyGameBoard: GameBoard = { version: 1, tasks: [], units: [] };
 
 /** The workspace a unit dispatches into: its own target, or the board default for units saved before per-unit targets. */
 export function gameUnitTarget(board: GameBoard, unit: GameTarget): GameTarget {
-	return unit.folder ? { folder: unit.folder, providerId: unit.providerId, sessionTypeId: unit.sessionTypeId } : board;
+	return unit.folder ? { folder: unit.folder, providerId: unit.providerId, sessionTypeId: unit.sessionTypeId, isolation: unit.isolation } : board;
 }
 
 /** Short label for a workspace folder URI, qualified by the remote authority so dev box targets are distinguishable. */
@@ -98,15 +104,17 @@ export function isGameBoard(value: unknown): value is GameBoard {
 	const point = (value: GamePoint) => Number.isFinite(value.x) && Number.isFinite(value.y) && value.x >= 0 && value.x <= 100 && value.y >= 0 && value.y <= 100;
 	const optionalString = (value: unknown) => value === undefined || typeof value === 'string';
 	const optionalBoolean = (value: unknown) => value === undefined || typeof value === 'boolean';
+	const optionalIsolation = (value: unknown) => value === undefined || value === 'worktree' || value === 'workspace';
 	return board.version === 1
 		&& Array.isArray(board.tasks) && board.tasks.length <= 200
 		&& Array.isArray(board.units) && board.units.length <= 500
 		&& optionalString(board.folder) && optionalString(board.providerId) && optionalString(board.sessionTypeId)
+		&& optionalIsolation(board.isolation)
 		&& optionalString(board.modelId) && optionalString(board.permissionLevel)
 		&& board.tasks.every(task => task && typeof task.id === 'string' && typeof task.title === 'string' && typeof task.prompt === 'string' && point(task) && optionalBoolean(task.minimized))
 		&& board.units.every(unit => unit && typeof unit.id === 'string' && typeof unit.name === 'string' && typeof unit.draft === 'string' && point(unit)
 			&& optionalString(unit.taskId) && optionalString(unit.session) && optionalString(unit.chat) && optionalString(unit.parentId) && optionalString(unit.briefedTaskId)
-			&& optionalString(unit.folder) && optionalString(unit.providerId) && optionalString(unit.sessionTypeId))
+			&& optionalString(unit.folder) && optionalString(unit.providerId) && optionalString(unit.sessionTypeId) && optionalIsolation(unit.isolation))
 		&& new Set(board.tasks.map(task => task.id)).size === board.tasks.length
 		&& new Set(board.units.map(unit => unit.id)).size === board.units.length;
 }

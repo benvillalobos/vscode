@@ -4,6 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { constObservable, observableValue } from '../../../../../base/common/observable.js';
+import { Event } from '../../../../../base/common/event.js';
 import { mock } from '../../../../../base/test/common/mock.js';
 import { IFileDialogService } from '../../../../../platform/dialogs/common/dialogs.js';
 import { IQuickInputService } from '../../../../../platform/quickinput/common/quickInput.js';
@@ -89,7 +90,10 @@ function renderGame(ctx: ComponentFixtureContext, width: number, minimized = fal
 			}());
 			reg.defineInstance(ISessionsManagementService, harness.management);
 			reg.defineInstance(ISessionsService, new class extends mock<ISessionsService>() { }());
-			reg.defineInstance(ISessionsProvidersService, new class extends mock<ISessionsProvidersService>() { }());
+			reg.defineInstance(ISessionsProvidersService, new class extends mock<ISessionsProvidersService>() {
+				override getProviders() { return []; }
+				override onDidChangeProviders = Event.None;
+			}());
 			reg.defineInstance(IFileDialogService, new class extends mock<IFileDialogService>() { }());
 			reg.defineInstance(ISessionsRecentWorkspacesService, new class extends mock<ISessionsRecentWorkspacesService>() {
 				override getRecentWorkspaces() { return []; }

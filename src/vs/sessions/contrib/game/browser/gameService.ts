@@ -22,7 +22,7 @@ import { ILanguageModelsService } from '../../../../workbench/contrib/chat/commo
 import { IChatModel } from '../../../../workbench/contrib/chat/common/model/chatModel.js';
 import { ISessionsManagementService } from '../../../services/sessions/common/sessionsManagement.js';
 import { ChatInteractivity, IChat, ISession, SessionStatus } from '../../../services/sessions/common/session.js';
-import { clampGamePoint, emptyGameBoard, GameBoard, GamePoint, gameSatellitePoint, gameSpawnPoint, GameTask, GameUnit, gameUnitTarget, gameWorkspaceLabel, isGameBoard, nearestGameTask } from '../common/gameBoard.js';
+import { clampGamePoint, emptyGameBoard, GameBoard, gameDefaultIsolation, GameIsolation, GamePoint, gameSatellitePoint, gameSpawnPoint, GameTarget, GameTask, GameUnit, gameUnitTarget, gameWorkspaceLabel, isGameBoard, nearestGameTask } from '../common/gameBoard.js';
 
 const BOARD_STORAGE_KEY = 'sessions.game.board.v1';
 
@@ -54,6 +54,8 @@ export interface GameLiveUnit extends GameUnit {
 	readonly workspaceLabel?: string;
 	/** Whether the unit's workspace can still be changed, which stops once it is bound to a real session or parent. */
 	readonly canChooseWorkspace: boolean;
+	/** The pending target this draft dispatches into, or `undefined` once the unit is bound to a session. */
+	readonly target?: GameTarget;
 }
 
 export const IGameService = createDecorator<IGameService>('sessionsGameService');
@@ -72,6 +74,7 @@ export interface IGameService {
 	setDraft(unitId: string, draft: string): void;
 	setTarget(folder: URI, providerId: string, sessionTypeId: string): void;
 	setUnitTarget(unitId: string, folder: URI, providerId: string, sessionTypeId: string): void;
+	setUnitIsolation(unitId: string, isolation: GameIsolation): void;
 	setDefaultModel(modelId: string | undefined): void;
 	setDefaultPermissionLevel(permissionLevel: string | undefined): void;
 	recruit(session: ISession): string;
@@ -169,6 +172,7 @@ export class GameService extends Disposable implements IGameService {
 					contextUsagePercent: chat && status !== 'unavailable' ? this.contextUsage(chatModels.get(chat.resource), chat, reader) : undefined,
 					workspaceLabel: workspaceLabel(unit, session),
 					canChooseWorkspace: !automatic && !unit.session && !unit.parentId,
+					target: !automatic && !unit.session && !unit.parentId ? gameUnitTarget(board, unit) : undefined,
 				});
 			};
 			for (const unit of board.units) {
@@ -265,7 +269,7 @@ export class GameService extends Disposable implements IGameService {
 			id, name: localize('gameUnitName', "Blob {0}", board.units.length + 1), draft: '',
 			parentId, taskId: parent?.taskId, ...point,
 			// Snapshot the dock's target so each recruit records its own workspace and later default changes leave it alone.
-			...(parent ? {} : { folder: board.folder, providerId: board.providerId, sessionTypeId: board.sessionTypeId }),
+			...(parent ? {} : { folder: board.folder, providerId: board.providerId, sessionTypeId: board.sessionTypeId, isolation: board.isolation }),
 		}] });
 		return id;
 	}
@@ -370,6 +374,14 @@ export class GameService extends Disposable implements IGameService {
 		this.updateUnit(unitId, { folder: folder.toString(), providerId, sessionTypeId });
 	}
 
+	setUnitIsolation(unitId: string, isolation: GameIsolation): void {
+		const unit = this.state.get().units.find(unit => unit.id === unitId);
+		if (!unit || unit.session || unit.parentId) {
+			throw new Error(localize('gameUnitIsolationFixed', "This blob already runs in its session. Spawn a new blob to choose a different worktree setting."));
+		}
+		this.updateUnit(unitId, { isolation });
+	}
+
 	setDefaultModel(modelId: string | undefined): void {
 		this.save({ ...this.state.get(), modelId });
 	}
@@ -459,7 +471,7 @@ export class GameService extends Disposable implements IGameService {
 					URI.parse(target.folder), { query, title: task?.title || unit.name },
 					{
 						providerId: target.providerId, sessionTypeId: target.sessionTypeId,
-						isolationMode: 'workspace',
+						isolationMode: target.isolation ?? gameDefaultIsolation,
 						...(board.modelId ? { modelId: board.modelId } : {}),
 						...(board.permissionLevel ? { permissionLevel: board.permissionLevel } : {}),
 					},

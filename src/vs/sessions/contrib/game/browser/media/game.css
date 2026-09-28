@@ -609,12 +609,21 @@
 	white-space: nowrap;
 }
 
-.game-world .game-selection-workspace.monaco-button {
-	display: block;
-	width: 100%;
-	padding: 0;
-	text-align: left;
+.game-world .game-selection-workspace {
 	color: var(--vscode-descriptionForeground);
+}
+
+/* Workspace picker and worktree choice sit on one line so a draft blob's target reads as one decision. */
+.game-world .game-selection-draft-target {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: var(--vscode-spacing-size20);
+	margin-top: var(--vscode-spacing-size40);
+}
+
+.game-world .game-selection-draft-target .sessions-workspace-category-picker {
+	margin: 0;
 }
 
 .game-world .game-brief {
