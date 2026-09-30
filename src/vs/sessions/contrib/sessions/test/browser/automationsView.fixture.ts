@@ -11,6 +11,7 @@ import { Codicon } from '../../../../../base/common/codicons.js';
 import { ExtUri } from '../../../../../base/common/resources.js';
 import { URI } from '../../../../../base/common/uri.js';
 import { mock, upcastPartial } from '../../../../../base/test/common/mock.js';
+import { IChatModel } from '../../../../../workbench/contrib/chat/common/model/chatModel.js';
 import { IActionViewItemFactory, IActionViewItemService } from '../../../../../platform/actions/browser/actionViewItemService.js';
 import { IMenuService, MenuId } from '../../../../../platform/actions/common/actions.js';
 import { MenuService } from '../../../../../platform/actions/common/menuService.js';
@@ -102,6 +103,7 @@ class FixtureAutomationService extends mock<IAutomationService>() {
 	override canRunAutomation(): boolean { return true; }
 	override canUpdateAutomation(): boolean { return true; }
 	override canDeleteAutomation(): boolean { return true; }
+	override getAutomation(id: string): IAutomationDescriptor | undefined { return this.automations.get().find(automation => automation.id === id); }
 	override canStopRun(run: IAutomationRun): boolean { return run.externalResource !== undefined && (run.status === 'pending' || run.status === 'running'); }
 	override async stopRun(): Promise<void> { }
 }
@@ -112,7 +114,7 @@ class FixtureSessionsManagementService extends mock<ISessionsManagementService>(
 	override readonly onDidDeleteSession = Event.None;
 	override readonly onDidChangeSessions = Event.None;
 
-	constructor(runs: readonly IAutomationRun[]) {
+	constructor(runs: readonly IAutomationRun[], archived = false) {
 		super();
 		for (const [index, run] of runs.entries()) {
 			if (!run.sessionResource) {
@@ -127,12 +129,12 @@ class FixtureSessionsManagementService extends mock<ISessionsManagementService>(
 				icon: Codicon.account,
 				createdAt: new Date(run.startedAt),
 				workspace: constObservable({
-					uri: WORKSPACE,
-					label: 'vscode',
+					uri: run.externalResource ? URI.parse('github-remote-file://github/example/private-repo/HEAD') : WORKSPACE,
+					label: run.externalResource ? 'example/private-repo' : 'vscode',
 					icon: Codicon.folder,
 					folders: [],
 					requiresWorkspaceTrust: false,
-					isVirtualWorkspace: false,
+					isVirtualWorkspace: run.externalResource !== undefined,
 				}),
 				isQuickChat: constObservable(false),
 				title: constObservable(`Run ${index + 1}`),
@@ -147,7 +149,7 @@ class FixtureSessionsManagementService extends mock<ISessionsManagementService>(
 				modelId: constObservable(undefined),
 				mode: constObservable(undefined),
 				loading: constObservable(false),
-				isArchived: constObservable(false),
+				isArchived: constObservable(archived),
 				description: constObservable(undefined),
 				lastTurnEnd: constObservable(undefined),
 				chats: constObservable<readonly IChat[]>([]),
@@ -184,6 +186,7 @@ interface IAutomationsFixtureOptions {
 	readonly pluginTemplate?: boolean;
 	readonly showDropTarget?: boolean;
 	readonly cloud?: boolean;
+	readonly cloudSessionState?: 'unread' | 'archived' | 'followUp';
 }
 
 export default defineThemedFixtureGroup({ path: 'sessions/automations/' }, {
@@ -195,6 +198,18 @@ export default defineThemedFixtureGroup({ path: 'sessions/automations/' }, {
 	CloudNarrow: defineComponentFixture({
 		labels: { kind: 'screenshot' },
 		render: ctx => renderAutomations(ctx, { width: 520, height: 720, populated: true, cloud: true }),
+	}),
+	CloudCompletedUnread: defineComponentFixture({
+		labels: { kind: 'screenshot' },
+		render: ctx => renderAutomations(ctx, { width: 1000, height: 720, populated: true, cloud: true, cloudSessionState: 'unread' }),
+	}),
+	CloudArchived: defineComponentFixture({
+		labels: { kind: 'screenshot' },
+		render: ctx => renderAutomations(ctx, { width: 1000, height: 720, populated: true, cloud: true, cloudSessionState: 'archived' }),
+	}),
+	CloudFollowUp: defineComponentFixture({
+		labels: { kind: 'screenshot' },
+		render: ctx => renderAutomations(ctx, { width: 1000, height: 720, populated: true, cloud: true, cloudSessionState: 'followUp' }),
 	}),
 	Populated: defineComponentFixture({
 		labels: { kind: 'screenshot' },
@@ -275,7 +290,10 @@ function renderAutomations(ctx: ComponentFixtureContext, options: IAutomationsFi
 	const actionViewItemService = new FixtureActionViewItemService();
 	const customViewService = ctx.disposableStore.add(new CustomViewService(new NullLogService(), ctx.disposableStore.add(new InMemoryStorageService())));
 	const automationService = new FixtureAutomationService(data.automations, data.runs, options.catalogueState ?? 'ready', options.unavailableProviders ?? []);
-	const sessionsManagementService = new FixtureSessionsManagementService(data.runs.filter(run => run.externalResource === undefined || run.status === 'running'));
+	const sessionsManagementService = new FixtureSessionsManagementService(
+		data.runs.filter(run => options.cloudSessionState ? run.externalResource !== undefined && run.status === 'completed' : run.externalResource === undefined || run.status === 'running'),
+		options.cloudSessionState === 'archived',
+	);
 	const agentPluginService = new class extends mock<IAgentPluginService>() {
 		override readonly plugins = constObservable(options.pluginTemplate ? [
 			new class extends mock<IAgentPlugin>() {
@@ -339,7 +357,15 @@ function renderAutomations(ctx: ComponentFixtureContext, options: IAutomationsFi
 				override hasPendingResponse() { return false; }
 			}());
 			reg.defineInstance(IChatService, new class extends mock<IChatService>() {
-				override readonly chatModels = constObservable([]);
+				override readonly chatModels = constObservable<Iterable<IChatModel>>(options.cloudSessionState === 'followUp'
+					? data.runs.filter(run => run.externalResource !== undefined && run.status === 'completed').map(run => upcastPartial<IChatModel>({
+						sessionResource: run.sessionResource!,
+						onDidChange: Event.None,
+						getRequests: () => [],
+						requestInProgress: constObservable(true),
+						requestNeedsInput: constObservable(undefined),
+					}))
+					: []);
 			}());
 			reg.defineInstance(IChatSessionsService, new class extends mock<IChatSessionsService>() {
 				override async refreshChatSessionItems(): Promise<void> { }

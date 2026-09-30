@@ -1253,6 +1253,7 @@ class SessionItemRenderer implements ITreeRenderer<SessionListItem, FuzzyScore, 
 			/** Sessions whose hidden child rows should contribute in-progress status to the parent row. */
 			collapsedSessionIds?: IObservable<ReadonlySet<string>>;
 			getAdditionalContextKeys?: SessionContextKeyProvider;
+			showMetadataWhileActive?: (session: ISession) => boolean;
 			onboardingTarget?: IObservable<ISessionOnboardingTarget | undefined>;
 			isRenderedInExternalSection?: (session: ISession) => boolean;
 		},
@@ -1636,7 +1637,7 @@ class SessionItemRenderer implements ITreeRenderer<SessionListItem, FuzzyScore, 
 			let timeDate: Date | undefined;
 
 			// When the session is InProgress or NeedsInput, hide workspace/diff/time details in this row
-			const hideDetails = sessionStatus === SessionStatus.InProgress || sessionStatus === SessionStatus.NeedsInput;
+			const hideDetails = !this.options.showMetadataWhileActive?.(element) && (sessionStatus === SessionStatus.InProgress || sessionStatus === SessionStatus.NeedsInput);
 
 			if (!hideDetails) {
 				timeDate = element.updatedAt.read(reader);
@@ -1645,7 +1646,7 @@ class SessionItemRenderer implements ITreeRenderer<SessionListItem, FuzzyScore, 
 			const parts: HTMLElement[] = [];
 
 			const statusMessage = getSessionStatusMessage(sessionStatus, description);
-			if (sessionStatus !== SessionStatus.InProgress) {
+			if (sessionStatus !== SessionStatus.InProgress || !hideDetails) {
 				let icon: ThemeIcon;
 				if (isQuickChat) {
 					icon = Codicon.commentDiscussion;
@@ -6175,6 +6176,8 @@ export interface ISessionsFlatListOptions {
 	readonly onContextMenuAction?: (action: IAction, session: ISession) => boolean | Promise<boolean>;
 	/** Additional per-session context values shared by the inline toolbar and context menu. */
 	readonly getAdditionalContextKeys?: SessionContextKeyProvider;
+	/** Keeps repository and time visible alongside progress in history views. */
+	readonly showMetadataWhileActive?: (session: ISession) => boolean;
 	/** Whether opening a row immediately marks its session as read. Defaults to `true`. */
 	readonly markSessionReadOnOpen?: boolean;
 	/**
@@ -6263,6 +6266,7 @@ export class SessionsFlatList extends Disposable {
 				inlineRename: false,
 				handleToolbarAction: this.options.onToolbarAction,
 				getAdditionalContextKeys: this.options.getAdditionalContextKeys,
+				showMetadataWhileActive: this.options.showMetadataWhileActive,
 			},
 			approvalModel,
 			this.options.ciFixModel,

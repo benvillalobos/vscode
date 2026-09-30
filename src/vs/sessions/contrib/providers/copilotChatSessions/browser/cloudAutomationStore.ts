@@ -30,9 +30,8 @@ import { CloudAutomationApiClient, ICloudAutomationDefinition, ICloudAutomationM
 
 export const CLOUD_AUTOMATIONS_ENABLED_SETTING = 'chat.automations.cloud.enabled';
 const REPOSITORIES_STORAGE_KEY = 'cloudAutomations.repositories';
-const HISTORY_REFRESH_MS = 30_000;
-const HISTORY_DISCOVERY_REFRESH_MS = 5_000;
-const FULL_HISTORY_REFRESH_MS = HISTORY_REFRESH_MS;
+const HISTORY_REFRESH_MS = 15_000;
+const HISTORY_DISCOVERY_REFRESH_MS = HISTORY_REFRESH_MS;
 const TARGET_ELIGIBILITY_CACHE_LIMIT = 100;
 
 interface ICloudAutomationEntry {
@@ -125,6 +124,7 @@ export class CloudAutomationStore extends Disposable implements ISessionsProvide
 			reader.delayedStore.add(toDisposable(() => {
 				if (--this.historyObservers === 0) {
 					this.historyScheduler.cancel();
+					this.refreshScheduler.cancel();
 					this.historyRequest.value?.cancel();
 					this.historyRequest.clear();
 				}
@@ -328,6 +328,9 @@ export class CloudAutomationStore extends Disposable implements ISessionsProvide
 			}
 			this.entries.delete(id);
 			this.requestedHistory.delete(id);
+			if (this.entries.size === 0) {
+				this.refreshScheduler.cancel();
+			}
 			transaction(tx => {
 				this.automations.set(this.automations.get().filter(automation => automation.id !== id), tx);
 				this.history.set(this.history.get().filter(run => run.automationId !== id), tx);
@@ -345,7 +348,15 @@ export class CloudAutomationStore extends Disposable implements ISessionsProvide
 		if (token.isCancellationRequested) {
 			throw new CancellationError();
 		}
-		const current = await this.api.get(account, entry.repository, entry.definition.id, token);
+		let current: ICloudAutomationDefinition;
+		try {
+			current = await this.api.get(account, entry.repository, entry.definition.id, token);
+		} catch (error) {
+			if (error instanceof GitHubApiError && error.statusCode === 404 && !this._store.isDisposed && this.accountName.get() === account) {
+				this.refreshScheduler.schedule();
+			}
+			throw error;
+		}
 		this.assertAccount(account);
 		this.publish(entry.repository, current);
 		if (!this.canRunAutomation(id)) {
@@ -523,6 +534,10 @@ export class CloudAutomationStore extends Disposable implements ISessionsProvide
 			}
 			transaction(tx => {
 				this.automations.set([...snapshot].map(([id, entry]) => this.toAutomation(id, entry)), tx);
+				this.history.set(this.history.get().filter(run => snapshot.has(run.automationId)), tx);
+				if (snapshot.size === 0) {
+					this.historyFailed.set(false, tx);
+				}
 				this.definitionState.set(errors.length > 0 ? 'error' : 'ready', tx);
 				this.unavailableReason.set(undefined, tx);
 			});
@@ -578,7 +593,7 @@ export class CloudAutomationStore extends Disposable implements ISessionsProvide
 		const token = cancellation.token;
 		const retained = [...this.history.get()];
 		const now = Date.now();
-		const fullRefresh = !this.historyLoaded || this.lastFullHistoryRefresh === undefined || now - this.lastFullHistoryRefresh >= FULL_HISTORY_REFRESH_MS;
+		const fullRefresh = !this.historyLoaded || this.lastFullHistoryRefresh === undefined;
 		const activeDefinitions = new Set(retained.filter(run => run.status === 'pending' || run.status === 'running').map(run => run.automationId));
 		for (const [id, until] of this.requestedHistory) {
 			if (until <= now || !this.entries.has(id)) {
@@ -665,6 +680,10 @@ export class CloudAutomationStore extends Disposable implements ISessionsProvide
 		}
 		const now = Date.now();
 		const discovering = [...this.requestedHistory.values()].some(until => until > now);
+		if (delay === undefined && !discovering && !this.history.get().some(run => run.status === 'pending' || run.status === 'running')) {
+			this.historyScheduler.cancel();
+			return;
+		}
 		this.historyScheduler.schedule(Math.max(delay ?? (discovering ? HISTORY_DISCOVERY_REFRESH_MS : HISTORY_REFRESH_MS), this.historyRetryAfter - now));
 	}
 
@@ -908,14 +927,16 @@ export function cloudAutomationRun(automationId: string, account: string, task: 
 		throw new Error(localize('cloudAutomations.unknownRunState', "GitHub returned an unsupported cloud run state: {0}.", task.state));
 	}
 	const status = task.state === 'queued' ? 'pending'
-		: task.state === 'in_progress' || task.state === 'running' || task.state === 'idle' || task.state === 'waiting_for_user' ? 'running'
-			: task.state === 'completed' ? 'completed' : 'failed';
+		: task.state === 'in_progress' || task.state === 'running' || task.state === 'waiting_for_user' ? 'running'
+			: task.state === 'completed' || task.state === 'idle' ? 'completed' : 'failed';
 	return {
 		id: JSON.stringify([automationId, account, task.id]), automationId, status, trigger: 'external',
 		startedAt: task.created_at,
+		updatedAt: task.updated_at,
 		...(status === 'completed' || status === 'failed' ? { completedAt: task.updated_at } : {}),
 		...(status === 'failed' ? { errorMessage: task.status !== undefined && task.status !== null && task.status.length > 0 ? task.status : task.state } : {}),
 		...(task.state === 'waiting_for_user' ? { needsInput: true, statusDescription: localize('cloudAutomations.needsInput', "Needs input on GitHub") } : {}),
+		...(task.state === 'idle' ? { statusDescription: localize('cloudAutomations.idle', "Idle on GitHub") } : {}),
 		sessionResource: URI.from({ scheme: AgentSessionProviders.Cloud, path: `/task/${task.id}` }),
 		externalResource: URI.from({
 			scheme: Schemas.https,

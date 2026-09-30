@@ -153,6 +153,7 @@ export interface IAutomationRun {
 	readonly externalResource?: URI;
 
 	readonly startedAt: string;
+	readonly updatedAt?: string;
 	readonly completedAt?: string;
 	readonly errorMessage?: string;
 	/** Whether the authority reports that this non-terminal run is waiting for user input. */

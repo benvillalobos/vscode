@@ -589,6 +589,63 @@ suite('CloudAutomationStore', () => {
 		});
 	}));
 
+	test('explicit refresh removes web deletions and their history without periodic definition requests', () => runWithFakedTimers({ useFakeTimers: true }, async () => {
+		const { store, api } = setup();
+		api.definitions = [definition()];
+		api.historyTasks = [cloudTask({ state: 'running' })];
+		await store.registerRepository(workspace);
+		const observer = disposables.add(autorun(reader => store.runs.read(reader)));
+		await timeout(0);
+		const initialCalls = api.listCalls;
+		api.historyError = new GitHubApiError('Automation not found or you do not have access', 404, 0);
+		await timeout(30_000);
+		await timeout(0);
+		assert.strictEqual(store.catalogueState.get(), 'error');
+		api.definitions = [];
+		await timeout(29_999);
+		assert.strictEqual(api.listCalls, initialCalls);
+		await timeout(1);
+		await store.refresh();
+		await timeout(0);
+		const afterDeletion = { calls: api.listCalls, state: store.catalogueState.get(), definitions: store.automations.get(), runs: store.runs.get() };
+		await timeout(120_000);
+		observer.dispose();
+		assert.deepStrictEqual({ afterDeletion, finalCalls: api.listCalls }, {
+			afterDeletion: { calls: initialCalls + 1, state: 'ready', definitions: [], runs: [] }, finalCalls: initialCalls + 1,
+		});
+	}));
+
+	test('does not periodically poll definitions even while history is observed', () => runWithFakedTimers({ useFakeTimers: true }, async () => {
+		const { store, api } = setup();
+		api.definitions = [definition()];
+		await store.registerRepository(workspace);
+		await timeout(120_000);
+		assert.strictEqual(api.listCalls, 1);
+		const observer = disposables.add(autorun(reader => store.runs.read(reader)));
+		await timeout(60_000);
+		await timeout(0);
+		observer.dispose();
+		const calls = api.listCalls;
+		await timeout(120_000);
+		assert.deepStrictEqual({ calls, afterLeaving: api.listCalls }, { calls: 1, afterLeaving: 1 });
+	}));
+
+	test('creating a definition does not start periodic definition requests', () => runWithFakedTimers({ useFakeTimers: true }, async () => {
+		const { store, api } = setup();
+		await store.registerRepository(workspace);
+		const observer = disposables.add(autorun(reader => store.runs.read(reader)));
+		await timeout(120_000);
+		assert.strictEqual(api.listCalls, 1);
+		const created = await store.createAutomation(createOptions());
+		await timeout(60_000);
+		await timeout(0);
+		const afterCreate = api.listCalls;
+		await store.deleteAutomation(created.id);
+		await timeout(120_000);
+		observer.dispose();
+		assert.deepStrictEqual({ afterCreate, afterDelete: api.listCalls }, { afterCreate: 1, afterDelete: 1 });
+	}));
+
 	test('repeatedly discovers real tasks after Run Now without correlating an older run', () => runWithFakedTimers({ useFakeTimers: true }, async () => {
 		const { store, api } = setup();
 		const created = await store.createAutomation({ ...createOptions(), enabled: true });
@@ -615,10 +672,10 @@ suite('CloudAutomationStore', () => {
 			cancelled: api.historyTokens.map(token => token.isCancellationRequested),
 		}, {
 			result: { kind: 'accepted' },
-			beforeDiscovery: { calls: 3, tasks: ['/task/task-existing'] },
-			times: [0, 5_000, 10_000, 15_000],
+			beforeDiscovery: { calls: 1, tasks: ['/task/task-existing'] },
+			times: [0, 15_000],
 			tasks: [{ path: '/task/task-existing', status: 'completed' }, { path: '/task/task-discovered', status: 'pending' }],
-			cancelled: [false, false, false, false],
+			cancelled: [false, false],
 		});
 	}));
 
@@ -638,10 +695,10 @@ suite('CloudAutomationStore', () => {
 		assert.deepStrictEqual({
 			callsAtDeadline, callsAfterDeadline: api.historyCalls.length,
 			lastPoll: api.historyCalls.at(-1)?.time, runs: store.runs.get(),
-		}, { callsAtDeadline: 25, callsAfterDeadline: 27, lastPoll: 180_000, runs: [] });
+		}, { callsAtDeadline: 8, callsAfterDeadline: 8, lastPoll: 105_000, runs: [] });
 	}));
 
-	test('discovers website runs and resumed completed tasks within the regular refresh interval', () => runWithFakedTimers({ useFakeTimers: true }, async () => {
+	test('discovers external runs on refresh and polls active runs every fifteen seconds until settled', () => runWithFakedTimers({ useFakeTimers: true }, async () => {
 		const { store, api } = setup();
 		api.definitions = [definition()];
 		api.historyTasks = [cloudTask()];
@@ -649,15 +706,18 @@ suite('CloudAutomationStore', () => {
 		const observer = disposables.add(autorun(reader => store.runs.read(reader)));
 		await timeout(0);
 		api.historyTasks = [cloudTask({ state: 'running' }), cloudTask({ id: 'website-run', state: 'queued' })];
-		await timeout(30_000);
+		await timeout(60_000);
+		assert.strictEqual(api.historyCalls.length, 1);
+		await store.refresh();
 		await timeout(0);
 		const resumed = store.runs.get().map(run => run.status);
 		api.historyTasks = api.historyTasks.map(task => ({ ...task, state: 'completed' }));
-		await timeout(30_000);
+		await timeout(15_000);
 		await timeout(0);
+		await timeout(120_000);
 		observer.dispose();
 		assert.deepStrictEqual({ resumed, completed: store.runs.get().map(run => run.status), times: api.historyCalls.map(call => call.time) }, {
-			resumed: ['running', 'pending'], completed: ['completed', 'completed'], times: [0, 30_000, 60_000],
+			resumed: ['running', 'pending'], completed: ['completed', 'completed'], times: [0, 60_000, 75_000],
 		});
 	}));
 
@@ -736,12 +796,12 @@ suite('CloudAutomationStore', () => {
 		const hiddenCalls = api.historyCalls.length;
 		const observer = disposables.add(autorun(reader => store.runs.read(reader)));
 		await timeout(0);
-		await timeout(5_000);
+		await timeout(15_000);
 		await timeout(0);
 		observer.dispose();
 		await timeout(60_000);
 
-		assert.deepStrictEqual({ hiddenCalls, times: api.historyCalls.map(call => call.time) }, { hiddenCalls: 0, times: [70_000, 75_000] });
+		assert.deepStrictEqual({ hiddenCalls, times: api.historyCalls.map(call => call.time) }, { hiddenCalls: 0, times: [70_000, 85_000] });
 	}));
 
 	test('coalesces refresh and Run Now while history is in flight and stops at the last observer', () => runWithFakedTimers({ useFakeTimers: true }, async () => {
@@ -834,7 +894,7 @@ suite('CloudAutomationStore', () => {
 		await timeout(0);
 		await store.runAutomation(created.id);
 		api.historyError = new GitHubApiError('Retry later', 429, 0, 20);
-		await timeout(5_000);
+		await timeout(15_000);
 		await timeout(0);
 		const failedState = store.catalogueState.get();
 		api.historyError = undefined;
@@ -850,7 +910,7 @@ suite('CloudAutomationStore', () => {
 		assert.deepStrictEqual({
 			failedState, callsDuringBackoff,
 			times: api.historyCalls.map(call => call.time), state: store.catalogueState.get(),
-		}, { failedState: 'error', callsDuringBackoff: 2, times: [0, 5_000, 25_000], state: 'ready' });
+		}, { failedState: 'error', callsDuringBackoff: 2, times: [0, 15_000, 35_000], state: 'ready' });
 	}));
 
 	test('does not start queued history requests after the last observer leaves', () => runWithFakedTimers({ useFakeTimers: true }, async () => {
@@ -879,7 +939,7 @@ suite('CloudAutomationStore', () => {
 			await store.runAutomation(created.id);
 			const pending = new DeferredPromise<readonly ICloudAutomationTask[]>();
 			api.historyPromise = pending.p;
-			await timeout(5_000);
+			await timeout(15_000);
 			await timeout(0);
 			if (stoppedBy === 'signout') {
 				changeAccount(null);
@@ -986,7 +1046,7 @@ suite('Cloud automation projection', () => {
 		const base = { id: 'task', created_at: '2026-09-22T00:00:00Z' };
 		const runs = ['idle', 'waiting_for_user', 'timed_out'].map(state => cloudAutomationRun('automation', 'octocat', { ...base, state }, repository));
 		assert.deepStrictEqual(runs.map(run => ({ status: run.status, needsInput: run.needsInput, description: run.statusDescription, error: run.errorMessage })), [
-			{ status: 'running', needsInput: undefined, description: undefined, error: undefined },
+			{ status: 'completed', needsInput: undefined, description: 'Idle on GitHub', error: undefined },
 			{ status: 'running', needsInput: true, description: 'Needs input on GitHub', error: undefined },
 			{ status: 'failed', needsInput: undefined, description: undefined, error: 'timed_out' },
 		]);

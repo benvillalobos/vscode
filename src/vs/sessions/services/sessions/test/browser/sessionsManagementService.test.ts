@@ -909,6 +909,18 @@ suite('SessionsManagementService', () => {
 			);
 		});
 
+		test('keeps completion unread while a custom view hides the active conversation', async () => {
+			const { session, view, customViewService, isRead, readChanges } = createReadStateSessions();
+			await view.openSession(session.resource);
+			showTestCustomView(customViewService, disposables);
+			isRead.set(false, undefined);
+			const whileHidden = isRead.get();
+			customViewService.hideCustomView();
+			assert.deepStrictEqual({ whileHidden, afterReturning: isRead.get(), readChanges }, {
+				whileHidden: false, afterReturning: true, readChanges: [true, true],
+			});
+		});
+
 		for (const destination of ['another session', 'the new-session composer']) {
 			test(`keeps an explicitly unread active session unread until navigating to ${destination} and back`, async () => {
 				const { session, other, service, view, readChanges } = createReadStateSessions();
@@ -4328,6 +4340,37 @@ suite('SessionsManagementService', () => {
 		service.createNewSession(folder);
 		assert.deepStrictEqual({ created, automation: service.automationSession.get(), ordinary: service.newSession.get() }, { created: 1, automation: undefined, ordinary: session });
 	});
+
+	for (const state of ['loading', 'error'] as const) {
+		test(`an available automation provider can configure a draft while its catalogue is ${state}`, async () => {
+			const session = stubSession({ sessionId: 'cloud-draft', providerId: 'test' });
+			const enabled = observableValue('enabled', true);
+			const canCreate = observableValue('canCreate', true);
+			const provider = new class extends TestSessionsProvider {
+				override readonly supportsQuickChats = true;
+				override readonly supportsAutomationSessionConfiguration = true;
+				override readonly automations = upcastPartial<NonNullable<ISessionsProvider['automations']>>({
+					enabled, catalogueState: constObservable(state), canCreateAutomation: canCreate,
+				});
+				override resolveWorkspace(folderUri: URI): ISessionWorkspace {
+					return { uri: folderUri, label: 'Workspace', icon: Codicon.folder, folders: [], requiresWorkspaceTrust: false, isVirtualWorkspace: false };
+				}
+				override createNewSession(): ISession { return session; }
+				override createQuickChat(): ISession { return session; }
+				override async getAutomationSessionConfiguration() { return { sessionTemplate: { modelId: 'cloud-model' } }; }
+			}(session);
+			const { service } = createSessionsManagementService(session, disposables, provider);
+			const folder = URI.parse('test:///folder');
+			const draft = service.createAutomationSession(folder);
+			assert.deepStrictEqual(await service.getAutomationSessionConfiguration(draft), { sessionTemplate: { modelId: 'cloud-model' } });
+			assert.strictEqual(service.createAutomationQuickChat(), session);
+			canCreate.set(false, undefined);
+			assert.throws(() => service.createAutomationSession(folder), /does not currently provide Automation configuration/);
+			canCreate.set(true, undefined);
+			enabled.set(false, undefined);
+			assert.throws(() => service.createAutomationQuickChat(), /does not currently provide Automation configuration/);
+		});
+	}
 
 	test('sendNewChatRequest clears the draft without firing onDidDiscardNewSession', async () => {
 		const chat: IChat = { ...stubChat, resource: URI.parse('test:///chat') };

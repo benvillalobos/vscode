@@ -15,7 +15,7 @@ import { generateUuid } from '../../../../../../base/common/uuid.js';
 import { Schemas } from '../../../../../../base/common/network.js';
 import { isWeb } from '../../../../../../base/common/platform.js';
 import { mock, upcastPartial } from '../../../../../../base/test/common/mock.js';
-import { autorun, constObservable, observableValue } from '../../../../../../base/common/observable.js';
+import { autorun, constObservable, IObservable, observableValue } from '../../../../../../base/common/observable.js';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../../base/test/common/utils.js';
 import { IConfigurationService } from '../../../../../../platform/configuration/common/configuration.js';
 import { TestConfigurationService } from '../../../../../../platform/configuration/test/common/testConfigurationService.js';
@@ -39,7 +39,7 @@ import { IChatService, ChatSendResult, IChatSendRequestData, IChatSendRequestOpt
 import { ChatSessionStatus, IChatSessionContentProvider, IChatSessionProviderOptionGroup, IChatSessionsService } from '../../../../../../workbench/contrib/chat/common/chatSessionsService.js';
 import { CancellationToken } from '../../../../../../base/common/cancellation.js';
 import { ILanguageModelChatMetadata, ILanguageModelChatMetadataAndIdentifier, ILanguageModelsService } from '../../../../../../workbench/contrib/chat/common/languageModels.js';
-import { IChatResponseModel } from '../../../../../../workbench/contrib/chat/common/model/chatModel.js';
+import { IChatModel, IChatRequestModel, IChatResponseModel } from '../../../../../../workbench/contrib/chat/common/model/chatModel.js';
 import { IChatAgentData } from '../../../../../../workbench/contrib/chat/common/participants/chatAgents.js';
 import { ISessionChangeEvent } from '../../../../../services/sessions/common/sessionsProvider.js';
 import { ChatModelSource, GITHUB_REMOTE_FILE_SCHEME, IChat, ISession, ISessionChangesSummary, ISessionFileChange, ISessionWorkspace, SESSION_WORKSPACE_GROUP_GITHUB, SESSION_WORKSPACE_GROUP_LOCAL, SessionArtifactKind, SessionStatus } from '../../../../../services/sessions/common/session.js';
@@ -105,6 +105,7 @@ function createMockAgentSession(resource: URI, opts?: {
 	archived?: boolean;
 	read?: boolean;
 	createdAt?: number;
+	completedAt?: number;
 	status?: ChatSessionStatus;
 	changes?: IAgentSession['changes'];
 	metadata?: Record<string, unknown>;
@@ -120,7 +121,7 @@ function createMockAgentSession(resource: URI, opts?: {
 		override readonly label = opts?.title ?? 'Test Session';
 		override readonly status = opts?.status ?? ChatSessionStatus.Completed;
 		override readonly icon = Codicon.copilot;
-		override readonly timing = { created: opts?.createdAt ?? Date.now(), lastRequestStarted: undefined, lastRequestEnded: undefined };
+		override readonly timing = { created: opts?.createdAt ?? Date.now(), lastRequestStarted: undefined, lastRequestEnded: opts?.completedAt };
 		override readonly changes = opts?.changes;
 		override readonly metadata = opts?.metadata ?? { owner: 'owner', name: 'repo' };
 		override isArchived(): boolean { return archived; }
@@ -195,6 +196,7 @@ interface IExecutedCommand {
 }
 
 interface ICreateProviderOptions {
+	readonly chatModels?: IObservable<Iterable<IChatModel>>;
 	readonly providerMode?: 'default' | 'sandbox';
 	readonly consolidatedRemoteWorkspaces?: boolean;
 	readonly commandService?: ICommandService;
@@ -349,6 +351,7 @@ function createProviderWithConfig(
 		onDidChangeOptionGroups: Event.None,
 	});
 	instantiationService.stub(IChatService, {
+		chatModels: opts?.chatModels ?? constObservable([]),
 		acquireOrLoadSession: async () => undefined,
 		sendRequest: async (): Promise<ChatSendResult> => ({ kind: 'sent' as const, data: {} as IChatSendRequestData }),
 		removeHistoryEntry: async (resource: URI) => { model.removeSession(resource); },
@@ -448,6 +451,7 @@ function createProviderForSendTests(
 		onDidChangeOptionGroups: Event.None,
 	});
 	instantiationService.stub(IChatService, {
+		chatModels: constObservable([]),
 		acquireOrLoadSession: async () => undefined,
 		sendRequest: sendRequest,
 		removeHistoryEntry: async (resource: URI) => { model.removeSession(resource); },
@@ -1463,6 +1467,42 @@ suite('CopilotChatSessionsProvider', () => {
 
 		assert.strictEqual(provider.getSessions()[0].isRead.get(), true);
 	});
+
+	test('a newer cloud completion marks unread even when polling skipped the running state', () => {
+		const resource = URI.parse('copilot-cloud-agent:/task/newer-turn');
+		model.addSession(createMockAgentSession(resource, { createdAt: 1, completedAt: 100, status: ChatSessionStatus.Completed, read: true }));
+		const provider = createProvider(disposables, model);
+		model.replaceSession(createMockAgentSession(resource, { createdAt: 1, completedAt: 200, status: ChatSessionStatus.Completed, read: true, onSetRead: () => model.fireDidChangeSessions() }));
+		const afterCompletion = provider.getSessions()[0].isRead.get();
+		model.getSession(resource)!.setRead(true);
+		model.replaceSession(createMockAgentSession(resource, { createdAt: 1, completedAt: 200, status: ChatSessionStatus.Completed, read: true }));
+		assert.deepStrictEqual({ afterCompletion, afterSameCompletion: provider.getSessions()[0].isRead.get() }, { afterCompletion: false, afterSameCompletion: true });
+	});
+
+	for (const cancelled of [false, true]) {
+		test(`local cloud follow-up completion marks unread without a polled status transition (cancelled: ${cancelled})`, () => {
+			const resource = URI.parse('copilot-cloud-agent:/task/follow-up');
+			const running = observableValue('request', false);
+			const response = upcastPartial<IChatResponseModel>({ isComplete: !cancelled, isCanceled: cancelled });
+			const chat = upcastPartial<IChatModel>({
+				sessionResource: resource, requestInProgress: running, lastRequest: upcastPartial<IChatRequestModel>({ response }),
+			});
+			const chatModels = observableValue<Iterable<IChatModel>>('models', [chat]);
+			model.addSession(createMockAgentSession(resource, { status: ChatSessionStatus.Completed, read: true, onSetRead: () => model.fireDidChangeSessions() }));
+			const provider = createProvider(disposables, model, { chatModels });
+			running.set(true, undefined);
+			chatModels.set([chat], undefined);
+			running.set(false, undefined);
+			const afterCompletion = provider.getSessions()[0].isRead.get();
+			chatModels.set([], undefined);
+			model.getSession(resource)!.setRead(true);
+			running.set(true, undefined);
+			running.set(false, undefined);
+			assert.deepStrictEqual({ afterCompletion, afterModelRemoved: provider.getSessions()[0].isRead.get() }, {
+				afterCompletion: cancelled, afterModelRemoved: true,
+			});
+		});
+	}
 
 	test('setSessionReadState updates the agent session read state', async () => {
 		const resource = URI.from({ scheme: AgentSessionProviders.Cloud, path: '/session-1' });

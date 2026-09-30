@@ -43,7 +43,7 @@ export class AutomationRunner implements IAutomationRunner {
 				await dispatched.complete({ kind: 'notStarted', reason: 'cancelled' });
 				return;
 			}
-			this.assertProviderAvailable(automation.target.providerId);
+			this.assertProviderAvailable(automation.target.providerId, automation.id);
 			if (!this.automationService.getAutomation(automation.id)) {
 				await dispatched.complete({ kind: 'notStarted', reason: 'deleted' });
 				return;
@@ -106,7 +106,7 @@ export class AutomationRunner implements IAutomationRunner {
 		}
 	}
 
-	private assertProviderAvailable(providerId: string | undefined): void {
+	private assertProviderAvailable(providerId: string | undefined, automationId: string): void {
 		if (providerId === undefined) {
 			throw new AutomationUnavailableError(localize('automationHostNotSelected', "This automation has no provider. Duplicate it and select an automation provider."));
 		}
@@ -117,6 +117,9 @@ export class AutomationRunner implements IAutomationRunner {
 		const store = provider.automations;
 		if (store === undefined) {
 			throw new AutomationUnavailableError(localize('automationProviderUnsupported', "{0} does not support automations. Use a provider that supports automations.", provider.label));
+		}
+		if (store.enabled?.get() !== false && store.canRunAutomation(automationId)) {
+			return;
 		}
 		switch (store.catalogueState.get()) {
 			case 'ready':

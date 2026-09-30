@@ -39,13 +39,14 @@ suite('AutomationRunner', () => {
 		startedAt: '2026-01-01T00:00:00Z',
 	};
 
-	function provider(catalogueState: AutomationCatalogueState, unavailableReason?: string): ISessionsProvider {
+	function provider(catalogueState: AutomationCatalogueState, unavailableReason?: string, canRun = false): ISessionsProvider {
 		return upcastPartial<ISessionsProvider>({
 			id: 'host',
 			label: 'Remote host',
 			automations: upcastPartial<ISessionsProviderAutomations>({
 				catalogueState: constObservable(catalogueState),
 				canCreateAutomation: constObservable(false),
+				canRunAutomation: () => canRun,
 				unavailableReason: constObservable(unavailableReason),
 			}),
 		});
@@ -79,6 +80,16 @@ suite('AutomationRunner', () => {
 		const dispatch = await operation.whenDispatched;
 		await operation.whenCompleted;
 		assert.deepStrictEqual({ dispatch, calls, errors }, { dispatch: { kind: 'accepted' }, calls: ['automation'], errors: [] });
+	});
+
+	test('a history error does not hide a runnable cloud definition or its specific API error', async () => {
+		const { runner, calls, errors } = setup(async () => { throw new Error('Automation not found or you do not have access'); }, true, true, [provider('error', undefined, true)]);
+		const operation = runner.runOnce(automation);
+		await operation.whenCompleted;
+		assert.deepStrictEqual({ calls, errors, dispatch: await operation.whenDispatched }, {
+			calls: ['automation'], errors: ['Automation \'Review\' failed: Automation not found or you do not have access'],
+			dispatch: { kind: 'notStarted', reason: 'error' },
+		});
 	});
 
 	test('uncertain cloud dispatch warns without reporting that no run started or retrying', async () => {

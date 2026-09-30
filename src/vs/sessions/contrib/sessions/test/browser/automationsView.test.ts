@@ -18,6 +18,7 @@ import { constObservable, IObservable, observableValue } from '../../../../../ba
 import { DisposableStore, IDisposable, toDisposable } from '../../../../../base/common/lifecycle.js';
 import { URI } from '../../../../../base/common/uri.js';
 import { mock, upcastPartial } from '../../../../../base/test/common/mock.js';
+import { IChatModel, IChatRequestModel, IChatResponseModel } from '../../../../../workbench/contrib/chat/common/model/chatModel.js';
 import { runWithFakedTimers } from '../../../../../base/test/common/timeTravelScheduler.js';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
 import { AccessibleViewRegistry } from '../../../../../platform/accessibility/browser/accessibleViewRegistry.js';
@@ -519,6 +520,8 @@ class FakeSessionsManagementService extends mock<ISessionsManagementService>() i
 	cancelCurrentRequestCalls = 0;
 	deleteError: Error | undefined;
 	cancelError: Error | undefined;
+	resolveError: Error | undefined;
+	readonly resolvedResources: URI[] = [];
 	readonly markAllReadCompleted = new DeferredPromise<void>();
 
 	override getSessions(): ISession[] {
@@ -565,9 +568,16 @@ class FakeSessionsManagementService extends mock<ISessionsManagementService>() i
 
 	override async archiveSession(session: ISession): Promise<void> {
 		this.archived.push(session);
-		if (session === this.session) {
-			this.isArchived.set(true, undefined);
+		this.isArchived.set(true, undefined);
+	}
+
+	override async resolveSessionResource(resource: URI): Promise<URI> {
+		this.resolvedResources.push(resource);
+		if (this.resolveError) {
+			throw this.resolveError;
 		}
+		this.addSession(resource, 'Resolved cloud task');
+		return resource;
 	}
 
 	override async cancelCurrentRequest(): Promise<void> {
@@ -712,8 +722,9 @@ suite('AutomationsCardsWidget', () => {
 				observeSession: () => constObservable(undefined),
 			},
 		});
+		const chatModels = observableValue<Iterable<IChatModel>>('models', []);
 		instantiationService.stub(IChatService, new class extends mock<IChatService>() {
-			override readonly chatModels = constObservable([]);
+			override readonly chatModels = chatModels;
 		});
 		instantiationService.stub(ICustomViewService, new class extends mock<ICustomViewService>() {
 			override readonly activeCustomView = constObservable(undefined);
@@ -724,7 +735,7 @@ suite('AutomationsCardsWidget', () => {
 		const widget = disposables.add(instantiationService.createInstance(AutomationsCardsWidget));
 		document.body.append(widget.element);
 		disposables.add(toDisposable(() => widget.element.remove()));
-		return { agentPluginService, automationService, automationDialogService, commandService, configurationService, contextKeyService, contextMenuService, dialogService, instantiationService, keybindingService, logService, notificationErrors, openerService, runner, sessionsManagementService, sessionsService, telemetryService, widget };
+		return { agentPluginService, automationService, automationDialogService, commandService, configurationService, contextKeyService, contextMenuService, dialogService, instantiationService, keybindingService, logService, notificationErrors, openerService, runner, sessionsManagementService, sessionsService, telemetryService, widget, chatModels };
 	}
 
 	test('reports the Automations view when rendered', () => {
@@ -868,8 +879,129 @@ suite('AutomationsCardsWidget', () => {
 			openedResources: sessionsService.openedResources.map(resource => resource.toString()),
 			errors: dialogService.errors,
 		}, {
-			status: 'Completed on GitHub', actions: ['Open on GitHub'], openCalls: 1,
+			status: '', actions: ['Open on GitHub', 'Archive'], openCalls: 1,
 			openedResources: ['copilot-cloud-agent:/task/cloud-task'], errors: [],
+		});
+	});
+
+	test('unhydrated cloud runs retain repository and timestamp metadata in every state', () => {
+		const { automationService, widget } = setup();
+		automationService.setAutomations([automation({
+			target: { kind: 'workspace', folderUri: URI.parse('github-remote-file://github/example/private/HEAD'), isolation: { kind: 'default' } },
+		})]);
+		const states = (['pending', 'running', 'completed', 'failed'] as const).map(status => {
+			automationService.setRuns([run({
+				status, sessionResource: URI.parse('copilot-cloud-agent:/task/cloud-task'),
+				externalResource: URI.parse('https://github.com/example/private/tasks/cloud-task'),
+			})]);
+			const row = widget.element.querySelector('.automations-temporary-run')!;
+			return {
+				repository: row.querySelector('.session-badge')?.textContent,
+				time: !!row.querySelector('.session-time')?.textContent,
+				cloudIcon: !!row.querySelector('.codicon-cloud-compact'),
+			};
+		});
+		assert.deepStrictEqual(states, Array.from({ length: 4 }, () => ({ repository: 'example/private', time: true, cloudIcon: true })));
+	});
+
+	test('Mark as Done resolves the exact cloud-only run without opening or stopping it', async () => {
+		const { automationService, sessionsManagementService, sessionsService, widget } = setup('done');
+		const resource = URI.parse('copilot-cloud-agent:/task/exact-task');
+		automationService.setAutomations([automation()]);
+		automationService.setRuns([run({ sessionResource: resource, externalResource: URI.parse('https://github.com/example/private/tasks/exact-task') })]);
+		widget.element.querySelector<HTMLElement>('.automations-temporary-run [aria-label="Mark as Done"]')!.click();
+		await waitForSessionActions();
+		assert.deepStrictEqual({
+			resolved: sessionsManagementService.resolvedResources.map(resource => resource.toString()),
+			archived: sessionsManagementService.archived.map(session => session.resource.toString()),
+			opened: sessionsService.openCalls, cancelled: sessionsManagementService.cancelCurrentRequestCalls,
+			rowArchived: widget.element.querySelector('.automations-run-session-list .session-item')?.classList.contains('archived'),
+		}, { resolved: [resource.toString()], archived: [resource.toString()], opened: 0, cancelled: 0, rowArchived: true });
+	});
+
+	test('failed resolution of a cloud-only run leaves Mark as Done retryable and reports the error', async () => {
+		const { automationService, sessionsManagementService, dialogService, widget } = setup('done');
+		sessionsManagementService.resolveError = new Error('Task unavailable');
+		automationService.setRuns([run({
+			sessionResource: URI.parse('copilot-cloud-agent:/task/missing'),
+			externalResource: URI.parse('https://github.com/example/private/tasks/missing'),
+		})]);
+		const button = widget.element.querySelector<HTMLElement>('.automations-temporary-run [aria-label="Mark as Done"]')!;
+		button.click();
+		await waitForSessionActions();
+		assert.deepStrictEqual({
+			errors: dialogService.errors, archived: sessionsManagementService.archived.length, disabled: button.getAttribute('aria-disabled') === 'true',
+		}, {
+			errors: [{ message: 'Failed to mark the automation run as done.', detail: 'Task unavailable' }],
+			archived: 0, disabled: false,
+		});
+	});
+
+	test('cloud follow-ups show running immediately and reconcile local completion with newer server state', () => {
+		const { automationService, sessionsManagementService, widget, chatModels } = setup();
+		const resource = URI.parse('copilot-cloud-agent:/task/exact-task');
+		const running = observableValue('request', false);
+		const response = upcastPartial<IChatResponseModel>({ isComplete: true, isCanceled: false, completionTimestamp: 3000 });
+		const request = upcastPartial<IChatRequestModel>({ response });
+		chatModels.set([upcastPartial<IChatModel>({
+			onDidChange: Event.None, getRequests: () => [],
+			sessionResource: resource, requestInProgress: running, requestNeedsInput: constObservable(undefined), lastRequestObs: constObservable(request),
+		})], undefined);
+		automationService.setAutomations([automation()]);
+		const cloudRun = run({
+			status: 'completed', startedAt: new Date(1000).toISOString(), updatedAt: new Date(2000).toISOString(),
+			sessionResource: resource, externalResource: URI.parse('https://github.com/example/private/tasks/exact-task'),
+		});
+		automationService.setRuns([cloudRun]);
+		sessionsManagementService.addSession(resource, 'Follow-up');
+		const isRunning = () => widget.element.querySelector('.automations-run-session-list .session-item')!.classList.contains('in-progress');
+		running.set(true, undefined);
+		const afterSend = isRunning();
+		const metadataVisibleWhileRunning = !!widget.element.querySelector('.automations-run-session-list .session-item .session-time')
+			&& !!widget.element.querySelector('.automations-run-session-list .session-item .session-details-icon');
+		automationService.setRuns([{ ...cloudRun, status: 'running' }]);
+		running.set(false, undefined);
+		const afterCompletion = isRunning();
+		automationService.setRuns([{ ...cloudRun, status: 'running', updatedAt: new Date(4000).toISOString() }]);
+		const afterRemoteTurn = isRunning();
+		assert.deepStrictEqual({ afterSend, metadataVisibleWhileRunning, afterCompletion, afterRemoteTurn }, {
+			afterSend: true, metadataVisibleWhileRunning: true, afterCompletion: false, afterRemoteTurn: true,
+		});
+	});
+
+	test('failed or cancelled local follow-ups do not leave a stale optimistic running state', () => {
+		const { automationService, sessionsManagementService, widget, chatModels } = setup();
+		const resource = URI.parse('copilot-cloud-agent:/task/exact-task');
+		const running = observableValue('request', true);
+		const response = upcastPartial<IChatResponseModel>({ isComplete: false, isCanceled: true });
+		chatModels.set([upcastPartial<IChatModel>({
+			onDidChange: Event.None, getRequests: () => [],
+			sessionResource: resource, requestInProgress: running, requestNeedsInput: constObservable(undefined),
+			lastRequestObs: constObservable(upcastPartial<IChatRequestModel>({ response })),
+		})], undefined);
+		automationService.setRuns([run({ status: 'completed', sessionResource: resource, externalResource: URI.parse('https://github.com/example/private/tasks/exact-task') })]);
+		sessionsManagementService.addSession(resource, 'Follow-up');
+		running.set(false, undefined);
+		assert.strictEqual(widget.element.querySelector('.automations-run-session-list .session-item')!.classList.contains('in-progress'), false);
+	});
+
+	test('Mark All as Read includes a locally completed cloud response before the next history poll', async () => {
+		const { automationService, sessionsManagementService, widget, chatModels } = setup();
+		const response = upcastPartial<IChatResponseModel>({ isComplete: true, isCanceled: false, completionTimestamp: 3000 });
+		chatModels.set([upcastPartial<IChatModel>({
+			onDidChange: Event.None, getRequests: () => [],
+			sessionResource: SESSION_RESOURCE, requestInProgress: constObservable(false),
+			lastRequestObs: constObservable(upcastPartial<IChatRequestModel>({ response })),
+		})], undefined);
+		automationService.setRuns([run({
+			status: 'running', startedAt: new Date(1000).toISOString(), updatedAt: new Date(2000).toISOString(),
+			externalResource: URI.parse('https://github.com/example/private/tasks/exact-task'),
+		})]);
+		const markAllVisible = isMarkAllReadVisible(widget);
+		widget.element.querySelector<HTMLElement>('.automations-mark-all-read')!.click();
+		await sessionsManagementService.markAllReadCompleted.p;
+		assert.deepStrictEqual({ markAllVisible, read: sessionsManagementService.isRead.get(), count: sessionsManagementService.markAllReadSessionCount }, {
+			markAllVisible: true, read: true, count: 1,
 		});
 	});
 
@@ -1050,10 +1182,10 @@ suite('AutomationsCardsWidget', () => {
 			assert.deepStrictEqual({
 				stopped: automationService.stoppedRuns, disabledWhileStopping, archiveVisible,
 				localCancellation: sessionsManagementService.cancelCurrentRequestCalls, opened: sessionsService.openCalls,
-				status: automationService.runs.get()[0].status, markDone: !!getSessionAction(widget, 'Mark as Done'),
+				status: automationService.runs.get()[0].status, markDone: !!getSessionAction(widget, 'Mark as Done') || !!getSessionAction(widget, 'Archive'),
 			}, {
-				stopped: [RUN_ID], disabledWhileStopping: true, archiveVisible: false,
-				localCancellation: 0, opened: 0, status: 'running', markDone: false,
+				stopped: [RUN_ID], disabledWhileStopping: true, archiveVisible: sessionLoaded,
+				localCancellation: 0, opened: 0, status: 'running', markDone: sessionLoaded,
 			});
 		});
 	}
@@ -1076,10 +1208,10 @@ suite('AutomationsCardsWidget', () => {
 			states.push({ running: row.classList.contains('in-progress'), archived: row.classList.contains('archived'), stop: !!getSessionAction(widget, 'Stop') });
 		}
 		assert.deepStrictEqual(states, [
-			{ running: true, archived: false, stop: true },
-			{ running: false, archived: false, stop: false },
-			{ running: true, archived: false, stop: true },
-			{ running: false, archived: false, stop: false },
+			{ running: true, archived: true, stop: true },
+			{ running: false, archived: true, stop: false },
+			{ running: true, archived: true, stop: true },
+			{ running: false, archived: true, stop: false },
 		]);
 	});
 

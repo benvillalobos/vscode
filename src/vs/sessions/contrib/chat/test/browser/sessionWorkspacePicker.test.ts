@@ -45,6 +45,7 @@ import { NewSessionWorkspacePreselectionSource } from '../../browser/newSessionC
 import { WorkspaceSelectionOrigin } from '../../../../common/workspaceSelection.js';
 import { ISessionsRecentWorkspacesService, SessionsRecentWorkspacesService } from '../../../../services/sessions/browser/sessionsRecentWorkspacesService.js';
 import { AutomationsWorkspacePicker } from '../../../automations/browser/automationDialog.js';
+import { IAutomationProviderConfiguration } from '../../../../../workbench/contrib/chat/common/automations/automationService.js';
 import { AutomationIsolationModel } from '../../../automations/common/isolationGroupModel.js';
 import { buildMobileWorkspacePickerRows, showMobileWorkspacePickerSheet } from '../../browser/mobile/mobileWorkspacePickerSheet.js';
 import { IWorkbenchLayoutService } from '../../../../../workbench/services/layout/browser/layoutService.js';
@@ -3764,7 +3765,53 @@ suite('AutomationsWorkspacePicker', () => {
 
 	ensureNoDisposablesAreLeakedInTestSuite();
 
-	test('keeps browsed GitHub targets remote without changing the shared local-workspace preference', async () => {
+	test('cloud mode disables ineligible workspace rows with explanations without affecting local mode', async () => {
+		const providersService = disposables.add(new MockSessionsProvidersService());
+		const provider = createMockProvider('local');
+		providersService.setProviders([provider]);
+		const privateRepo = URI.file('/repos/private');
+		const publicRepo = URI.file('/repos/public');
+		const folder = URI.file('/repos/folder-only');
+		const storage = disposables.add(new TestStorageService());
+		seedStorage(storage, [privateRepo, publicRepo, folder].map(uri => ({ uri, providerId: provider.id, checked: false })));
+		const picker = createTestPicker(disposables, providersService, storage, undefined, TestAutomationsWorkspacePicker);
+		assert.ok(picker instanceof TestAutomationsWorkspacePicker);
+		const pending = observableValue<string | undefined>('private', 'Checking repository visibility...');
+		const configuration = observableValue<IAutomationProviderConfiguration | undefined>('configuration', undefined);
+		picker.setCloudConfiguration(configuration);
+		const model = new AutomationIsolationModel({ isQuickChat: false, folderUri: undefined, isolationMode: undefined, branch: undefined });
+		picker.setTargetModel(model);
+		const getRows = () => picker.getItems().filter(item => item.item?.folderUri).map(item => ({
+			label: item.label, disabled: item.disabled === true, tooltip: item.tooltip,
+		}));
+		const local = getRows();
+		configuration.set({
+			sessionTypes: ['cloud'], label: 'Cloud', description: '', timeZone: 'UTC', tools: [],
+			getTargetDisabledReason: uri => uri && extUri.isEqual(uri, privateRepo)
+				? pending
+				: constObservable('Cloud automations require a private GitHub repository.'),
+		}, undefined);
+		const cloud = getRows();
+		const errors: string[] = [];
+		picker.onSelectionError = error => errors.push(String(error));
+		await picker.select('repos/public');
+		pending.set(undefined, undefined);
+		await picker.select('repos/private');
+		configuration.set(undefined, undefined);
+		assert.deepStrictEqual({
+			localDisabled: local.map(row => row.disabled),
+			cloudDisabled: cloud.map(row => row.disabled),
+			reasons: cloud.every(row => !!row.tooltip),
+			errors: errors.length, selected: model.folderUri?.toString(),
+			localRestored: getRows().every(row => !row.disabled),
+			noWorkspace: picker.getItems().some(item => item.label === 'No workspace'),
+		}, {
+			localDisabled: [false, false, false], cloudDisabled: [true, true, true], reasons: true,
+			errors: 1, selected: privateRepo.toString(), localRestored: true, noWorkspace: true,
+		});
+	});
+
+	test('omits GitHub browse targets without changing the shared local-workspace preference', async () => {
 		const providersService = disposables.add(new MockSessionsProvidersService());
 		const localUri = URI.file('/local/repository');
 		const remoteUri = URI.from({ scheme: GITHUB_REMOTE_FILE_SCHEME, authority: 'github', path: '/owner/repository/HEAD' });
@@ -3794,11 +3841,10 @@ suite('AutomationsWorkspacePicker', () => {
 		const storage = disposables.add(new TestStorageService());
 		const picker = createTestPicker(disposables, providersService, storage, undefined, TestAutomationsWorkspacePicker);
 		assert.ok(picker instanceof TestAutomationsWorkspacePicker);
-		picker.canBrowseGitHub = () => true;
 		const model = new AutomationIsolationModel({ isQuickChat: false, folderUri: localUri, isolationMode: undefined, branch: undefined });
 		picker.setTargetModel(model);
 		picker.setSelectedWorkspace(localUri, { persist: false });
-		await picker.select('Work in Repository...');
+		const automationItems = picker.getItems();
 		const automationRecents = storage.get(STORAGE_KEY_RECENT_WORKSPACES, StorageScope.PROFILE);
 
 		const ordinary = createTestPicker(disposables, providersService, storage, undefined, DispatchingWorkspacePicker);
@@ -3806,49 +3852,40 @@ suite('AutomationsWorkspacePicker', () => {
 		ordinary.setSelectedWorkspace(localUri, { persist: false });
 		await ordinary.dispatchItem({ browseAction });
 		assert.deepStrictEqual({
+			githubBrowse: automationItems.some(item => item.label === 'Work in Repository...'),
 			automationUri: picker.selectedFolderUri?.toString(),
 			modelUri: model.folderUri?.toString(),
 			automationRecents,
 			ordinaryUri: ordinary.selectedFolderUri?.toString(),
 		}, {
-			automationUri: remoteUri.toString(),
-			modelUri: remoteUri.toString(),
+			githubBrowse: false,
+			automationUri: localUri.toString(),
+			modelUri: localUri.toString(),
 			automationRecents: undefined,
 			ordinaryUri: localUri.toString(),
 		});
 	});
 
-	for (const invalidation of ['newer selection', 'provider unavailable'] as const) {
-		test(`ignores a stale GitHub browse result after ${invalidation}`, async () => {
+	for (const actionName of ['Work in Repository...', 'Issue...', 'Pull Request...']) {
+		test(`does not expose ${actionName} in the automation workspace picker`, async () => {
 			const providersService = disposables.add(new MockSessionsProvidersService());
 			const remoteUri = URI.from({ scheme: GITHUB_REMOTE_FILE_SCHEME, authority: 'github', path: '/owner/repository/HEAD' });
 			const result = new DeferredPromise<ISessionWorkspace | undefined>();
 			const base = createMockProvider('github', { group: SESSION_WORKSPACE_GROUP_GITHUB });
 			providersService.setProviders([{
 				...base,
-				browseActions: [{ ...makeBrowseAction('github', SESSION_WORKSPACE_GROUP_GITHUB), run: () => result.p }],
+				browseActions: [{ ...makeBrowseAction('github', SESSION_WORKSPACE_GROUP_GITHUB, actionName), run: () => result.p }],
 			}]);
 			const picker = createTestPicker(disposables, providersService, undefined, undefined, TestAutomationsWorkspacePicker);
 			assert.ok(picker instanceof TestAutomationsWorkspacePicker);
-			let available = true;
-			picker.canBrowseGitHub = () => available;
 			const model = new AutomationIsolationModel({ isQuickChat: false, folderUri: undefined, isolationMode: undefined, branch: undefined });
 			picker.setTargetModel(model);
-			const selection = picker.select('browse');
-			if (invalidation === 'newer selection') {
-				await picker.select('No workspace');
-			} else {
-				available = false;
-			}
+			assert.strictEqual(picker.getItems().some(item => item.label === actionName), false);
 			await result.complete(base.resolveWorkspace(remoteUri));
-			await selection;
-			assert.deepStrictEqual({ selected: picker.selectedFolderUri, target: model.folderUri, quickChat: model.isQuickChat }, {
-				selected: undefined, target: undefined, quickChat: invalidation === 'newer selection',
-			});
 		});
 	}
 
-	test('reports GitHub browse failures without changing the selected target', async () => {
+	test('does not invoke GitHub browsing when the automation picker opens', async () => {
 		const providersService = disposables.add(new MockSessionsProvidersService());
 		const failure = new Error('Repository lookup failed');
 		providersService.setProviders([createMockProvider('github', {
@@ -3856,11 +3893,10 @@ suite('AutomationsWorkspacePicker', () => {
 		})]);
 		const picker = createTestPicker(disposables, providersService, undefined, undefined, TestAutomationsWorkspacePicker);
 		assert.ok(picker instanceof TestAutomationsWorkspacePicker);
-		picker.canBrowseGitHub = () => true;
 		const errors: unknown[] = [];
 		picker.onSelectionError = error => errors.push(error);
-		await picker.select('browse');
-		assert.deepStrictEqual({ errors, selected: picker.selectedFolderUri }, { errors: [failure], selected: undefined });
+		picker.getItems();
+		assert.deepStrictEqual({ errors, selected: picker.selectedFolderUri }, { errors: [], selected: undefined });
 	});
 
 	for (const checked of [true, false]) {

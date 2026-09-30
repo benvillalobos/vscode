@@ -44,7 +44,7 @@ The Sessions layer direction remains defined by [LAYERS.md](LAYERS.md). Non-prov
 
 The provider-neutral store exposes definition mutations, a manual run request, and optional cancellation of an existing run through its owning authority, not run-claim or lifecycle-write APIs. Cancellation does not archive the conversation or synthesize a terminal run; the provider continues observing the authoritative outcome. The manual runner has no Sessions session-creation dependency. An accepted cloud dispatch can have no correlated task ID yet; it is not represented as a synthetic run or a session-creation failure.
 
-Cloud history uses the run authority's status and optional `needsInput` flag, independently of a lazily loaded conversation's status or local archive state.
+Cloud history uses the run authority's status and optional `needsInput` flag, supplemented by live conversation progress and newer confirmed response completion. Local archive/read state stays owned by the session model; archiving does not stop or archive the remote GitHub task.
 
 `IAutomationService` and `ISessionsProviderAutomations` each extend `IAutomationStore`; neither extends the other. The provider contract describes one authority's catalogue and observable creation eligibility, while the injected service adds provider lists and creation checks by provider ID. Optional integrations can disable catalogue participation without reporting a disconnected host or turning a provider-less window into an empty ready catalogue.
 
@@ -94,7 +94,7 @@ Manual cloud dispatch returns an acceptance receipt without a task ID. The clien
 
 Run projection uses the real task ID to address the existing `copilot-cloud-agent:/task/<id>` viewer. Cloud conversations do not require AHP, an environment binding, or an Agent Host connection. Unhydrated and terminal runs remain visible with session/web opening actions; normal cloud-session refresh resolves the viewer when needed.
 
-History retains up to 50 recent runs per automation plus previously observed active runs. Requests have bounded concurrency. Active and recently requested histories refresh while observed; full history sweeps are less frequent. Leaving the history view cancels observation requests, not remote execution. Loading or refresh errors cannot become an authoritative empty history or a fabricated terminal outcome.
+History retains up to 50 recent runs per automation plus previously observed active runs. Requests have bounded concurrency. Opening or explicitly refreshing the view reloads definitions and history. Only active runs and bounded discovery after a local run request are polled while observed; idle catalogues do not periodically discover external changes. Leaving the history view cancels observation requests, not remote execution. Loading or refresh errors cannot become an authoritative empty history or a fabricated terminal outcome.
 
 ## Availability and routing
 

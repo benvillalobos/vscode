@@ -127,6 +127,7 @@ suite('Automation dialog creation', () => {
 		let selectedWorkspace: URI | undefined;
 		const workspaceButton = DOM.$('button', { type: 'button' }, 'Select workspace');
 		instantiationService.stubInstance(MobileAutomationsWorkspacePicker, {
+			setCloudConfiguration: () => { },
 			setTargetModel: model => { targetModel = model; },
 			setLayoutService: () => { },
 			setSelectedWorkspace: uri => { selectedWorkspace = uri; },
@@ -165,6 +166,7 @@ suite('Automation dialog creation', () => {
 		const nameInput = container.querySelector<HTMLInputElement>('.automation-form-input-host input')!;
 		return {
 			result, saveButton, nameInput, container,
+			toggleCloud: () => container.querySelector<HTMLElement>('[role="switch"]')!.click(),
 			cancel: () => cancelButton.click(),
 			refreshTypes: () => sessionTypesChanged.fire(),
 			failConfigurationCapture: (error: Error) => { configurationError = error; },
@@ -190,6 +192,7 @@ suite('Automation dialog creation', () => {
 
 	test('new cloud selection keeps Enabled checked and preserves an explicit unchecked choice', async () => {
 		const dialog = openDialog({}, cloudConfiguration);
+		dialog.toggleCloud();
 		dialog.setWorkspace(cloudRepository);
 		dialog.setPrompt('Review changes');
 		await timeout(0);
@@ -205,6 +208,32 @@ suite('Automation dialog creation', () => {
 		const result = await dialog.result;
 		assert.deepStrictEqual({ initial, afterRetarget, kind: result?.kind, enabled: result?.kind === 'create' ? result.value.enabled : undefined, provider: result?.value.target?.providerId }, {
 			initial: 'true', afterRetarget: 'false', kind: 'create', enabled: false, provider: 'cloud',
+		});
+	});
+
+	test('cloud switch changes provider choices without changing Enabled or the selected folder', async () => {
+		const dialog = openDialog({}, cloudConfiguration);
+		dialog.setWorkspace(FOLDER);
+		dialog.setPrompt('Review changes');
+		await timeout(0);
+		const toggle = dialog.container.querySelector<HTMLButtonElement>('[role="switch"]')!;
+		const label = () => dialog.container.querySelector('.automation-target-toolbar [aria-label*="Session Type"]')?.getAttribute('aria-label');
+		const local = { checked: toggle.getAttribute('aria-checked'), label: label() };
+		dialog.toggleCloud();
+		await timeout(0);
+		const cloud = { checked: toggle.getAttribute('aria-checked'), label: label() };
+		dialog.toggleCloud();
+		await timeout(0);
+		const restored = { checked: toggle.getAttribute('aria-checked'), label: label() };
+		dialog.saveButton.click();
+		const result = await dialog.result;
+		assert.deepStrictEqual({
+			local, cloud, restored, target: result?.value.target,
+		}, {
+			local: { checked: 'false', label: 'Session Type, Copilot' },
+			cloud: { checked: 'true', label: 'Session Type, Cloud' },
+			restored: { checked: 'false', label: 'Session Type, Copilot' },
+			target: { kind: 'workspace', folderUri: FOLDER, providerId: 'host', sessionTypeId: 'copilotcli', isolation: { kind: 'default' } },
 		});
 	});
 
@@ -230,10 +259,13 @@ suite('Automation dialog creation', () => {
 				hint: dialog.container.querySelector('.automation-target-row .automation-form-hint')?.textContent,
 				controlsHidden: controls.style.display === 'none',
 				cloudForm: !!dialog.container.querySelector('.automation-provider-configured'),
+				switchChecked: dialog.container.querySelector('[role="switch"]')?.getAttribute('aria-checked'),
+				switchDisabled: dialog.container.querySelector<HTMLButtonElement>('[role="switch"]')?.disabled,
 			}, {
 				enabled: 'false', readonly: false, workspacePicker: true, sessionPicker: true, targetButtons: 2,
 				hint: editing ? cloudConfiguration.targetChangeDisabledReason : undefined,
 				controlsHidden: true, cloudForm: true,
+				switchChecked: 'true', switchDisabled: editing,
 			});
 			dialog.saveButton.click();
 			const result = await dialog.result;
@@ -243,6 +275,7 @@ suite('Automation dialog creation', () => {
 
 	test('cloud configuration errors remain visible even when the empty controls row is hidden', async () => {
 		const dialog = openDialog({}, cloudConfiguration);
+		dialog.toggleCloud();
 		dialog.setWorkspace(cloudRepository);
 		dialog.setPrompt('Review changes');
 		await timeout(0);
@@ -378,6 +411,7 @@ suite('Automation dialog layout', () => {
 		const workspaceButton = DOM.$('button', { type: 'button' }, 'Select workspace');
 		let targetModel: AutomationIsolationModel | undefined;
 		instantiationService.stubInstance(MobileAutomationsWorkspacePicker, {
+			setCloudConfiguration: () => { },
 			setTargetModel: model => { targetModel = model; },
 			setLayoutService: () => { },
 			onDidSelectWorkspace: Event.None,

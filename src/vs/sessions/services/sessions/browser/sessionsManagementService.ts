@@ -533,7 +533,8 @@ export class SessionsManagementService extends Disposable implements ISessionsMa
 
 	createAutomationSession(folderUri: URI, options?: ICreateNewSessionOptions): ISession {
 		const { provider, sessionTypeId } = this._resolveProviderForNewSession(folderUri, options);
-		if (provider.automations?.catalogueState.get() !== 'ready') {
+		if (!provider.automations || provider.automations.enabled?.get() === false
+			|| provider.automations.catalogueState.get() !== 'ready' && !provider.automations.canCreateAutomation.get()) {
 			throw new Error(localize('automationProviderUnavailable', "The selected provider does not currently provide Automation configuration."));
 		}
 		if (provider.automations.configuration !== undefined && !provider.automations.configuration.sessionTypes.includes(sessionTypeId)) {
@@ -623,7 +624,8 @@ export class SessionsManagementService extends Disposable implements ISessionsMa
 
 	createAutomationQuickChat(options?: ICreateNewSessionOptions): ISession {
 		const { provider, sessionTypeId } = this._resolveProviderForQuickChat(options);
-		if (provider.automations?.catalogueState.get() !== 'ready') {
+		if (!provider.automations || provider.automations.enabled?.get() === false
+			|| provider.automations.catalogueState.get() !== 'ready' && !provider.automations.canCreateAutomation.get()) {
 			throw new Error(localize('automationProviderUnavailable', "The selected provider does not currently provide Automation configuration."));
 		}
 		const previousAutomationSession = this._automationSession.get();

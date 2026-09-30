@@ -487,6 +487,10 @@ export class SessionsService extends Disposable implements ISessionsService {
 		// Honor explicit unread marks until the user leaves the session and returns.
 		let previousActiveSessionId: string | undefined;
 		this._register(autorun(reader => {
+			if (this.customViewService.activeCustomView.read(reader)) {
+				previousActiveSessionId = undefined;
+				return;
+			}
 			const activeSession = this.activeSession.read(reader);
 			const isRead = activeSession?.isRead.read(reader);
 			const activeSessionChanged = activeSession?.sessionId !== previousActiveSessionId;

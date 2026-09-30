@@ -12,7 +12,7 @@ import { Disposable, DisposableStore, IDisposable, DisposableMap, MutableDisposa
 import { Schemas } from '../../../../../base/common/network.js';
 import { deepClone } from '../../../../../base/common/objects.js';
 import { isWeb } from '../../../../../base/common/platform.js';
-import { constObservable, derived, IObservable, ISettableObservable, ITransaction, observableFromPromise, observableValue, observableValueOpts, transaction } from '../../../../../base/common/observable.js';
+import { autorun, constObservable, derived, IObservable, ISettableObservable, ITransaction, observableFromPromise, observableValue, observableValueOpts, transaction } from '../../../../../base/common/observable.js';
 import { ThemeIcon } from '../../../../../base/common/themables.js';
 import { URI } from '../../../../../base/common/uri.js';
 import { ICommandService } from '../../../../../platform/commands/common/commands.js';
@@ -24,7 +24,7 @@ import { getRepositoryName } from '../../../../../workbench/contrib/chat/browser
 import { IAgentSessionsService } from '../../../../../workbench/contrib/chat/browser/agentSessions/agentSessionsService.js';
 import { AgentSessionProviders, AgentSessionTarget } from '../../../../../workbench/contrib/chat/browser/agentSessions/agentSessions.js';
 import { IChatService, IChatSendRequestOptions } from '../../../../../workbench/contrib/chat/common/chatService/chatService.js';
-import { IChatResponseModel } from '../../../../../workbench/contrib/chat/common/model/chatModel.js';
+import { IChatModel, IChatResponseModel } from '../../../../../workbench/contrib/chat/common/model/chatModel.js';
 import { ChatSessionStatus, IChatSessionsService, IChatSessionProviderOptionGroup, IChatSessionProviderOptionItem, SessionType } from '../../../../../workbench/contrib/chat/common/chatSessionsService.js';
 import { assertAutomationSessionTemplate, IAutomationSessionTemplate } from '../../../../../workbench/contrib/chat/common/automations/automation.js';
 import { AutomationModelConfiguration } from '../../../automations/browser/automationModelConfiguration.js';
@@ -1070,6 +1070,7 @@ export class CopilotChatSessionsProvider extends Disposable implements ISessions
 	private readonly _sandboxSends = new Map<string, ISendRequestOptions>();
 	private readonly _sandboxCreationChats = this._register(new DisposableMap<string, ReadOnlyChatSession>());
 	private readonly _repositoryPicker = this._register(new MutableDisposable<DisposableStore>());
+	private readonly _cloudChatObservers = this._register(new DisposableMap<IChatModel>());
 
 	/** Cache of ISession wrappers, keyed by session ID. */
 	private readonly _sessionWrapperCache = new Map<string, ISession>();
@@ -1151,6 +1152,30 @@ export class CopilotChatSessionsProvider extends Disposable implements ISessions
 		}));
 
 		this._ensureSessionCache();
+		if (providerMode === 'default') {
+			this._register(autorun(reader => {
+				const models = new Set([...this.chatService.chatModels.read(reader)].filter(model => model.sessionResource.scheme === AgentSessionProviders.Cloud));
+				for (const model of this._cloudChatObservers.keys()) {
+					if (!models.has(model)) {
+						this._cloudChatObservers.deleteAndDispose(model);
+					}
+				}
+				for (const model of models) {
+					if (this._cloudChatObservers.has(model)) {
+						continue;
+					}
+					let wasRunning = false;
+					this._cloudChatObservers.set(model, autorun(reader => {
+						const running = model.requestInProgress.read(reader);
+						const completed = wasRunning && !running;
+						wasRunning = running;
+						if (completed && model.lastRequest?.response?.isComplete && !model.lastRequest.response.isCanceled) {
+							this.agentSessionsService.getSession(model.sessionResource)?.setRead(false);
+						}
+					}));
+				}
+			}));
+		}
 	}
 
 	get browseActions(): readonly ISessionWorkspaceBrowseAction[] {
@@ -2377,14 +2402,14 @@ export class CopilotChatSessionsProvider extends Disposable implements ISessions
 			const existing = this._sessionCache.get(key);
 			if (existing) {
 				const previousStatus = existing.status.get();
+				const previousEnd = existing.lastTurnEnd.get()?.getTime();
 				if (existing.update(session)) {
 					changedData.push(existing);
 				}
-				// A completed turn (InProgress → terminal) marks the session
-				// unread. Copilot read state is owned by the agent session model,
-				// so route through `setRead(false)`; the adapter mirrors it back.
+				// Completion timestamps also catch short turns whose running state was missed between polls.
 				const currentStatus = existing.status.get();
-				if (previousStatus === SessionStatus.InProgress
+				const completedAt = existing.lastTurnEnd.get()?.getTime();
+				if ((previousStatus === SessionStatus.InProgress || completedAt !== undefined && previousEnd !== undefined && completedAt > previousEnd)
 					&& currentStatus !== SessionStatus.InProgress
 					&& currentStatus !== SessionStatus.Untitled
 					&& existing.isRead.get()) {
