@@ -13,6 +13,7 @@ import { constObservable, derived, IObservable, observableSignal, observableValu
 import { isStringArray } from '../../../../../base/common/types.js';
 import { Schemas } from '../../../../../base/common/network.js';
 import { URI } from '../../../../../base/common/uri.js';
+import { isEqual } from '../../../../../base/common/resources.js';
 import { localize } from '../../../../../nls.js';
 import { IConfigurationService } from '../../../../../platform/configuration/common/configuration.js';
 import { IDefaultAccountService } from '../../../../../platform/defaultAccount/common/defaultAccount.js';
@@ -215,6 +216,21 @@ export class CloudAutomationStore extends Disposable implements ISessionsProvide
 
 	getActiveRunFor(id: string): IAutomationRun | undefined {
 		return this.history.get().find(run => run.automationId === id && (run.status === 'pending' || run.status === 'running'));
+	}
+
+	observeLocalRequest(resource: URI): void {
+		if (!this.isAvailable()) {
+			return;
+		}
+		const run = this.history.get().find(run => isEqual(run.sessionResource, resource));
+		if (run) {
+			this.requestedHistory.set(run.automationId, Date.now() + 2 * 60_000);
+		} else {
+			for (const id of this.entries.keys()) {
+				this.requestedHistory.set(id, Date.now() + 2 * 60_000);
+			}
+		}
+		this.scheduleHistory(0);
 	}
 
 	canRunAutomation(id: string): boolean {

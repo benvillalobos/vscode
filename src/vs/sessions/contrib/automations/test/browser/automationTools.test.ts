@@ -266,6 +266,7 @@ function createConfigurationService(enabled = true): TestConfigurationService {
 }
 
 interface IListProviderOptions {
+	readonly enabled?: boolean;
 	readonly id: string;
 	readonly label?: string;
 	readonly state?: AutomationCatalogueState;
@@ -287,6 +288,7 @@ function createListAutomationsTool(
 ): ListAutomationsTool {
 	const providers = providerOptions.map(options => {
 		const store = upcastPartial<ISessionsProviderAutomations>({
+			enabled: constObservable(options.enabled ?? true),
 			catalogueState: constObservable(options.state ?? 'ready'),
 			canCreateAutomation: constObservable(options.canCreateAutomation ?? true),
 			unavailableReason: constObservable(options.unavailableReason),
@@ -345,6 +347,15 @@ function getText(result: IToolResult): string {
 
 suite('AutomationTools', () => {
 	ensureNoDisposablesAreLeakedInTestSuite();
+
+	test('listAutomations omits disabled optional providers', async () => {
+		const tool = createListAutomationsTool(new FakeAutomationService(), createConfigurationService(), [
+			{ id: 'cloud', label: 'GitHub Cloud', enabled: false },
+			{ id: 'local-agent-host', label: 'Local Agent Host' },
+		]);
+		const result = JSON.parse(getText(await invoke(tool, {})));
+		assert.deepStrictEqual(result.map((provider: { providerId: string }) => provider.providerId), ['local-agent-host']);
+	});
 
 	test('tool data is gated by AI and Automations context keys', () => {
 		const automationService = new FakeAutomationService();

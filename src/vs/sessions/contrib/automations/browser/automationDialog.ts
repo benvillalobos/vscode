@@ -1182,7 +1182,14 @@ export function renderForm(
 			if (checked) {
 				isolationModel.setQuickChat(false, isolationModel.folderUri);
 			}
+			const first = sessionTypeEntries.get().find(entry => entry.disabledReason === undefined);
+			sessionTypePicker.setFolderSource(isolationModel.folderUriObs, {
+				initialPick: first ? { providerId: first.providerId, sessionTypeId: first.sessionType.id } : undefined,
+			});
 		});
+		syncStateFromPicker();
+		updateAutomationSessionTarget();
+		revalidate();
 	}));
 	const workspaceControlsVisible = derived(reader => {
 		const folder = isolationModel.folderUriObs.read(reader);
@@ -1212,7 +1219,8 @@ export function renderForm(
 		onDidChangeActiveSessionProvider: onDidChangeSessionType.event,
 	};
 	const syncStateFromPicker = () => {
-		const pick = sessionTypePicker.selectedPick;
+		const selected = sessionTypePicker.selectedPick;
+		const pick = selected?.providerId && selectedProviders.get().includes(selected.providerId) ? selected : undefined;
 		state.providerId = pick?.providerId;
 		state.sessionTypeId = pick?.sessionTypeId;
 		const entries = sessionTypeEntries.get();
@@ -1287,7 +1295,7 @@ export function renderForm(
 		const folderUri = isolationModel.folderUriObs.get();
 		const pick = sessionTypePicker.selectedPick;
 		const isQuickChat = isolationModel.isQuickChatObs.get();
-		if (!pick || state.targetDisabledReason !== undefined || pick.providerId === undefined || !allowedProviders.get().includes(pick.providerId) || (!isQuickChat && !folderUri)) {
+		if (!pick || state.targetDisabledReason !== undefined || pick.providerId === undefined || !selectedProviders.get().includes(pick.providerId) || (!isQuickChat && !folderUri)) {
 			automationSessionDraftSynchronizer.update(undefined);
 			return;
 		}

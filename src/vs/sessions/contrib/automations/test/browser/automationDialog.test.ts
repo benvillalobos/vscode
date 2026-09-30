@@ -237,6 +237,26 @@ suite('Automation dialog creation', () => {
 		});
 	});
 
+	test('duplicate can switch to local before cloud repository eligibility resolves', async () => {
+		const pending = observableValue<string | undefined>('eligibility', 'Checking repository visibility...');
+		const dialog = openDialog({
+			initialValues: {
+				name: 'Duplicate', prompt: 'Review changes',
+				schedule: { interval: 'manual', scheduleHour: 0, scheduleMinute: 0, scheduleDay: 0 },
+				target: { kind: 'workspace', folderUri: FOLDER, providerId: 'cloud', sessionTypeId: 'cloud', isolation: { kind: 'default' } },
+			},
+		}, { ...cloudConfiguration, getTargetDisabledReason: () => pending });
+		dialog.toggleCloud();
+		pending.set(undefined, undefined);
+		await timeout(0);
+		assert.strictEqual(dialog.saveButton.getAttribute('aria-disabled'), 'false', dialog.container.textContent ?? '');
+		dialog.saveButton.click();
+		const result = await dialog.result;
+		assert.deepStrictEqual(result?.value.target, {
+			kind: 'workspace', folderUri: FOLDER, providerId: 'host', sessionTypeId: 'copilotcli', isolation: { kind: 'default' },
+		});
+	});
+
 	for (const editing of [false, true]) {
 		test(`cloud ${editing ? 'edit' : 'duplicate'} preserves saved enabled state and explains target mutability`, async () => {
 			const existing: IAutomationDescriptor = {

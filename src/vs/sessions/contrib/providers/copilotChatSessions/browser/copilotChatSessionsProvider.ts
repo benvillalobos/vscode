@@ -1167,6 +1167,9 @@ export class CopilotChatSessionsProvider extends Disposable implements ISessions
 					let wasRunning = false;
 					this._cloudChatObservers.set(model, autorun(reader => {
 						const running = model.requestInProgress.read(reader);
+						if (running && !wasRunning) {
+							this.automations?.observeLocalRequest(model.sessionResource);
+						}
 						const completed = wasRunning && !running;
 						wasRunning = running;
 						if (completed && model.lastRequest?.response?.isComplete && !model.lastRequest.response.isCanceled) {

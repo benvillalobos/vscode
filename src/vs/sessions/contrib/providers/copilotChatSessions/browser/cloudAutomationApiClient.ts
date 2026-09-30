@@ -97,7 +97,7 @@ export class CloudAutomationApiClient extends Disposable {
 	async list(accountName: string, repository: ICloudAutomationRepository, token: CancellationToken): Promise<readonly ICloudAutomationDefinition[]> {
 		const definitions: ICloudAutomationDefinition[] = [];
 		for (let page = 1; page <= 10; page++) {
-			const response = await this.request<ICloudAutomationList>(accountName, 'GET', `${repositoryAutomationsPath(repository)}/v2?per_page=100&page=${page}`, token);
+			const response = await this.request<ICloudAutomationList>(accountName, 'GET', `${repositoryAutomationsPath(repository)}/v2?per_page=100&page=${page}&ownership=user`, token);
 			if (!Array.isArray(response.data?.automations)) {
 				throw invalidResponse();
 			}

@@ -84,6 +84,8 @@ Cloud daily/weekly schedules have an explicit UTC time basis and quarter-hour mi
 
 Cloud automation management is opt-in through `chat.automations.cloud.enabled`. It uses the selected GitHub.com account with repository access and supports private repositories. Turning off cloud management, disabling AI UI, signing out, or closing VS Code does not disable schedules already stored on GitHub.
 
+The cloud setting is default-off, experimental and advanced, and uses automatic experiment defaults via `config.chat.automations.cloud.enabled`. Team-only rollout is configured in the assignment service, not hardcoded in the client; explicit user settings take precedence. The parent `chat.automations.enabled` and `chat.disableAIFeatures` gates still apply. This setting controls client management, not GitHub's execution permissions.
+
 The stable Copilot provider exposes the cloud store; it is not a synthetic Agent Host. The catalogue tracks private GitHub repositories selected in the profile, including recently selected GitHub workspaces. Discovery references are stored per account, but definitions, prompts, schedules, and run state remain server-owned. Account changes clear cached data and cancel pending reads before another account is presented.
 
 Cloud mutations use the account-bound Copilot API transport. Creation grants an explicit reviewed tool selection and uses the form's reviewed enabled state; changing providers does not override that state. The form retains the draft while the actual mutation is pending and on definite errors. An uncertain mutation result blocks blind resubmission; closing the form does not roll back a request already sent.

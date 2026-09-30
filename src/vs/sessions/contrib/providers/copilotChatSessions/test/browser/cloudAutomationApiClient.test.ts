@@ -90,9 +90,9 @@ suite('CloudAutomationApiClient', () => {
 		assert.deepStrictEqual({ ids: definitions.map(value => value.id), paths: requests.calls.map(value => new URL(value.url!).pathname + new URL(value.url!).search) }, {
 			ids: ['automation-1', 'automation-2'],
 			paths: [
-				'/agents/repos/example/private-repo/automations/v2?per_page=100&page=1',
+				'/agents/repos/example/private-repo/automations/v2?per_page=100&page=1&ownership=user',
 				'/agents/automations/automation-1',
-				'/agents/repos/example/private-repo/automations/v2?per_page=100&page=2',
+				'/agents/repos/example/private-repo/automations/v2?per_page=100&page=2&ownership=user',
 			],
 		});
 	});

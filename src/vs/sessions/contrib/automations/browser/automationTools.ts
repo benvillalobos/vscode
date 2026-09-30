@@ -149,7 +149,7 @@ export class ListAutomationsTool implements IToolImpl {
 
 		const providers: IAutomationProviderToolOutput[] = this.sessionsProvidersService.getProviders().flatMap(provider => {
 			const store = provider.automations;
-			if (!store) {
+			if (!store || store.enabled?.get() === false) {
 				return [];
 			}
 			const state = store.catalogueState.get();

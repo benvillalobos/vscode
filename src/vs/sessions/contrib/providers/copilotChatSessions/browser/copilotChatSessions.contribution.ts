@@ -16,7 +16,7 @@ import { RemoteAgentHostsEnabledSettingId } from '../../../../../platform/agentH
 import { IChatEntitlementService } from '../../../../../workbench/services/chat/common/chatEntitlementService.js';
 import { CLOUD_AUTOMATIONS_ENABLED_SETTING } from './cloudAutomationStore.js';
 import { Registry } from '../../../../../platform/registry/common/platform.js';
-import { Extensions as ConfigurationExtensions, IConfigurationRegistry } from '../../../../../platform/configuration/common/configurationRegistry.js';
+import { ConfigurationScope, Extensions as ConfigurationExtensions, IConfigurationRegistry } from '../../../../../platform/configuration/common/configurationRegistry.js';
 import { localize } from '../../../../../nls.js';
 
 Registry.as<IConfigurationRegistry>(ConfigurationExtensions.Configuration).registerConfiguration({
@@ -25,7 +25,9 @@ Registry.as<IConfigurationRegistry>(ConfigurationExtensions.Configuration).regis
 		[CLOUD_AUTOMATIONS_ENABLED_SETTING]: {
 			type: 'boolean',
 			default: false,
-			tags: ['preview'],
+			scope: ConfigurationScope.MACHINE,
+			tags: ['experimental', 'advanced'],
+			experiment: { mode: 'auto' },
 			description: localize('cloudAutomations.enabled', "Enables managing cloud automations for private GitHub repositories in the Agents Window. Disabling this setting hides cloud management; existing cloud schedules continue running on GitHub."),
 		},
 	},

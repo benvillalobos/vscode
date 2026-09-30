@@ -241,6 +241,24 @@ suite('CloudAutomationStore', () => {
 		assert.deepStrictEqual({ state: store.catalogueState.get(), create: store.canCreateAutomation.get(), definitions: store.automations.get() }, { state: 'ready', create: false, definitions: [] });
 	});
 
+	test('disabling cloud management clears its catalogue and cancels polling without remote mutations', () => runWithFakedTimers({ useFakeTimers: true }, async () => {
+		const { store, api, configuration } = setup();
+		api.definitions = [definition()];
+		api.historyTasks = [cloudTask({ state: 'running' })];
+		await store.registerRepository(workspace);
+		const observer = disposables.add(autorun(reader => store.runs.read(reader)));
+		await timeout(0);
+		configuration.setUserConfiguration(CLOUD_AUTOMATIONS_ENABLED_SETTING, false);
+		configuration.onDidChangeConfigurationEmitter.fire({ affectsConfiguration: key => key === CLOUD_AUTOMATIONS_ENABLED_SETTING, affectedKeys: new Set([CLOUD_AUTOMATIONS_ENABLED_SETTING]), source: 8, change: { keys: [CLOUD_AUTOMATIONS_ENABLED_SETTING], overrides: [] } });
+		await timeout(60_000);
+		observer.dispose();
+		await assert.rejects(store.createAutomation(createOptions()), /Sign in and enable/);
+		assert.deepStrictEqual({
+			enabled: store.enabled.get(), definitions: store.automations.get(), runs: store.runs.get(),
+			canCreate: store.canCreateAutomation.get(), listCalls: api.listCalls, historyCalls: api.historyCalls.length, mutations: api.calls,
+		}, { enabled: false, definitions: [], runs: [], canCreate: false, listCalls: 1, historyCalls: 1, mutations: [] });
+	}));
+
 	suite('target eligibility', () => {
 		test('stays disabled until verified private and coalesces aliases and reactive reads', () => runWithFakedTimers({ useFakeTimers: true }, async () => {
 			const local = URI.file('C:\\workspace');
@@ -696,6 +714,27 @@ suite('CloudAutomationStore', () => {
 			callsAtDeadline, callsAfterDeadline: api.historyCalls.length,
 			lastPoll: api.historyCalls.at(-1)?.time, runs: store.runs.get(),
 		}, { callsAtDeadline: 8, callsAfterDeadline: 8, lastPoll: 105_000, runs: [] });
+	}));
+
+	test('a local follow-up restarts bounded discovery through stale completed history', () => runWithFakedTimers({ useFakeTimers: true }, async () => {
+		const { store, api } = setup();
+		api.definitions = [definition()];
+		api.historyTasks = [cloudTask()];
+		await store.registerRepository(workspace);
+		const observer = disposables.add(autorun(reader => store.runs.read(reader)));
+		await timeout(0);
+		await timeout(60_000);
+		const callsWhileIdle = api.historyCalls.length;
+		store.observeLocalRequest(URI.parse('copilot-cloud-agent:/task/task-existing'));
+		await timeout(0);
+		api.historyTasks = [cloudTask({ state: 'running' })];
+		await timeout(15_000);
+		await timeout(0);
+		const run = store.runs.get()[0];
+		observer.dispose();
+		assert.deepStrictEqual({ callsWhileIdle, times: api.historyCalls.map(call => call.time), status: run.status, stop: store.canStopRun(run) }, {
+			callsWhileIdle: 1, times: [0, 60_000, 75_000], status: 'running', stop: true,
+		});
 	}));
 
 	test('discovers external runs on refresh and polls active runs every fifteen seconds until settled', () => runWithFakedTimers({ useFakeTimers: true }, async () => {
