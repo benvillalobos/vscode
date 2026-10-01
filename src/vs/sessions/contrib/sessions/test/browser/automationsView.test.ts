@@ -4,9 +4,10 @@
  *--------------------------------------------------------------------------------------------*/
 
 import assert from 'assert';
+import { stub } from 'sinon';
 import { IContextMenuDelegate } from '../../../../../base/browser/contextmenu.js';
 import { DataTransfers } from '../../../../../base/browser/dnd.js';
-import { EventType, ModifierKeyEmitter } from '../../../../../base/browser/dom.js';
+import { EventType, getWindow, ModifierKeyEmitter } from '../../../../../base/browser/dom.js';
 import { GestureEvent, EventType as TouchEventType } from '../../../../../base/browser/touch.js';
 import type { IDelayedHoverOptions } from '../../../../../base/browser/ui/hover/hover.js';
 import { VSBuffer } from '../../../../../base/common/buffer.js';
@@ -475,6 +476,8 @@ class FakeSessionsManagementService extends mock<ISessionsManagementService>() i
 		lastTurnEnd: constObservable(undefined),
 		chats: constObservable<readonly IChat[]>([]),
 		mainChat: constObservable(upcastPartial<IChat>({
+			updatedAt: constObservable(new Date()),
+			status: this.sessionStatus,
 			changes: constObservable([]),
 			changesets: constObservable([]),
 		})),
@@ -508,6 +511,8 @@ class FakeSessionsManagementService extends mock<ISessionsManagementService>() i
 		lastTurnEnd: constObservable(undefined),
 		chats: constObservable<readonly IChat[]>([]),
 		mainChat: constObservable(upcastPartial<IChat>({
+			updatedAt: constObservable(new Date()),
+			status: this.sessionStatus,
 			changes: constObservable([]),
 			changesets: constObservable([]),
 		})),
@@ -779,6 +784,66 @@ suite('AutomationsCardsWidget', () => {
 			sessionTitle: 'Daily review',
 			fallbackRows: 0,
 		});
+	});
+
+	test('renders card metadata below the prompt and updates enabled and workspace states', async () => {
+		const { automationService, automationDialogService, widget } = setup();
+		const prompt = 'Review the workspace and summarize changes. '.repeat(5);
+		const manual = { interval: 'manual', scheduleHour: 0, scheduleMinute: 0, scheduleDay: 0 } satisfies IAutomationSchedule;
+		const states = [
+			automation({ prompt, schedule: manual }),
+			automation({ prompt, schedule: manual, target: { kind: 'quickChat', providerId: 'host', sessionTypeId: 'copilotcli' } }),
+			automation({ prompt, enabled: false }),
+			automation({ prompt, enabled: false, target: { kind: 'quickChat', providerId: 'host', sessionTypeId: 'copilotcli' } }),
+			automation({ prompt }),
+		];
+		automationService.setAutomations([states[0]]);
+		const card = widget.element.querySelector<HTMLElement>('.automations-card')!;
+		const main = card.querySelector<HTMLButtonElement>('.automations-card-main')!;
+		const actions = card.querySelector('.automations-card-actions');
+		main.focus();
+		const presentations = states.map(item => {
+			automationService.setAutomations([item]);
+			const folder = card.querySelector<HTMLElement>('.automations-card-folder')!;
+			return {
+				status: card.querySelector('.automations-card-schedule')?.textContent,
+				icon: card.querySelector('.automations-card-schedule .codicon')?.className,
+				folderVisible: folder.style.display !== 'none',
+				disabled: card.classList.contains('automation-disabled'),
+				label: card.getAttribute('aria-label'),
+			};
+		});
+		assert.deepStrictEqual({
+			presentations,
+			order: Array.from(main.children, element => element.className),
+			prompt: card.querySelector('.automations-card-prompt')?.textContent,
+			folder: card.querySelector('.automations-card-folder')?.textContent,
+			folderIcon: card.querySelector('.automations-card-folder .codicon')?.className,
+			decorativeIcons: Array.from(card.querySelectorAll('.automations-card-meta .codicon'), element => element.getAttribute('aria-hidden')),
+			sameCard: widget.element.querySelector('.automations-card') === card,
+			sameActions: card.querySelector('.automations-card-actions') === actions,
+			focusPreserved: document.activeElement === main,
+		}, {
+			presentations: [
+				{ status: 'Manual', icon: 'codicon codicon-person', folderVisible: true, disabled: false, label: 'Daily review — Manual' },
+				{ status: 'Manual', icon: 'codicon codicon-person', folderVisible: false, disabled: false, label: 'Daily review — Manual' },
+				{ status: 'Disabled', icon: 'codicon codicon-circle-slash', folderVisible: false, disabled: true, label: 'Daily review — Disabled' },
+				{ status: 'Disabled', icon: 'codicon codicon-circle-slash', folderVisible: false, disabled: true, label: 'Daily review — Disabled' },
+				{ status: 'Hourly', icon: 'codicon codicon-clockface', folderVisible: true, disabled: false, label: 'Daily review — Hourly' },
+			],
+			order: ['automations-card-name', 'automations-card-prompt', 'automations-card-meta'],
+			prompt,
+			folder: 'workspace',
+			folderIcon: 'codicon codicon-folder',
+			decorativeIcons: ['true', 'true'],
+			sameCard: true,
+			sameActions: true,
+			focusPreserved: true,
+		});
+		automationService.setAutomations([states[2]]);
+		main.click();
+		await timeout(0);
+		assert.strictEqual(automationDialogService.lastOptions?.existing?.enabled, false);
 	});
 
 	test('preserves a temporary Working row until its session resolves', () => {
@@ -1423,16 +1488,35 @@ suite('AutomationsCardsWidget', () => {
 		assert.deepStrictEqual({
 			titles: widget.element.querySelectorAll('.automations-cards-empty-title').length,
 			descriptions: widget.element.querySelectorAll('.automations-cards-empty-description').length,
+			description: widget.element.querySelector('.automations-cards-empty-description')?.textContent,
 			buttons: widget.element.querySelectorAll('.automations-cards-create-button').length,
 			templateSections: widget.element.querySelectorAll('.automations-templates').length,
 			templateNames: Array.from(widget.element.querySelectorAll('.automations-template-card-name-text'), element => element.textContent),
 		}, {
 			titles: 1,
 			descriptions: 1,
+			description: 'Describe what you want to automate, then choose when it runs.',
 			buttons: 1,
 			templateSections: 1,
 			templateNames: ['Catch up on main', 'Issue triage', 'Find bugs'],
 		});
+	});
+
+	test('template cards put the prompt before the schedule', () => {
+		const { widget } = setup();
+		const cards = Array.from(widget.element.querySelectorAll('.automations-template-card'));
+		assert.deepStrictEqual(cards.map(card => {
+			const descriptionId = card.getAttribute('aria-describedby');
+			return {
+				name: card.querySelector('.automations-template-card-name-text')?.textContent,
+				order: Array.from(card.children, element => element.className),
+				promptDescribed: !!descriptionId && descriptionId === card.querySelector('.automations-template-card-prompt')?.id,
+			};
+		}), ['Catch up on main', 'Issue triage', 'Find bugs'].map(name => ({
+			name,
+			order: ['automations-template-card-name', 'automations-template-card-prompt', 'automations-template-card-schedule'],
+			promptDescribed: true,
+		})));
 	});
 
 	test('shows enabled plugin Automation templates and opens them disabled by default', async () => {
@@ -1846,26 +1930,44 @@ suite('AutomationsCardsWidget', () => {
 		});
 	});
 
-	test('keeps the normal empty state and shows recoverable warnings below Create', () => {
+	test('keeps templates available while distinguishing incomplete catalogues from confirmed empty', () => {
 		const { automationService, widget } = setup();
-		const states = (['loading', 'error', 'unavailable', 'ready'] as const).map(state => {
-			automationService.setCatalogueState(state);
-			const warning = widget.element.querySelector<HTMLElement>('.automations-cards-partial-state')!;
-			return {
-				state,
-				loading: widget.element.querySelector<HTMLElement>('.automations-cards-loading')?.style.display === '',
-				empty: widget.element.querySelector<HTMLElement>('.automations-cards-empty')?.style.display === '',
-				warning: warning.style.display === '' ? warning.textContent : undefined,
-				afterCreate: warning.previousElementSibling?.classList.contains('automations-cards-create-button') ?? false,
-				templates: widget.element.querySelectorAll('.automations-template-card').length,
-			};
+
+		const loadingState = {
+			loading: widget.element.querySelector<HTMLElement>('.automations-cards-loading')?.style.display,
+			error: widget.element.querySelector<HTMLElement>('.automations-cards-error')?.style.display,
+			createButton: widget.element.querySelector<HTMLButtonElement>('.automations-cards-loading .automations-cards-state-create-button')?.textContent,
+			templates: widget.element.querySelectorAll('.automations-template-card').length,
+		};
+		automationService.setCatalogueState('error');
+		const errorState = {
+			loading: widget.element.querySelector<HTMLElement>('.automations-cards-loading')?.style.display,
+			error: widget.element.querySelector<HTMLElement>('.automations-cards-error')?.style.display,
+			createButton: widget.element.querySelector<HTMLButtonElement>('.automations-cards-error .automations-cards-state-create-button')?.textContent,
+			description: widget.element.querySelector('.automations-cards-error .automations-cards-state-description')?.textContent,
+			templates: widget.element.querySelectorAll('.automations-template-card').length,
+		};
+		automationService.setCatalogueState('unavailable');
+		const unavailableState = {
+			loading: widget.element.querySelector<HTMLElement>('.automations-cards-loading')?.style.display,
+			unavailable: widget.element.querySelector<HTMLElement>('.automations-cards-unavailable')?.style.display,
+			error: widget.element.querySelector<HTMLElement>('.automations-cards-error')?.style.display,
+			createButton: widget.element.querySelector<HTMLButtonElement>('.automations-cards-unavailable .automations-cards-state-create-button')?.textContent,
+			templates: widget.element.querySelectorAll('.automations-template-card').length,
+		};
+		automationService.setCatalogueState('ready');
+		const readyState = {
+			loading: widget.element.querySelector<HTMLElement>('.automations-cards-loading')?.style.display,
+			error: widget.element.querySelector<HTMLElement>('.automations-cards-error')?.style.display,
+			templates: widget.element.querySelectorAll('.automations-template-card').length,
+		};
+
+		assert.deepStrictEqual({ loadingState, errorState, unavailableState, readyState }, {
+			loadingState: { loading: '', error: 'none', createButton: 'Create Automation', templates: AUTOMATION_TEMPLATES.length },
+			errorState: { loading: 'none', error: '', createButton: 'Create Automation', description: 'The complete automation catalogue could not be read.', templates: AUTOMATION_TEMPLATES.length },
+			unavailableState: { loading: 'none', unavailable: '', error: 'none', createButton: 'Create Automation', templates: AUTOMATION_TEMPLATES.length },
+			readyState: { loading: 'none', error: 'none', templates: AUTOMATION_TEMPLATES.length },
 		});
-		assert.deepStrictEqual(states, [
-			{ state: 'loading', loading: true, empty: false, warning: undefined, afterCreate: false, templates: AUTOMATION_TEMPLATES.length },
-			{ state: 'error', loading: false, empty: true, warning: 'Some automations could not be loaded.', afterCreate: true, templates: AUTOMATION_TEMPLATES.length },
-			{ state: 'unavailable', loading: false, empty: true, warning: 'Some automations are unavailable.', afterCreate: true, templates: AUTOMATION_TEMPLATES.length },
-			{ state: 'ready', loading: false, empty: true, warning: undefined, afterCreate: true, templates: AUTOMATION_TEMPLATES.length },
-		]);
 	});
 
 	test('initial refresh failures are logged and shown inline without an error notification', async () => {
@@ -1876,10 +1978,10 @@ suite('AutomationsCardsWidget', () => {
 		await pending.error(new Error('Offline'));
 		await timeout(0);
 		assert.deepStrictEqual({
-			empty: widget.element.querySelector<HTMLElement>('.automations-cards-empty')?.style.display,
-			warning: widget.element.querySelector('.automations-cards-partial-state')?.textContent,
+			error: widget.element.querySelector<HTMLElement>('.automations-cards-error')?.style.display,
+			message: widget.element.querySelector('.automations-cards-error .automations-cards-state-title')?.textContent,
 			notifications: notificationErrors, logged: logService.errors.length,
-		}, { empty: '', warning: 'Automations from GitHub Cloud are unavailable. Try again later.', notifications: [], logged: 1 });
+		}, { error: '', message: 'Unable to load automations', notifications: [], logged: 1 });
 	});
 
 	test('surfaces partial catalogue states with saved automations', () => {
@@ -1901,8 +2003,8 @@ suite('AutomationsCardsWidget', () => {
 			templatesDisplay: widget.element.querySelector<HTMLElement>('.automations-templates')?.style.display,
 		}, {
 			loadingMessage: 'Loading additional automations...',
-			unavailableMessage: 'Automations from Remote build host are unavailable.',
-			errorMessage: 'Automations from Remote build host are unavailable.',
+			unavailableMessage: 'Automations are unavailable on Remote build host.',
+			errorMessage: 'Some automations could not be loaded.',
 			savedCards: 1,
 			appearsAfterCards: true,
 			templatesDisplay: '',
@@ -1913,11 +2015,60 @@ suite('AutomationsCardsWidget', () => {
 		const { automationDialogService, automationService, widget } = setup();
 		automationService.setCatalogueState('error');
 
-		widget.element.querySelector<HTMLButtonElement>('.automations-cards-empty .automations-cards-create-button')?.click();
+		widget.element.querySelector<HTMLButtonElement>('.automations-cards-error .automations-cards-state-create-button')?.click();
 		await Promise.resolve();
 
 		assert.strictEqual(automationDialogService.showCalls, 1);
 	});
+
+	for (const hasSavedAutomations of [false, true]) {
+		test(`groups unavailable providers into visual and accessible bullet lists ${hasSavedAutomations ? 'with' : 'without'} saved automations`, () => {
+			const { automationService, widget } = setup();
+			const automations = hasSavedAutomations ? [automation()] : [];
+			automationService.setAutomations(automations);
+			const providers: IAutomationProviderDescriptor[] = [
+				{ id: 'host1', label: 'Host 1', unavailableReasonCode: 'disconnected' },
+				{ id: 'host2', label: 'Host 2', unavailableReasonCode: 'unsupported' },
+				{ id: 'host3', label: 'Host 3', unavailableReasonCode: 'disconnected' },
+			];
+			automationService.setUnavailableProviders(providers);
+			automationService.setCatalogueState('unavailable');
+			const selector = hasSavedAutomations ? '.automations-cards-partial-state-message' : '.automations-cards-unavailable .automations-cards-state-description';
+			const description = widget.element.querySelector<HTMLElement>(selector)!;
+			const reasons = [
+				'The agent host is disconnected on Host 1, Host 3.',
+				'Automations are not supported on Host 2.',
+			];
+			const readMessage = () => ({
+				hasSummary: !!description.querySelector(':scope > div'),
+				hasList: !!description.querySelector('ul'),
+				reasons: description.querySelector('ul')
+					? [...description.querySelectorAll('ul > li')].map(item => item.textContent)
+					: [description.textContent],
+			});
+			const initial = {
+				message: readMessage(),
+				whiteSpace: getWindow(description).getComputedStyle(description).whiteSpace,
+				textAlign: getWindow(description).getComputedStyle(description.querySelector('li')!).textAlign,
+				accessible: buildAutomationsAccessibleContent(automations, [], 'unavailable', [], providers).includes(reasons.map(reason => `- ${reason}`).join('\n')),
+			};
+			automationService.setUnavailableProviders(providers.map(provider => ({ ...provider, unavailableReasonCode: 'disabled' })));
+			const updated = readMessage();
+			automationService.setUnavailableProviders([providers[0]]);
+			const singleProvider = readMessage();
+			automationService.setUnavailableProviders(providers.map(provider => ({ id: provider.id, label: provider.label })));
+			const withoutReasons = readMessage();
+			automationService.setUnavailableProviders([]);
+
+			assert.deepStrictEqual({ initial, updated, singleProvider, withoutReasons, hasEmptyList: !!description.querySelector('ul') }, {
+				initial: { message: { hasSummary: false, hasList: true, reasons }, whiteSpace: 'pre-line', textAlign: 'left', accessible: true },
+				updated: { hasSummary: false, hasList: false, reasons: ['Automations are disabled on Host 1, Host 2, Host 3.'] },
+				singleProvider: { hasSummary: false, hasList: false, reasons: ['The agent host is disconnected on Host 1.'] },
+				withoutReasons: { hasSummary: false, hasList: false, reasons: ['Automations are unavailable on Host 1, Host 2, Host 3.'] },
+				hasEmptyList: false,
+			});
+		});
+	}
 
 	test('collapses built-in templates when saved automations become available', () => {
 		const { automationService, widget } = setup();
@@ -1963,6 +2114,57 @@ suite('AutomationsCardsWidget', () => {
 			});
 		});
 	}
+
+	test('card keyboard focus exposes the full current prompt without changing pointer hover targets', () => {
+		const shown: string[] = [];
+		let target: HTMLElement | undefined;
+		let hidden = 0;
+		let disposed = false;
+		const hoverService: IHoverService = {
+			...NullHoverService,
+			setupManagedHover: (delegate, element, content, options) => {
+				if (!element.classList.contains('automations-card-prompt')) {
+					return NullHoverService.setupManagedHover(delegate, element, content, options);
+				}
+				target = element;
+				return {
+					show: () => {
+						const value = typeof content === 'function' ? content() : content;
+						assert.ok(typeof value === 'string');
+						shown.push(value);
+					},
+					hide: () => { hidden++; },
+					update: () => { },
+					dispose: () => { disposed = true; },
+				};
+			},
+		};
+		const { automationService, widget } = setup('archive', hoverService);
+		const prompt = 'Review recent changes and summarize follow-up work. '.repeat(6);
+		automationService.setCatalogueState('ready');
+		automationService.setAutomations([automation({ prompt })]);
+		const main = widget.element.querySelector<HTMLElement>('.automations-card-main')!;
+		const matches = stub(main, 'matches');
+		disposables.add(toDisposable(() => matches.restore()));
+		const focusVisible = matches.withArgs(':focus-visible').returns(false);
+		main.dispatchEvent(new FocusEvent('focus'));
+		assert.deepStrictEqual(shown, []);
+		focusVisible.returns(true);
+		main.dispatchEvent(new FocusEvent('focus'));
+		main.dispatchEvent(new FocusEvent('blur'));
+		automationService.setAutomations([automation({ prompt: `${prompt}Updated.` })]);
+		main.dispatchEvent(new FocusEvent('focus'));
+		main.dispatchEvent(new FocusEvent('blur'));
+		widget.dispose();
+		assert.deepStrictEqual({
+			target: target?.className, shown, hidden, disposed,
+		}, {
+			target: 'automations-card-prompt',
+			shown: [prompt, `${prompt}Updated.`],
+			hidden: 2,
+			disposed: true,
+		});
+	});
 
 	test('template hovers expose full text once and are disposed with the widget', () => {
 		const hovers: { target: HTMLElement; content: IDelayedHoverOptions['content']; disposed: boolean }[] = [];
@@ -2044,7 +2246,7 @@ suite('AutomationsCardsWidget', () => {
 			const beforeCreate = {
 				templatesVisible: templates.style.display === '',
 				emptyClaimVisible: widget.element.querySelector<HTMLElement>('.automations-cards-empty')?.style.display === '',
-				catalogueStatusVisible: widget.element.querySelector<HTMLElement>(catalogueState === 'loading' ? '.automations-cards-loading' : '.automations-cards-partial-state')?.style.display === '',
+				catalogueStatusVisible: widget.element.querySelector<HTMLElement>(`.automations-cards-${catalogueState}`)?.style.display === '',
 			};
 			template.focus();
 			template.click();
@@ -2059,7 +2261,7 @@ suite('AutomationsCardsWidget', () => {
 				cardLabel: widget.element.querySelector('.automations-card-main')?.getAttribute('aria-label'),
 				warningVisible: widget.element.querySelector<HTMLElement>('.automations-cards-partial-state')?.style.display === '',
 			}, {
-				beforeCreate: { templatesVisible: true, emptyClaimVisible: catalogueState !== 'loading', catalogueStatusVisible: true },
+				beforeCreate: { templatesVisible: true, emptyClaimVisible: false, catalogueStatusVisible: true },
 				createCalls: [submitted],
 				catalogueState,
 				templateDisplay: '',
@@ -2092,7 +2294,8 @@ suite('AutomationsCardsWidget', () => {
 
 		const stateFocus = (['error', 'unavailable', 'ready'] as const).map(state => {
 			automationService.setCatalogueState(state);
-			return widget.element.querySelector('.automations-cards-empty .automations-cards-create-button') === document.activeElement;
+			const selector = state === 'ready' ? '.automations-cards-empty .automations-cards-create-button' : `.automations-cards-${state} .automations-cards-state-create-button`;
+			return widget.element.querySelector(selector) === document.activeElement;
 		});
 		const template = widget.element.querySelector<HTMLButtonElement>('.automations-template-card');
 		assert.ok(template);
@@ -2105,7 +2308,7 @@ suite('AutomationsCardsWidget', () => {
 		assert.deepStrictEqual({
 			stateFocus,
 			afterPopulated,
-			afterRemoval: widget.element.querySelector('.automations-cards-empty .automations-cards-create-button') === document.activeElement,
+			afterRemoval: widget.element.querySelector('.automations-cards-unavailable .automations-cards-state-create-button') === document.activeElement,
 		}, {
 			stateFocus: [true, true, true],
 			afterPopulated: 'Edit automation Daily review',
@@ -3359,12 +3562,12 @@ suite('AutomationsCardsWidget', () => {
 	test('accessible view distinguishes loading, unavailable, and error from confirmed empty', () => {
 		assert.deepStrictEqual({
 			loading: buildAutomationsAccessibleContent([], [], 'loading').split('\n').slice(0, 2),
-			unavailable: buildAutomationsAccessibleContent([], [], 'unavailable', undefined, [{ id: 'remote-build-host', label: 'Remote build host' }]).split('\n').slice(0, 3),
-			error: buildAutomationsAccessibleContent([], [], 'error').split('\n').slice(0, 3),
+			unavailable: buildAutomationsAccessibleContent([], [], 'unavailable', undefined, [{ id: 'remote-build-host', label: 'Remote build host' }]).split('\n').slice(0, 2),
+			error: buildAutomationsAccessibleContent([], [], 'error').split('\n').slice(0, 2),
 		}, {
 			loading: ['Automations', 'Loading automations.'],
-			unavailable: ['Automations', 'No automations are currently shown.', 'Automations from Remote build host are unavailable.'],
-			error: ['Automations', 'No automations are currently shown.', 'Some automations could not be loaded.'],
+			unavailable: ['Automations', 'Automations are unavailable on Remote build host.'],
+			error: ['Automations', 'Unable to load automations.'],
 		});
 	});
 
@@ -3372,8 +3575,8 @@ suite('AutomationsCardsWidget', () => {
 		const reason = 'Update this Agent Host to support autonomous automations.';
 		const providers = [{ id: 'remote', label: 'Remote host', unavailableReason: reason }];
 		const content = buildAutomationsAccessibleContent([], [], 'unavailable', [], providers);
-		assert.deepStrictEqual(content.split('\n').slice(0, 3), [
-			'Automations', 'No automations are currently shown.', `Automations from Remote host are unavailable. ${reason}`,
+		assert.deepStrictEqual(content.split('\n').slice(0, 2), [
+			'Automations', `Automations are unavailable on Remote host. ${reason}`,
 		]);
 	});
 
@@ -3403,8 +3606,8 @@ suite('AutomationsCardsWidget', () => {
 		assert.deepStrictEqual({
 			loadingIncluded: loadingContent.includes('Additional automations are loading.'),
 			loadingAfterAutomation: loadingContent.indexOf('Daily review, enabled') < loadingContent.indexOf('Additional automations are loading.'),
-			unavailableIncluded: content.includes('Automations from Remote build host are unavailable.'),
-			unavailableAfterAutomation: content.indexOf('Daily review, enabled') < content.indexOf('Automations from Remote build host are unavailable.'),
+			unavailableIncluded: content.includes('Automations are unavailable on Remote build host.'),
+			unavailableAfterAutomation: content.indexOf('Daily review, enabled') < content.indexOf('Automations are unavailable on Remote build host.'),
 			errorIncluded: errorContent.includes('Some automations could not be loaded.'),
 			errorAfterAutomation: errorContent.indexOf('Daily review, enabled') < errorContent.indexOf('Some automations could not be loaded.'),
 		}, {

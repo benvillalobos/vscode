@@ -42,7 +42,7 @@ class AutomationsCustomViewAccessibilityHelp implements IAccessibleViewImplement
 			localize('automationsCustomView.help.cloudHistory', "Cloud history shows repository and time even before a session is loaded. A completed cloud-only run can be marked done without opening its conversation. Sending a follow-up shows progress immediately. A completed response stays unread while you are viewing Automations instead of its conversation."),
 			localize('automationsCustomView.help.cloudRefresh', "Opening this view or choosing Refresh checks for cloud definitions and runs. Active runs are checked every fifteen seconds. Idle history is not polled repeatedly; refresh to discover changes made on GitHub."),
 			localize('automationsCustomView.help.cloudSwitch', "Use the Run in the Cloud switch in the automation dialog to choose cloud execution. In cloud mode, unavailable workspace rows explain that a private GitHub repository is required. The switch cannot change an existing automation's provider; use Duplicate instead."),
-			localize('automationsCustomView.help.cloudEditing', "New cloud automations start with Enabled checked. Clear it to create a disabled automation. Target pickers remain available when editing. To save a cloud automation with a different repository or provider, use Duplicate from the automation's menu."),
+			localize('automationsCustomView.help.cloudEditing', "New cloud automations start enabled. Use Enable or Disable in the automation's menu to change that state. Target pickers remain available when editing. To save a cloud automation with a different repository or provider, use Duplicate from the automation's menu."),
 			localize('automationsCustomView.help.authority', "Automations run on their selected Agent Host, not in this window. Creation and changes require a connected Agent Host that supports automations. Run now requests execution from that host; a disconnected or unsupported host never falls back to local execution. To use another host, duplicate the automation. The original history stays with its host, and an enabled original keeps scheduling until you disable it."),
 			...(builtInTemplatesVisible ? [
 				hasSavedAutomations
@@ -139,15 +139,11 @@ export function buildAutomationsAccessibleContent(automations: readonly IAutomat
 	} else if (catalogueState === 'loading') {
 		lines.push(localize('automationsAccessibleView.loading', "Loading automations."));
 	} else if (catalogueState === 'unavailable') {
-		lines.push(localize('automationsAccessibleView.noneLoaded', "No automations are currently shown."));
 		lines.push(unavailableProviders.length > 0
 			? formatUnavailableAutomationsMessage(unavailableProviders)
 			: localize('automationsAccessibleView.unavailable', "Some automations are unavailable. One or more providers are disconnected, disabled, or do not support automations."));
 	} else if (catalogueState === 'error') {
-		lines.push(localize('automationsAccessibleView.noneLoaded', "No automations are currently shown."));
-		lines.push(unavailableProviders.length > 0
-			? formatUnavailableAutomationsMessage(unavailableProviders)
-			: localize('automationsAccessibleView.partialLoadError', "Some automations could not be loaded."));
+		lines.push(localize('automationsAccessibleView.loadError', "Unable to load automations."));
 	} else {
 		lines.push(localize('automationsAccessibleView.empty', "No automations."));
 	}

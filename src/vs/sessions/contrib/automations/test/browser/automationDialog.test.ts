@@ -190,24 +190,21 @@ suite('Automation dialog creation', () => {
 		getTargetDisabledReason: () => constObservable(undefined),
 	};
 
-	test('new cloud selection keeps Enabled checked and preserves an explicit unchecked choice', async () => {
+	test('new cloud selection retains default enablement without reintroducing the removed checkbox', async () => {
 		const dialog = openDialog({}, cloudConfiguration);
 		dialog.toggleCloud();
 		dialog.setWorkspace(cloudRepository);
 		dialog.setPrompt('Review changes');
 		await timeout(0);
-		const checkbox = dialog.container.querySelector<HTMLElement>('[role="checkbox"][aria-label="Enabled"]')!;
-		const initial = checkbox.getAttribute('aria-checked');
-		checkbox.click();
+		const checkbox = dialog.container.querySelector<HTMLElement>('[role="checkbox"][aria-label="Enabled"]');
 		dialog.refreshTypes();
 		dialog.setWorkspace(FOLDER);
 		dialog.setWorkspace(cloudRepository);
 		await timeout(0);
-		const afterRetarget = checkbox.getAttribute('aria-checked');
 		dialog.saveButton.click();
 		const result = await dialog.result;
-		assert.deepStrictEqual({ initial, afterRetarget, kind: result?.kind, enabled: result?.kind === 'create' ? result.value.enabled : undefined, provider: result?.value.target?.providerId }, {
-			initial: 'true', afterRetarget: 'false', kind: 'create', enabled: false, provider: 'cloud',
+		assert.deepStrictEqual({ checkbox, kind: result?.kind, enabled: result?.kind === 'create' ? result.value.enabled : undefined, provider: result?.value.target?.providerId }, {
+			checkbox: null, kind: 'create', enabled: true, provider: 'cloud',
 		});
 	});
 
@@ -269,9 +266,9 @@ suite('Automation dialog creation', () => {
 			await timeout(0);
 			const target = dialog.container.querySelector<HTMLElement>('.automation-target-toolbar')!;
 			const controls = dialog.container.querySelector<HTMLElement>('.automation-session-configuration')!;
-			const enabled = dialog.container.querySelector<HTMLElement>('[role="checkbox"][aria-label="Enabled"]')!;
+			const enabled = dialog.container.querySelector<HTMLElement>('[role="checkbox"][aria-label="Enabled"]');
 			assert.deepStrictEqual({
-				enabled: enabled.getAttribute('aria-checked'),
+				enabled,
 				readonly: target.classList.contains('automation-target-readonly'),
 				workspacePicker: target.contains(dialog.container.querySelector('.automation-target-toolbar button')),
 				sessionPicker: !!target.querySelector('[aria-label="Session Type, Cloud"]'),
@@ -282,14 +279,14 @@ suite('Automation dialog creation', () => {
 				switchChecked: dialog.container.querySelector('[role="switch"]')?.getAttribute('aria-checked'),
 				switchDisabled: dialog.container.querySelector<HTMLButtonElement>('[role="switch"]')?.disabled,
 			}, {
-				enabled: 'false', readonly: false, workspacePicker: true, sessionPicker: true, targetButtons: 2,
+				enabled: null, readonly: false, workspacePicker: true, sessionPicker: true, targetButtons: 2,
 				hint: editing ? cloudConfiguration.targetChangeDisabledReason : undefined,
 				controlsHidden: true, cloudForm: true,
 				switchChecked: 'true', switchDisabled: editing,
 			});
 			dialog.saveButton.click();
 			const result = await dialog.result;
-			assert.deepStrictEqual(result?.value.target, existing.target);
+			assert.deepStrictEqual({ target: result?.value.target, enabled: result?.value.enabled }, { target: existing.target, enabled: false });
 		});
 	}
 
@@ -406,7 +403,7 @@ suite('Automation dialog creation', () => {
 suite('Automation dialog layout', () => {
 	const disposables = ensureNoDisposablesAreLeakedInTestSuite();
 
-	test('renders a single workspace picker before the prompt in DOM and keyboard order', () => {
+	test('renders target and prompt controls before the schedule in DOM and keyboard order', () => {
 		const configurationService = new TestConfigurationService();
 		const contextKeyService = disposables.add(new ContextKeyService(configurationService));
 		const instantiationService = workbenchInstantiationService({
@@ -500,8 +497,11 @@ suite('Automation dialog layout', () => {
 		const promptSection = form.querySelector('.automation-prompt-section')!;
 		const inputContainer = form.querySelector('.chat-input-container')!;
 		const sessionControls = form.querySelector('.automation-session-configuration')!;
+		const scheduleRow = form.querySelector('.automation-form-schedule-row')!;
 		assert.deepStrictEqual({
-			targetLabel: targetRow.querySelector('.automation-form-label')?.textContent,
+			formSections: Array.from(form.querySelector('.automation-form-content')!.children).filter(element => (element as HTMLElement).style.display !== 'none').map(element => element.className),
+			enabledCheckbox: form.querySelector('[role="checkbox"][aria-label="Enabled"]'),
+			targetLabel: targetRow.querySelector('.automation-target-toolbar')?.getAttribute('aria-label'),
 			targetContainsWorkspace: targetRow.contains(workspaceButton),
 			targetBeforePrompt: !!(targetRow.compareDocumentPosition(promptSection) & Node.DOCUMENT_POSITION_FOLLOWING),
 			targetControls: Array.from(targetRow.querySelectorAll('button, a[href]'), element => element.textContent),
@@ -512,6 +512,7 @@ suite('Automation dialog layout', () => {
 			configurationInsideInput: inputContainer.contains(inputToolbar),
 			controlsInsideInput: inputContainer.contains(sessionControls),
 			controlsAfterInput: !!(inputContainer.compareDocumentPosition(sessionControls) & Node.DOCUMENT_POSITION_FOLLOWING),
+			scheduleAfterControls: !!(sessionControls.compareDocumentPosition(scheduleRow) & Node.DOCUMENT_POSITION_FOLLOWING),
 			configurationHeader: form.querySelector('#automation-session-configuration-label'),
 			inputToolbarWrapperRole: inputToolbar.getAttribute('role'),
 			inputToolbarLabel: inputToolbar.querySelector('[role="toolbar"]')?.getAttribute('aria-label'),
@@ -521,6 +522,12 @@ suite('Automation dialog layout', () => {
 			controlsLabelCount: form.querySelectorAll('[aria-label="Session controls"]').length,
 			inputToolbarHidden: inputToolbar.style.display === 'none',
 		}, {
+			formSections: [
+				'automation-form-row',
+				'automation-session-section',
+				'automation-form-row automation-form-schedule-row',
+			],
+			enabledCheckbox: null,
 			targetLabel: 'Target',
 			targetContainsWorkspace: true,
 			targetBeforePrompt: true,
@@ -532,6 +539,7 @@ suite('Automation dialog layout', () => {
 			configurationInsideInput: true,
 			controlsInsideInput: false,
 			controlsAfterInput: true,
+			scheduleAfterControls: true,
 			configurationHeader: null,
 			inputToolbarWrapperRole: null,
 			inputToolbarLabel: 'Session configuration options',
@@ -540,6 +548,18 @@ suite('Automation dialog layout', () => {
 			controlsLabel: 'Session controls',
 			controlsLabelCount: 1,
 			inputToolbarHidden: true,
+		});
+
+		dispatchKey(promptInput, 'keydown', 'Tab');
+		const scheduleInput = scheduleRow.querySelector<HTMLElement>('[aria-label="Schedule"]')!;
+		const scheduleFocused = document.activeElement === scheduleInput;
+		dispatchKey(scheduleInput, 'keydown', 'Tab', true);
+		assert.deepStrictEqual({
+			scheduleFocused,
+			promptFocusedOnShiftTab: document.activeElement === promptInput,
+		}, {
+			scheduleFocused: true,
+			promptFocusedOnShiftTab: true,
 		});
 
 		assert.ok(targetModel);
@@ -1466,6 +1486,7 @@ suite('Automation branch picker', () => {
 		readonly providerInitiallyUnavailable?: boolean;
 		readonly revalidate?: () => void;
 		readonly visible?: boolean;
+		readonly hasRepository?: boolean | ((folder: URI) => boolean | Promise<boolean>);
 	}): {
 		readonly container: HTMLElement;
 		readonly state: IFormState;
@@ -1502,12 +1523,13 @@ suite('Automation branch picker', () => {
 		const instantiationService = disposables.add(new TestInstantiationService());
 		instantiationService.stub(IActionWidgetService, actionWidgetService);
 		instantiationService.stub(IGitService, upcastPartial<IGitService>({
-			openRepository: async () => {
+			openRepository: async folder => {
 				openRepositoryAttempts++;
 				if (options?.failOpenRepositoryOnce && openRepositoryAttempts === 1) {
 					throw new Error('failed to open repository');
 				}
-				return repository;
+				const hasRepository = typeof options?.hasRepository === 'function' ? await options.hasRepository(folder) : options?.hasRepository;
+				return hasRepository === false ? undefined : repository;
 			},
 		}));
 		instantiationService.stub(ISessionsManagementService, upcastPartial<ISessionsManagementService>({
@@ -1934,6 +1956,82 @@ suite('Automation branch picker', () => {
 			folderUri: undefined,
 			isolationMode: undefined,
 			branch: undefined,
+		});
+	});
+
+	test('hides the Worktree and branch pickers for a non-Git workspace', async () => {
+		const { container, model, state } = createItem({ visible: true, hasRepository: false });
+		await timeout(0);
+
+		assert.deepStrictEqual({
+			display: container.style.display,
+			ariaHidden: container.getAttribute('aria-hidden'),
+			isolationMode: state.isolationMode,
+			branch: model.persistedBranch,
+		}, {
+			display: 'none',
+			ariaHidden: 'true',
+			isolationMode: 'workspace',
+			branch: undefined,
+		});
+	});
+
+	test('keeps saving available when switching from Worktree to a non-Git workspace', async () => {
+		const { container, model, state } = createItem({ hasRepository: folder => isEqual(folder, FOLDER) });
+		const form = document.createElement('form');
+		const saveButton = disposables.add(new Button(form, defaultButtonStyles));
+		const validation: IValidationState = { nameError: undefined, promptError: undefined, folderError: undefined, sessionTypeError: undefined, branchError: undefined };
+		const snapshot = () => {
+			updateSaveButtonState(saveButton, state, validation, form, () => 'prompt', () => model.persistedBranch, sessionsManagementService);
+			return {
+				display: container.style.display,
+				isolationMode: state.isolationMode,
+				branch: model.persistedBranch,
+				branchError: validation.branchError,
+				canSave: saveButton.enabled,
+			};
+		};
+		await timeout(0);
+		const git = snapshot();
+		model.setWorkspace(URI.file('/non-git'));
+		await timeout(0);
+		const nonGit = snapshot();
+		model.setWorkspace(FOLDER);
+		await timeout(0);
+		const restoredGit = snapshot();
+		model.selectIsolationMode('worktree');
+
+		assert.deepStrictEqual({ git, nonGit, restoredGit, reselectedWorktree: snapshot() }, {
+			git: { display: '', isolationMode: 'worktree', branch: 'main', branchError: undefined, canSave: true },
+			nonGit: { display: 'none', isolationMode: 'workspace', branch: undefined, branchError: undefined, canSave: true },
+			restoredGit: { display: '', isolationMode: 'workspace', branch: undefined, branchError: undefined, canSave: true },
+			reselectedWorktree: { display: '', isolationMode: 'worktree', branch: 'main', branchError: undefined, canSave: true },
+		});
+	});
+
+	test('ignores a stale non-Git result after returning to a Git workspace', async () => {
+		const nonGitResult = new DeferredPromise<boolean>();
+		const { container, model, state } = createItem({
+			hasRepository: folder => isEqual(folder, FOLDER) ? true : nonGitResult.p,
+		});
+		await timeout(0);
+		model.setWorkspace(URI.file('/non-git'));
+		const pendingMode = state.isolationMode;
+		model.setWorkspace(FOLDER);
+		await timeout(0);
+		await nonGitResult.complete(false);
+		await timeout(0);
+
+		assert.deepStrictEqual({
+			pendingMode,
+			display: container.style.display,
+			isolationMode: state.isolationMode,
+			branch: model.persistedBranch,
+		}, {
+			pendingMode: 'worktree',
+			display: '',
+			isolationMode: 'worktree',
+			branch: 'main',
 		});
 	});
 

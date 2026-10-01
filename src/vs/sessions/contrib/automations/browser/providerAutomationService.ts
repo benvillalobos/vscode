@@ -55,7 +55,13 @@ export class ProviderAutomationService extends Disposable implements IAutomation
 				})
 				.map(provider => {
 					const reason = provider.automations?.unavailableReason?.read(reader);
-					return { id: provider.id, label: provider.automations?.configuration?.label ?? provider.label, ...(reason !== undefined ? { unavailableReason: reason } : {}) };
+					const reasonCode = provider.automations?.unavailableReasonCode?.read(reader);
+					return {
+						id: provider.id,
+						label: provider.automations?.configuration?.label ?? provider.label,
+						...(reason !== undefined ? { unavailableReason: reason } : {}),
+						...(reasonCode !== undefined ? { unavailableReasonCode: reasonCode } : {}),
+					};
 				});
 		});
 		this.availableProviders = derived(this, reader => {
