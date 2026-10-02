@@ -4,6 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import assert from 'assert';
+import { useFakeTimers } from 'sinon';
 import { DeferredPromise } from '../../../../../../base/common/async.js';
 import { CancellationToken } from '../../../../../../base/common/cancellation.js';
 import { Codicon } from '../../../../../../base/common/codicons.js';
@@ -38,6 +39,7 @@ class TestApi extends mock<CloudAutomationApiClient>() {
 	readonly calls: string[] = [];
 	definitions: readonly ICloudAutomationDefinition[] = [definition];
 	tasks: readonly ICloudAutomationTask[] = [];
+	historyError: Error | undefined;
 	pendingVisibility: Promise<boolean> | undefined;
 	lastToken: CancellationToken | undefined;
 	patch: ICloudAutomationMutation | undefined;
@@ -50,7 +52,13 @@ class TestApi extends mock<CloudAutomationApiClient>() {
 		}
 	}
 	override async list(): Promise<readonly ICloudAutomationDefinition[]> { this.calls.push('list'); return this.definitions; }
-	override async listRuns(): Promise<readonly ICloudAutomationTask[]> { this.calls.push('history'); return this.tasks; }
+	override async listRuns(): Promise<readonly ICloudAutomationTask[]> {
+		this.calls.push('history');
+		if (this.historyError) {
+			throw this.historyError;
+		}
+		return this.tasks;
+	}
 	override async getTask(): Promise<ICloudAutomationTask> { return this.tasks[0]; }
 	override async get(): Promise<ICloudAutomationDefinition> { return this.definitions[0]; }
 	override async create(_account: string, _repository: ICloudAutomationRepository, value: ICloudAutomationMutation): Promise<ICloudAutomationDefinition> {
@@ -63,6 +71,7 @@ class TestApi extends mock<CloudAutomationApiClient>() {
 		return { ...this.definitions[0], ...value };
 	}
 	override async run(): Promise<void> { this.calls.push('run'); }
+	override async stopTask(): Promise<void> { this.calls.push('stop'); }
 }
 
 suite('CloudAutomationProvider', () => {
@@ -151,6 +160,81 @@ suite('CloudAutomationProvider', () => {
 		const run = provider.runs.get()[0];
 		assert.deepStrictEqual({ status: run.status, trigger: run.trigger, needsInput: run.needsInput, session: run.sessionResource, url: run.externalResource?.toString() },
 			{ status: 'running', trigger: 'external', needsInput: true, session: undefined, url: 'https://github.com/owner/private/tasks/task' });
+	});
+
+	test('idle definitions do not poll and postdispatch history discovery is bounded', async () => {
+		const clock = useFakeTimers();
+		try {
+			const { provider, api, set } = setup();
+			await set(CHAT_CLOUD_AUTOMATIONS_ENABLED_SETTING, true);
+			await provider.refresh();
+			api.calls.length = 0;
+			await clock.tickAsync(60_000);
+			assert.deepStrictEqual(api.calls, []);
+			await provider.runAutomation(provider.automations.get()[0].id);
+			await clock.tickAsync(120_000);
+			assert.deepStrictEqual(api.calls, ['run', 'history', 'history', 'history', 'history', 'history']);
+		} finally {
+			clock.restore();
+		}
+	});
+
+	test('active history refreshes at 15 seconds and stops at completion or gate closure', async () => {
+		const clock = useFakeTimers();
+		try {
+			const { provider, api, set } = setup();
+			api.tasks = [{ id: 'task', state: 'running', created_at: definition.created_at }];
+			await set(CHAT_CLOUD_AUTOMATIONS_ENABLED_SETTING, true);
+			await provider.refresh();
+			api.calls.length = 0;
+			await clock.tickAsync(14_999);
+			assert.deepStrictEqual(api.calls, []);
+			await clock.tickAsync(1);
+			assert.deepStrictEqual(api.calls, ['history']);
+			api.tasks = [{ ...api.tasks[0], state: 'completed' }];
+			await clock.tickAsync(60_000);
+			assert.deepStrictEqual(api.calls, ['history', 'history']);
+			api.tasks = [{ ...api.tasks[0], state: 'running' }];
+			await provider.refresh();
+			api.calls.length = 0;
+			await set(CHAT_CLOUD_AUTOMATIONS_ENABLED_SETTING, false);
+			await clock.tickAsync(60_000);
+			assert.deepStrictEqual({ calls: api.calls, runs: provider.runs.get() }, { calls: [], runs: [] });
+		} finally {
+			clock.restore();
+		}
+	});
+
+	test('history failures retain rows without poisoning definition readiness', async () => {
+		const { provider, api, set } = setup();
+		api.tasks = [{ id: 'task', state: 'completed', created_at: definition.created_at }];
+		await set(CHAT_CLOUD_AUTOMATIONS_ENABLED_SETTING, true);
+		await provider.refresh();
+		const ids = provider.runs.get().map(run => run.id);
+		api.historyError = new Error('History offline');
+		await assert.rejects(provider.refresh(), /History offline/);
+		assert.deepStrictEqual({
+			catalogue: provider.catalogueState.get(), history: provider.historyState.get(),
+			canCreate: provider.canCreateAutomation.get(), ids: provider.runs.get().map(run => run.id),
+		}, { catalogue: 'ready', history: 'error', canCreate: true, ids });
+		api.historyError = undefined;
+		await provider.refresh();
+		assert.strictEqual(provider.historyState.get(), 'ready');
+	});
+
+	test('dispatch and stop acknowledgements are not changed into failures by history errors', async () => {
+		const { provider, api, set } = setup();
+		api.tasks = [{ id: 'task', state: 'running', created_at: definition.created_at }];
+		await set(CHAT_CLOUD_AUTOMATIONS_ENABLED_SETTING, true);
+		await provider.refresh();
+		const run = provider.runs.get()[0];
+		api.historyError = new Error('History unavailable');
+		const accepted = await provider.runAutomation(provider.automations.get()[0].id);
+		await provider.stopRun(run);
+		await assert.rejects(provider.refresh(), /History unavailable/);
+		assert.deepStrictEqual({
+			accepted, stopped: api.calls.includes('stop'), status: provider.runs.get()[0].status, history: provider.historyState.get(),
+		}, { accepted: { kind: 'accepted' }, stopped: true, status: 'running', history: 'error' });
 	});
 
 	test('preflight conflicts and partial patches preserve remote configuration', async () => {

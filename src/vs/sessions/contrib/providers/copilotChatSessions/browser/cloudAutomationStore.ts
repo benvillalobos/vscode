@@ -18,6 +18,7 @@ import { IStorageService, StorageScope, StorageTarget } from '../../../../../pla
 import { AutomationCatalogueState, IAutomationWorkspaceTarget } from '../../../../../workbench/contrib/chat/common/automations/automationService.js';
 import { ISessionsRecentWorkspacesService } from '../../../../services/sessions/browser/sessionsRecentWorkspacesService.js';
 import { GITHUB_REMOTE_FILE_SCHEME } from '../../../../services/sessions/common/session.js';
+import { GitHubApiError } from '../../../github/browser/githubApiClient.js';
 import { CloudAutomationApiClient, CloudAutomationMutationUncertainError, ICloudAutomationDefinition, ICloudAutomationMutation, ICloudAutomationRepository, ICloudAutomationTask } from './cloudAutomationApiClient.js';
 
 const REPOSITORIES_STORAGE_KEY = 'cloudAutomations.repositories';
@@ -220,7 +221,21 @@ export class CloudAutomationStore extends Disposable {
 				const history = await Promise.all(this.cachedEntries.get().map(entry => limiter.queue(async () => {
 					try {
 						this.assertCurrent(account, source.token);
-						const tasks = await this.api.listRuns(account.accountName, entry.definition.id, source.token);
+						let tasks: readonly ICloudAutomationTask[];
+						try {
+							tasks = await this.api.listRuns(account.accountName, entry.definition.id, source.token);
+						} catch (error) {
+							if (!(error instanceof GitHubApiError) || error.statusCode !== 404) {
+								throw error;
+							}
+							this.assertCurrent(account, source.token);
+							this.logService.info('[CloudAutomations] Definition no longer available', entry.definition.id);
+							transaction(tx => {
+								this.cachedEntries.set(this.cachedEntries.get().filter(candidate => !sameEntry(candidate, entry)), tx);
+								this.cachedHistory.set(this.cachedHistory.get().filter(candidate => !sameEntry(candidate.entry, entry)), tx);
+							});
+							return [];
+						}
 						const result: ICloudAutomationHistoryEntry[] = [];
 						for (const task of tasks) {
 							this.assertCurrent(account, source.token);

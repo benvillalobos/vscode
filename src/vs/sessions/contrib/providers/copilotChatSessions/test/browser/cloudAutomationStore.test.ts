@@ -21,6 +21,7 @@ import { IRecentWorkspace, ISessionsRecentWorkspacesService } from '../../../../
 import { GITHUB_REMOTE_FILE_SCHEME } from '../../../../../services/sessions/common/session.js';
 import { CloudAutomationApiClient, CloudAutomationMutationUncertainError, ICloudAutomationDefinition, ICloudAutomationMutation, ICloudAutomationRepository, ICloudAutomationTask } from '../../browser/cloudAutomationApiClient.js';
 import { CloudAutomationStore } from '../../browser/cloudAutomationStore.js';
+import { GitHubApiError } from '../../../../github/browser/githubApiClient.js';
 
 const account: IDefaultAccount = { accountName: 'octocat', sessionId: 'auth-1', enterprise: false, authenticationProvider: { id: 'github', name: 'GitHub', enterprise: false } };
 const repository = { owner: 'microsoft', name: 'vscode-internalbacklog' };
@@ -40,6 +41,7 @@ class TestApi extends mock<CloudAutomationApiClient>() {
 	readonly mutations: string[] = [];
 	mutationResult: ICloudAutomationDefinition | Promise<ICloudAutomationDefinition> | Error = definition;
 	tasks: readonly ICloudAutomationTask[] = [];
+	readonly historyErrors = new Map<string, Error>();
 	taskDetail: ICloudAutomationTask | Promise<ICloudAutomationTask> | undefined;
 	readonly detailStarted = new DeferredPromise<void>();
 	activeDetails = 0;
@@ -70,7 +72,11 @@ class TestApi extends mock<CloudAutomationApiClient>() {
 		this.mutations.push('run');
 	}
 
-	override async listRuns(): Promise<readonly ICloudAutomationTask[]> {
+	override async listRuns(_account: string, id: string): Promise<readonly ICloudAutomationTask[]> {
+		const error = this.historyErrors.get(id);
+		if (error) {
+			throw error;
+		}
 		return this.tasks;
 	}
 
@@ -139,6 +145,21 @@ suite('CloudAutomationStore', () => {
 		};
 		return { store, api, accounts, recents, storage, changeAccount };
 	}
+
+	test('missing upstream definitions do not block other history or catalogue readiness', async () => {
+		const { store, api, recents } = setup();
+		recents.workspaces = [recentWorkspace(workspace)];
+		api.definitions.set(repository.name, [definition, { ...definition, id: 'deleted' }]);
+		await store.refresh();
+		api.historyErrors.set('deleted', new GitHubApiError('Not found', 404, undefined));
+		api.tasks = [{ id: 'run', state: 'completed', created_at: definition.created_at }];
+		await store.refreshHistory();
+		assert.deepStrictEqual({
+			state: store.catalogueState.get(),
+			definitions: store.entries.get().map(entry => entry.definition.id),
+			history: store.history.get().map(row => row.task.id),
+		}, { state: 'ready', definitions: [definition.id], history: ['run'] });
+	});
 
 	test('construction, account changes and observing the cache do not fetch or poll', () => runWithFakedTimers({ useFakeTimers: true }, async () => {
 		const { store, api, recents, changeAccount } = setup();

@@ -43,6 +43,8 @@ The Sessions layer direction remains defined by [LAYERS.md](LAYERS.md). Non-prov
 
 The provider-neutral store exposes definition mutations and a manual run request, not run-claim or lifecycle-write APIs. The manual runner has no Sessions session-creation dependency.
 
+History completeness is exposed separately from definition readiness through optional `historyState`. A failed history read retains the last history without disabling otherwise available definition mutations. The cloud provider refreshes active history every 15 seconds and makes four bounded discovery attempts after dispatch or stop acknowledgements; idle definitions refresh only on entry, account changes, or explicit refresh. External history rows remain visible without a native session and expose GitHub opening and provider-supported cancellation, not synthesized session lifecycle actions.
+
 `IAutomationService` and `ISessionsProviderAutomations` each extend `IAutomationStore`; neither extends the other. The provider contract describes one host's catalogue and observable creation eligibility, while the injected service adds provider lists and creation checks by provider ID. The common interfaces live in Workbench, and the provider specialization lives in Sessions, preserving the layer direction.
 
 `ProviderAutomationService` aggregates the objects exposed by `ISessionsProvider.automations`. For AHP providers, that object is a stable `ReconnectableAgentHostAutomationStore`; its inner `AgentHostAutomationStore` lasts only for one usable connection. Neither client-side object is the host-process `AgentHostAutomationService`, which owns execution and durable storage.
