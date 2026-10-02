@@ -12,7 +12,7 @@ import { Disposable, DisposableStore, IDisposable, DisposableMap, MutableDisposa
 import { Schemas } from '../../../../../base/common/network.js';
 import { deepClone } from '../../../../../base/common/objects.js';
 import { isWeb } from '../../../../../base/common/platform.js';
-import { constObservable, derived, IObservable, ISettableObservable, ITransaction, observableFromPromise, observableValue, observableValueOpts, transaction } from '../../../../../base/common/observable.js';
+import { autorun, constObservable, derived, IObservable, ISettableObservable, ITransaction, observableFromPromise, observableValue, observableValueOpts, transaction } from '../../../../../base/common/observable.js';
 import { ThemeIcon } from '../../../../../base/common/themables.js';
 import { URI } from '../../../../../base/common/uri.js';
 import { ICommandService } from '../../../../../platform/commands/common/commands.js';
@@ -24,7 +24,7 @@ import { getRepositoryName } from '../../../../../workbench/contrib/chat/browser
 import { IAgentSessionsService } from '../../../../../workbench/contrib/chat/browser/agentSessions/agentSessionsService.js';
 import { AgentSessionProviders, AgentSessionTarget } from '../../../../../workbench/contrib/chat/browser/agentSessions/agentSessions.js';
 import { IChatService, IChatSendRequestOptions } from '../../../../../workbench/contrib/chat/common/chatService/chatService.js';
-import { IChatResponseModel } from '../../../../../workbench/contrib/chat/common/model/chatModel.js';
+import { IChatModel, IChatResponseModel } from '../../../../../workbench/contrib/chat/common/model/chatModel.js';
 import { ChatSessionStatus, IChatSessionsService, IChatSessionProviderOptionGroup, IChatSessionProviderOptionItem, SessionType } from '../../../../../workbench/contrib/chat/common/chatSessionsService.js';
 import { assertAutomationSessionTemplate, IAutomationSessionTemplate } from '../../../../../workbench/contrib/chat/common/automations/automation.js';
 import { AutomationModelConfiguration } from '../../../automations/browser/automationModelConfiguration.js';
@@ -136,6 +136,7 @@ export interface ICopilotChatSession {
 	readonly isArchived: IObservable<boolean>;
 	/** Whether the session has been read. */
 	readonly isRead: IObservable<boolean>;
+	readonly isAutomation?: IObservable<boolean>;
 	/** Status description shown while the session is active (e.g., current agent action). */
 	readonly description: IObservable<IMarkdownString | undefined>;
 	/** Timestamp of when the last agent turn ended, if any. */
@@ -171,6 +172,7 @@ export interface ICopilotChatSession {
 const OPEN_REPO_COMMAND = 'github.copilot.chat.cloudSessions.openRepository';
 const OPEN_ISSUE_COMMAND = 'github.copilot.chat.cloudSessions.openIssue';
 const OPEN_PULL_REQUEST_COMMAND = 'github.copilot.chat.cloudSessions.openPullRequest';
+const RESOLVE_TASK_COMMAND = 'github.copilot.chat.cloudSessions.resolveTask';
 
 interface IGitHubContextSelection {
 	readonly repoId: string;
@@ -556,6 +558,7 @@ function resolveGitHubRepositoryId(folder: ISessionFolder): string | undefined {
  * Adapts an existing Copilot Cloud {@link IAgentSession} from the chat layer into the new {@link ICopilotChatSession} facade.
  */
 class AgentSessionAdapter implements ICopilotChatSession {
+	lastObservedLocalCompletion: number | undefined;
 
 	readonly sessionId: string;
 	readonly resource: URI;
@@ -597,6 +600,7 @@ class AgentSessionAdapter implements ICopilotChatSession {
 
 	private readonly _isRead: ReturnType<typeof observableValue<boolean>>;
 	readonly isRead: IObservable<boolean>;
+	readonly isAutomation = observableValue(this, false);
 
 	private readonly _isExternal: ReturnType<typeof observableValue<boolean>>;
 	readonly isExternal: IObservable<boolean>;
@@ -722,6 +726,7 @@ class AgentSessionAdapter implements ICopilotChatSession {
 		this.isArchived = this._isArchived;
 		this._isRead = observableValue(this, session.isRead());
 		this.isRead = this._isRead;
+		this.isAutomation.set(session.providerType === AgentSessionProviders.Cloud && session.metadata?.isAutomation === true, undefined);
 		this._isExternal = observableValue(this, this._extractIsExternal(session));
 		this.isExternal = this._isExternal;
 		this._description = observableValue(this, this._extractDescription(session));
@@ -761,6 +766,7 @@ class AgentSessionAdapter implements ICopilotChatSession {
 			changed = setIfChanged(this._checkpoints, this._extractCheckpoints(session), tx, structuralEquals) || changed;
 			changed = setIfChanged(this._isArchived, session.isArchived(), tx) || changed;
 			changed = setIfChanged(this._isRead, session.isRead(), tx) || changed;
+			changed = setIfChanged(this.isAutomation, session.providerType === AgentSessionProviders.Cloud && session.metadata?.isAutomation === true, tx) || changed;
 			changed = setIfChanged(this._isExternal, this._extractIsExternal(session), tx) || changed;
 			changed = setIfChanged(this._description, this._extractDescription(session), tx, markdownStringEquals) || changed;
 			changed = setIfChanged(this._lastTurnEnd, session.timing.lastRequestEnded ? new Date(session.timing.lastRequestEnded) : undefined, tx, dateEquals) || changed;
@@ -1072,6 +1078,7 @@ export class CopilotChatSessionsProvider extends Disposable implements ISessions
 	private readonly _sandboxSends = new Map<string, ISendRequestOptions>();
 	private readonly _sandboxCreationChats = this._register(new DisposableMap<string, ReadOnlyChatSession>());
 	private readonly _repositoryPicker = this._register(new MutableDisposable<DisposableStore>());
+	private readonly _cloudChatObservers = this._register(new DisposableMap<IChatModel>());
 
 	/** Cache of ISession wrappers, keyed by session ID. */
 	private readonly _sessionWrapperCache = new Map<string, ISession>();
@@ -1158,6 +1165,37 @@ export class CopilotChatSessionsProvider extends Disposable implements ISessions
 		}));
 
 		this._ensureSessionCache();
+		if (providerMode === 'default') {
+			this._register(autorun(reader => {
+				const models = new Set([...this.chatService.chatModels.read(reader)].filter(model => model.sessionResource.scheme === AgentSessionProviders.Cloud));
+				for (const model of this._cloudChatObservers.keys()) {
+					if (!models.has(model)) {
+						this._cloudChatObservers.deleteAndDispose(model);
+					}
+				}
+				for (const model of models) {
+					if (this._cloudChatObservers.has(model)) {
+						continue;
+					}
+					let wasRunning = false;
+					this._cloudChatObservers.set(model, autorun(reader => {
+						const running = model.requestInProgress.read(reader);
+						if (running && !wasRunning) {
+							this.automations?.observeLocalRequest(model.sessionResource);
+						}
+						const completed = wasRunning && !running;
+						wasRunning = running;
+						if (completed && model.lastRequest?.response?.isComplete && !model.lastRequest.response.isCanceled) {
+							const session = this._sessionCache.get(model.sessionResource.toString());
+							if (session instanceof AgentSessionAdapter) {
+								session.lastObservedLocalCompletion = model.lastRequest.response.completionTimestamp ?? Date.now();
+							}
+							this.agentSessionsService.getSession(model.sessionResource)?.setRead(false);
+						}
+					}));
+				}
+			}));
+		}
 	}
 
 	get browseActions(): readonly ISessionWorkspaceBrowseAction[] {
@@ -1226,6 +1264,27 @@ export class CopilotChatSessionsProvider extends Disposable implements ISessions
 	}
 
 	// -- Session Lifecycle --
+
+	async resolveSessionResource(resource: URI): Promise<URI | undefined> {
+		if (this.providerMode !== 'default' || resource.scheme !== AgentSessionProviders.Cloud
+			|| resource.authority || resource.query || resource.fragment || !/^\/task\/[^/]+$/.test(resource.path)
+			|| !this.automations?.enabled.get()) {
+			return undefined;
+		}
+		if (this.agentSessionsService.getSession(resource) === undefined) {
+			await this.chatSessionsService.activateChatSessionItemProvider(resource.scheme);
+			await this.commandService.executeCommand(RESOLVE_TASK_COMMAND, resource);
+			if (this._store.isDisposed || !this.automations.enabled.get()) {
+				throw new CancellationError();
+			}
+			await this.agentSessionsService.model.resolve(resource.scheme);
+		}
+		if (this._store.isDisposed || !this.automations.enabled.get()) {
+			throw new CancellationError();
+		}
+		this._refreshSessionCache();
+		return this._sessionCache.has(resource.toString()) ? resource : undefined;
+	}
 
 	private readonly _newSessions = this._register(new DisposableMap<string, RemoteNewSession>());
 	private readonly _createdBySessions = new Map<string, ISettableObservable<ISessionCreationReference | undefined>>();
@@ -2447,14 +2506,16 @@ export class CopilotChatSessionsProvider extends Disposable implements ISessions
 			const existing = this._sessionCache.get(key);
 			if (existing) {
 				const previousStatus = existing.status.get();
+				const previousEnd = existing.lastTurnEnd.get()?.getTime();
 				if (existing.update(session)) {
 					changedData.push(existing);
 				}
-				// A completed turn (InProgress → terminal) marks the session
-				// unread. Copilot read state is owned by the agent session model,
-				// so route through `setRead(false)`; the adapter mirrors it back.
+				// Completion timestamps also catch short turns missed between polls.
 				const currentStatus = existing.status.get();
-				if (previousStatus === SessionStatus.InProgress
+				const completedAt = existing.lastTurnEnd.get()?.getTime();
+				const localCompletion = existing instanceof AgentSessionAdapter ? existing.lastObservedLocalCompletion : undefined;
+				if ((previousStatus === SessionStatus.InProgress || completedAt !== undefined && completedAt > (previousEnd ?? existing.createdAt.getTime()))
+					&& (localCompletion === undefined || completedAt !== undefined && completedAt > localCompletion)
 					&& currentStatus !== SessionStatus.InProgress
 					&& currentStatus !== SessionStatus.Untitled
 					&& existing.isRead.get()) {
@@ -2542,6 +2603,7 @@ export class CopilotChatSessionsProvider extends Disposable implements ISessions
 			mode: chat.mode,
 			loading: chat.loading,
 			isArchived: chat.isArchived,
+			isAutomation: chat.isAutomation,
 			isRead: chat.isRead,
 			description: chat.description,
 			lastTurnEnd: chat.lastTurnEnd,

@@ -32,6 +32,8 @@ import { ChatAutomationsEnabledContext } from '../../../../../workbench/contrib/
 import { IAutomationRunner } from '../../../../../workbench/contrib/chat/common/automations/automationRunner.js';
 import { AutomationCatalogueState, IAutomationProviderDescriptor, IAutomationService } from '../../../../../workbench/contrib/chat/common/automations/automationService.js';
 import { IChatService } from '../../../../../workbench/contrib/chat/common/chatService/chatService.js';
+import { IChatModel } from '../../../../../workbench/contrib/chat/common/model/chatModel.js';
+import { ChatContextKeys } from '../../../../../workbench/contrib/chat/common/actions/chatContextKeys.js';
 import { ContributionEnablementState } from '../../../../../workbench/contrib/chat/common/enablement.js';
 import { IAgentPlugin, IAgentPluginService } from '../../../../../workbench/contrib/chat/common/plugins/agentPluginService.js';
 import { IVoicePlaybackService } from '../../../../../workbench/contrib/chat/common/voicePlaybackService.js';
@@ -185,6 +187,8 @@ interface IAutomationsFixtureOptions {
 	readonly pluginTemplate?: boolean;
 	readonly showDropTarget?: boolean;
 	readonly cloud?: boolean;
+	readonly nativeCloud?: boolean;
+	readonly followUp?: boolean;
 	readonly historyState?: AutomationCatalogueState;
 }
 
@@ -275,6 +279,12 @@ export default defineThemedFixtureGroup({ path: 'sessions/automations/' }, {
 	CloudHistory: defineComponentFixture({
 		render: ctx => renderAutomations(ctx, { width: 1000, height: 850, populated: true, cloud: true }),
 	}),
+	NativeCloudHistory: defineComponentFixture({
+		render: ctx => renderAutomations(ctx, { width: 1000, height: 850, populated: true, cloud: true, nativeCloud: true }),
+	}),
+	NativeCloudFollowUp: defineComponentFixture({
+		render: ctx => renderAutomations(ctx, { width: 1000, height: 850, populated: true, cloud: true, nativeCloud: true, followUp: true }),
+	}),
 	CloudHistoryError: defineComponentFixture({
 		render: ctx => renderAutomations(ctx, { width: 1000, height: 850, populated: true, cloud: true, historyState: 'error' }),
 	}),
@@ -284,7 +294,7 @@ export default defineThemedFixtureGroup({ path: 'sessions/automations/' }, {
 });
 
 function renderAutomations(ctx: ComponentFixtureContext, options: IAutomationsFixtureOptions): void {
-	const data = options.cloud ? createCloudData() : options.populated ? createPopulatedData() : { automations: [], runs: [] };
+	const data = options.cloud ? createCloudData(options.nativeCloud) : options.populated ? createPopulatedData() : { automations: [], runs: [] };
 	const configurationService = new TestConfigurationService({
 		chat: { automations: { enabled: true } },
 	});
@@ -315,6 +325,7 @@ function renderAutomations(ctx: ComponentFixtureContext, options: IAutomationsFi
 		] : []);
 	}();
 	ChatAutomationsEnabledContext.bindTo(contextKeyService).set(true);
+	ChatContextKeys.enabled.bindTo(contextKeyService).set(true);
 
 	const instantiationService = createEditorServices(ctx.disposableStore, {
 		colorTheme: ctx.theme,
@@ -356,7 +367,13 @@ function renderAutomations(ctx: ComponentFixtureContext, options: IAutomationsFi
 				override hasPendingResponse() { return false; }
 			}());
 			reg.defineInstance(IChatService, new class extends mock<IChatService>() {
-				override readonly chatModels = constObservable([]);
+				override readonly chatModels = constObservable(options.followUp ? [upcastPartial<IChatModel>({
+					sessionResource: data.runs[2].sessionResource!,
+					requestInProgress: constObservable(true),
+					requestNeedsInput: constObservable(undefined),
+					onDidChange: Event.None,
+					getRequests: () => [],
+				})] : []);
 			}());
 			reg.defineInstance(ITestAgentSessionsService, {
 				model: {
@@ -395,7 +412,7 @@ function renderAutomations(ctx: ComponentFixtureContext, options: IAutomationsFi
 	}
 }
 
-function createCloudData(): IAutomationsFixtureData {
+function createCloudData(native = false): IAutomationsFixtureData {
 	const automations = createPopulatedData().automations.slice(0, 2).map((automation, index) => ({
 		...automation,
 		enabled: index === 0,
@@ -406,6 +423,7 @@ function createCloudData(): IAutomationsFixtureData {
 		id: `cloud-run-${index}`, automationId: automations[0].id, status, trigger: 'external',
 		startedAt: new Date(new Date().setHours(9, index * 10, 0, 0)).toISOString(),
 		externalResource: URI.parse(`https://github.com/example/private-project/tasks/task-${index}`),
+		...(native && index > 0 ? { sessionResource: URI.parse(`copilot-cloud-agent:/task/task-${index}`) } : {}),
 		...(status === 'running' ? { needsInput: true, statusDescription: 'Needs input on GitHub' } : {}),
 		...(status === 'failed' ? { errorMessage: 'Cancelled' } : {}),
 	}));

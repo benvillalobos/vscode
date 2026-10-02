@@ -1377,6 +1377,18 @@ suite('SessionsManagementService', () => {
 			);
 		});
 
+		test('a conversation hidden behind a custom view stays unread until revealed', async () => {
+			const { session, view, customViewService, isRead, status, readChanges } = createReadStateSessions();
+			await view.openSession(session.resource);
+			showTestCustomView(customViewService, disposables);
+			status.set(SessionStatus.InProgress, undefined);
+			isRead.set(false, undefined);
+			status.set(SessionStatus.Completed, undefined);
+			const hiddenRead = isRead.get();
+			customViewService.hideCustomView();
+			assert.deepStrictEqual({ hiddenRead, revealedRead: isRead.get(), readChanges }, { hiddenRead: false, revealedRead: true, readChanges: [true, true] });
+		});
+
 		for (const all of [false, true]) {
 			test(`${all ? 'marking all sessions read' : 'marking the session read'} resumes automatic reading`, async () => {
 				const { session, service, view, isRead, readChanges } = createReadStateSessions();
