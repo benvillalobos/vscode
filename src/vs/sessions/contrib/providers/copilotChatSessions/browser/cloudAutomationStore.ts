@@ -15,7 +15,7 @@ import { localize } from '../../../../../nls.js';
 import { IDefaultAccountService } from '../../../../../platform/defaultAccount/common/defaultAccount.js';
 import { ILogService } from '../../../../../platform/log/common/log.js';
 import { IStorageService, StorageScope, StorageTarget } from '../../../../../platform/storage/common/storage.js';
-import { AutomationCatalogueState, IAutomationWorkspaceTarget } from '../../../../../workbench/contrib/chat/common/automations/automationService.js';
+import { AutomationCatalogueState, AutomationMutationGuard, AutomationUnavailableError, IAutomationWorkspaceTarget } from '../../../../../workbench/contrib/chat/common/automations/automationService.js';
 import { ISessionsRecentWorkspacesService } from '../../../../services/sessions/browser/sessionsRecentWorkspacesService.js';
 import { GITHUB_REMOTE_FILE_SCHEME } from '../../../../services/sessions/common/session.js';
 import { GitHubApiError } from '../../../github/browser/githubApiClient.js';
@@ -201,8 +201,17 @@ export class CloudAutomationStore extends Disposable {
 		});
 	}
 
-	async run(entry: ICloudAutomationEntry, token: CancellationToken = CancellationToken.None): Promise<void> {
-		await this.mutate(entry.repository, (account, token) => this.api.run(account.accountName, entry.repository, entry.definition.id, 'manual', token), token);
+	async run(entry: ICloudAutomationEntry, token: CancellationToken = CancellationToken.None, guard?: AutomationMutationGuard): Promise<void> {
+		await this.mutate(entry.repository, async (account, token) => {
+			const current = await this.api.get(account.accountName, entry.repository, entry.definition.id, token);
+			this.assertCurrent(account, token);
+			this.publish(entry.repository, current);
+			if (current.disabled) {
+				throw new AutomationUnavailableError(localize('cloudAutomations.runDisabled', "Enable the cloud automation before running it."));
+			}
+			guard?.();
+			await this.api.run(account.accountName, entry.repository, current.id, Object.keys(current.triggers ?? {}).length === 0 ? 'manual' : 'interval', token);
+		}, token);
 	}
 
 	async stop(entry: ICloudAutomationHistoryEntry): Promise<void> {

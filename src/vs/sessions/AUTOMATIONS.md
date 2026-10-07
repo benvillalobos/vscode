@@ -53,7 +53,7 @@ Cloud history retains the authoritative task ID as its native session resource. 
 
 `AutomationMutationGuard` is a caller-supplied pre-dispatch check for transient client conditions. Throwing stops a definition mutation before it is sent; the callback neither performs host authorization nor rolls back an already-dispatched request. Guarded editable-state comparison is a separate concern.
 
-Manual invocation also has two result boundaries: `IAutomationRunRequestResult` describes the provider's response to a host request, while `IAutomationRunOperation` separates user-facing dispatch feedback from ongoing observation. A host-handled request need not create a session successfully, and terminal observation does not imply a successful run.
+Manual invocation also has two result boundaries: `IAutomationRunRequestResult` describes the provider's response to a host request, while `IAutomationRunOperation` separates user-facing dispatch feedback from ongoing observation. A host-handled request need not create a session successfully, and terminal observation does not imply a successful run. Providers signal uncertain mutations through `AutomationMutationUncertainError`; the runner and tools preserve that outcome separately from a request known not to have started, without inventing run or session identities.
 
 ## Definitions and session configuration
 
@@ -109,7 +109,7 @@ Providers may expose observable enablement. Disabled providers are excluded from
 
 Dialog configuration support is separate from mutation authority. Provider selection and dialog editing require the provider's session-configuration capability; a provider may still expose definitions, manual dispatch, deletion, and programmatic updates without that capability. Opening the Automations view or listing Automations refreshes remote state, providing reconciliation after uncertain writes or read failures.
 
-Cloud dialog configuration is supplied by the enabled provider through the shared Automation contract. It resolves known workspace selections to checked canonical repository targets, retains provider-owned model/tool drafts, and declares UTC scheduling and immutable-target guidance. Eligibility is advisory UI state; mutations still revalidate access at the provider boundary. Other workspace pickers and local Automation targets retain their existing behavior.
+Cloud configuration is supplied by the enabled provider through the shared Automation contract. The dialog resolves known workspace selections to checked canonical repository targets and retains provider-owned model/tool drafts. Tools expose the serializable configuration, including supported session types, tools, UTC scheduling, and immutable-target guidance. Eligibility is advisory; mutations still revalidate access at the provider boundary. Other workspace pickers and local Automation targets retain their existing behavior.
 
 Cloud discovery is limited to user-owned definitions in known and recent private/internal GitHub.com repositories. Mutations revalidate repository eligibility and updates compare the latest editable state before dispatch; REST does not provide atomic compare-and-swap. An uncertain mutation blocks further writes until refresh reconciles the catalogue. Cloud run requests return acceptance without a correlated run or completion promise. History remains an explicitly refreshed server-owned window, with external links and no synthesized native session resource.
 

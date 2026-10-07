@@ -15,7 +15,7 @@ import { IAutomationDescriptor, IAutomationRun, IAutomationSchedule, IAutomation
 export const IAutomationService = createDecorator<IAutomationService>('automationService');
 export const ConfigureAutomationToolReferenceName = 'configureAutomation';
 
-/** Provider-owned cloud configuration consumed only by the Automation dialog. */
+/** Provider-owned cloud configuration consumed by the Automation dialog and tools. */
 export interface IAutomationProviderConfiguration {
 	readonly sessionTypes: readonly string[];
 	readonly description: string;
@@ -56,6 +56,9 @@ export type AutomationMutationGuard = () => void;
 
 /** The selected Automation authority cannot currently accept the operation. */
 export class AutomationUnavailableError extends Error { }
+
+/** A remote mutation may have succeeded; reconcile its outcome before retrying. */
+export class AutomationMutationUncertainError extends Error { }
 
 /** Rejects ownership changes because AHP has no history-preserving cross-host transfer operation. */
 export function assertAutomationTargetAuthority(current: IAutomationDescriptor, target: AutomationTarget | undefined): void {

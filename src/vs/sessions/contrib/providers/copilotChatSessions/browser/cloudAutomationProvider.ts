@@ -20,7 +20,7 @@ import { IDefaultAccountService } from '../../../../../platform/defaultAccount/c
 import { IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
 import { ILogService } from '../../../../../platform/log/common/log.js';
 import { AutomationTarget, IAutomationDescriptor, IAutomationRun, IAutomationSchedule, IAutomationSessionTemplate } from '../../../../../workbench/contrib/chat/common/automations/automation.js';
-import { AutomationCatalogueState, AutomationMutationGuard, AutomationUnavailableError, assertAutomationSessionTemplateAuthority, IAutomationProviderConfiguration, ICreateAutomationOptions, IGuardedAutomationUpdateResult, IUpdateAutomationOptions, serializeAutomationEditableState } from '../../../../../workbench/contrib/chat/common/automations/automationService.js';
+import { AutomationCatalogueState, AutomationMutationGuard, AutomationUnavailableError, assertAutomationSessionTemplateAuthority, IAutomationProviderConfiguration, IAutomationRunRequestResult, ICreateAutomationOptions, IGuardedAutomationUpdateResult, IUpdateAutomationOptions, serializeAutomationEditableState } from '../../../../../workbench/contrib/chat/common/automations/automationService.js';
 import { CHAT_AUTOMATIONS_ENABLED_SETTING, CHAT_CLOUD_AUTOMATIONS_ENABLED_SETTING } from '../../../../../workbench/contrib/chat/common/automations/automationsEnabled.js';
 import { IChatEntitlementService } from '../../../../../workbench/services/chat/common/chatEntitlementService.js';
 import { AgentSessionProviders } from '../../../../../workbench/contrib/chat/browser/agentSessions/agentSessions.js';
@@ -185,15 +185,15 @@ export class CloudAutomationProvider extends Disposable implements ISessionsProv
 	}
 
 	canRunAutomation(id: string): boolean {
-		return this.canCreateAutomation.get() && this.getAutomation(id) !== undefined;
+		return this.canUpdateAutomation(id) && this.getAutomation(id)?.enabled === true;
 	}
 
 	canUpdateAutomation(id: string): boolean {
-		return this.canRunAutomation(id) && !this.getAutomation(id)?.readOnlyReason;
+		return this.canDeleteAutomation(id) && !this.getAutomation(id)?.readOnlyReason;
 	}
 
 	canDeleteAutomation(id: string): boolean {
-		return this.canRunAutomation(id);
+		return this.canCreateAutomation.get() && this.getAutomation(id) !== undefined;
 	}
 
 	async createAutomation(options: ICreateAutomationOptions, guard?: AutomationMutationGuard): Promise<IAutomationDescriptor> {
@@ -234,10 +234,20 @@ export class CloudAutomationProvider extends Disposable implements ISessionsProv
 		await this.requireWritableStore().delete(this.requireEntry(id), guard);
 	}
 
-	async runAutomation(id: string, token: CancellationToken = CancellationToken.None): Promise<{ readonly kind: 'accepted' }> {
+	async runAutomation(id: string, token: CancellationToken = CancellationToken.None): Promise<IAutomationRunRequestResult> {
 		const store = this.requireWritableStore();
+		const activeRun = this.getActiveRunFor(id);
+		if (activeRun) {
+			return { kind: 'alreadyRunning', run: activeRun };
+		}
+		const guard = () => {
+			if (!this.canRunAutomation(id)) {
+				throw new AutomationUnavailableError(localize('cloudAutomations.runUnavailable', "Enable the cloud automation and refresh it before running. Only supported schedules can be run."));
+			}
+		};
+		guard();
 		try {
-			await store.run(this.requireEntry(id), token);
+			await store.run(this.requireEntry(id), token, guard);
 		} catch (error) {
 			if (error instanceof CloudAutomationMutationUncertainError && this.store.get() === store) {
 				this.discoveryAttempts = 4;
@@ -252,7 +262,7 @@ export class CloudAutomationProvider extends Disposable implements ISessionsProv
 	}
 
 	canStopRun(run: IAutomationRun): boolean {
-		return this.canRunAutomation(run.automationId) && this.runs.get().some(current => current.id === run.id && (current.status === 'pending' || current.status === 'running'));
+		return this.canDeleteAutomation(run.automationId) && this.runs.get().some(current => current.id === run.id && (current.status === 'pending' || current.status === 'running'));
 	}
 
 	async stopRun(run: IAutomationRun): Promise<void> {

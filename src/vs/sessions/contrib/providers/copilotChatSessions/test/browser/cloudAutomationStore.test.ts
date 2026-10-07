@@ -40,6 +40,8 @@ class TestApi extends mock<CloudAutomationApiClient>() {
 	readonly listStarted = new DeferredPromise<void>();
 	readonly mutations: string[] = [];
 	mutationResult: ICloudAutomationDefinition | Promise<ICloudAutomationDefinition> | Error = definition;
+	currentDefinition = definition;
+	readonly runEvents: string[] = [];
 	tasks: readonly ICloudAutomationTask[] = [];
 	readonly historyErrors = new Map<string, Error>();
 	taskDetail: ICloudAutomationTask | Promise<ICloudAutomationTask> | undefined;
@@ -56,7 +58,7 @@ class TestApi extends mock<CloudAutomationApiClient>() {
 	}
 
 	override async get(): Promise<ICloudAutomationDefinition> {
-		return definition;
+		return this.currentDefinition;
 	}
 
 	override async update(_account: string, _repository: ICloudAutomationRepository, _id: string, value: ICloudAutomationMutation): Promise<ICloudAutomationDefinition> {
@@ -68,8 +70,9 @@ class TestApi extends mock<CloudAutomationApiClient>() {
 		this.mutations.push('delete');
 	}
 
-	override async run(): Promise<void> {
+	override async run(_account: string, _repository: ICloudAutomationRepository, _id: string, event: 'manual' | 'interval'): Promise<void> {
 		this.mutations.push('run');
+		this.runEvents.push(event);
 	}
 
 	override async listRuns(_account: string, id: string): Promise<readonly ICloudAutomationTask[]> {
@@ -234,6 +237,7 @@ suite('CloudAutomationStore', () => {
 		const entry = await store.create(workspace, { name: definition.name, prompt: definition.prompt });
 		const conflict = await store.update(entry, () => undefined);
 		const updated = await store.update(entry, current => ({ name: `${current.name} updated` }));
+		api.currentDefinition = { ...updated.entry.definition, disabled: false };
 		const acknowledgement = await store.run(updated.entry);
 		await store.delete(updated.entry);
 		assert.deepStrictEqual({
@@ -313,13 +317,27 @@ suite('CloudAutomationStore', () => {
 
 	test('history projects authoritative detail without inventing manual-run correlation', async () => {
 		const { store, api } = setup();
+		api.currentDefinition = { ...definition, disabled: false };
 		const entry = await store.create(workspace, {});
 		api.tasks = [{ id: 'task', state: 'running', created_at: definition.created_at }];
 		api.taskDetail = { ...api.tasks[0], state: 'waiting_for_user' };
 		await store.run(entry);
 		assert.deepStrictEqual(store.history.get(), []);
 		await store.refreshHistory();
-		assert.deepStrictEqual(store.history.get(), [{ entry, task: api.taskDetail }]);
+		assert.deepStrictEqual(store.history.get(), [{ entry: { ...entry, definition: api.currentDefinition }, task: api.taskDetail }]);
+	});
+
+	test('run rechecks remote enablement and chooses the saved trigger without inventing a run', async () => {
+		const { store, api } = setup();
+		const entry = await store.create(workspace, {});
+		await assert.rejects(store.run(entry), /Enable the cloud automation/);
+		api.currentDefinition = { ...definition, disabled: false, triggers: {} };
+		await store.run(entry);
+		api.currentDefinition = { ...api.currentDefinition, triggers: { interval: { types: ['daily'], hour_utc: 9 } } };
+		await store.run(entry);
+		assert.deepStrictEqual({ events: api.runEvents, mutations: api.mutations, history: store.history.get() }, {
+			events: ['manual', 'interval'], mutations: ['create', 'run', 'run'], history: [],
+		});
 	});
 
 	test('discovers only recent GitHub.com repositories and coalesces local, branch and case aliases', async () => {

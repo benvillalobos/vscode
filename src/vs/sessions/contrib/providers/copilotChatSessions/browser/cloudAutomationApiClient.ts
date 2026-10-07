@@ -10,10 +10,11 @@ import { Disposable, DisposableStore } from '../../../../../base/common/lifecycl
 import { isStringArray } from '../../../../../base/common/types.js';
 import { IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
 import { localize } from '../../../../../nls.js';
+import { AutomationMutationUncertainError } from '../../../../../workbench/contrib/chat/common/automations/automationService.js';
 import { GitHubApiClient, GitHubApiError, IGitHubApiResponse } from '../../../github/browser/githubApiClient.js';
 
 /** A cloud mutation may have succeeded; reconcile its result before retrying. */
-export class CloudAutomationMutationUncertainError extends Error {
+export class CloudAutomationMutationUncertainError extends AutomationMutationUncertainError {
 	constructor(cause: unknown) {
 		super(localize('cloudAutomationMutationUncertain', "GitHub may have accepted the request, but its result could not be confirmed. Refresh before submitting again."), { cause });
 	}

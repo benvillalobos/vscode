@@ -122,6 +122,18 @@ suite('CloudAutomationApiClient', () => {
 		assert.deepStrictEqual({ contentType: requests.calls[0].headers?.['Content-Type'], body: JSON.parse(requests.calls[0].data!) }, { contentType: 'application/merge-patch+json', body: { disabled: false } });
 	});
 
+	test('PATCH preserves an explicit empty triggers object when clearing a schedule', async () => {
+		const { requests, client } = setup();
+		requests.responses.push({ status: 200, data: { ...definition, triggers: {} } });
+		const updated = await client.update('octocat', repository, definition.id, { triggers: {} }, CancellationToken.None);
+		assert.deepStrictEqual({
+			method: requests.calls[0].type,
+			contentType: requests.calls[0].headers?.['Content-Type'],
+			body: JSON.parse(requests.calls[0].data!),
+			triggers: updated.triggers,
+		}, { method: 'PATCH', contentType: 'application/merge-patch+json', body: { triggers: {} }, triggers: {} });
+	});
+
 	for (const outcome of ['success', 'cancel', 'failure'] as const) {
 		test(`missing prompts use at most five concurrent detail requests (${outcome})`, async () => {
 			const { requests, client } = setup();
