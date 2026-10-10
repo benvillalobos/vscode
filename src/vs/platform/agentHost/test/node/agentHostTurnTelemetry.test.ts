@@ -14,14 +14,17 @@ import { URI } from '../../../../base/common/uri.js';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../base/test/common/utils.js';
 import { InstantiationService } from '../../../instantiation/common/instantiationService.js';
 import { ServiceCollection } from '../../../instantiation/common/serviceCollection.js';
-import { ILogService, NullLogService } from '../../../log/common/log.js';
-import { ITelemetryService, TelemetryLevel } from '../../../telemetry/common/telemetry.js';
+import { FileService } from '../../../files/common/fileService.js';
+import { IFileService } from '../../../files/common/files.js';
+import { ILogService, LogLevel, NullLogService } from '../../../log/common/log.js';
+import { ITelemetryData, ITelemetryService, TelemetryLevel } from '../../../telemetry/common/telemetry.js';
 import { TelemetryTrustedValue } from '../../../telemetry/common/telemetryUtils.js';
 import { createAgentModelByokMeta } from '../../common/agentModelByokMeta.js';
 import { getTelemetryChatSessionId } from '../../common/agentTelemetryCorrelation.js';
-import { AgentSession, IAgent, type AgentModelCallFinishedOutcome, type IAgentTurnTokenUsage } from '../../common/agent.js';
+import { AgentSession, COPILOT_CLI_AGENT_PROVIDER_ID, IAgent, type AgentModelCallFinishedOutcome, type IAgentTurnTokenUsage } from '../../common/agent.js';
 import { AgentHostClientType } from '../../common/agentHostClientInfo.js';
 import { AgentHostClientConnectionKind, AgentHostLaunchKind, AgentHostTransportKind, type IAgentHostClientTelemetryContext } from '../../common/agentHostTelemetry.js';
+import { COPILOT_HYDRA_FUSION_MODEL_ID } from '../../common/copilotCliConfig.js';
 import { getCodexAccountTelemetryContext } from '../../node/codex/codexAccountTelemetry.js';
 import type { ICodexAccountState } from '../../node/codex/codexAccountState.js';
 import type { SessionMode } from '../../common/agentHostSchema.js';
@@ -36,13 +39,19 @@ import { IAgentHostTerminalManager } from '../../node/agentHostTerminalManager.j
 import { AgentHostLocalTurns, IAgentHostLocalTurns } from '../../node/agentHostLocalTurns.js';
 import { AgentHostLocalCommands, IAgentHostLocalCommands } from '../../node/localCommands/localChatCommand.js';
 import { AgentHostChatContributions } from '../../node/agentHostChatContributionsService.js';
+import { IAgentHostPeerChatPersistenceService } from '../../node/agentHostPeerChatStore.js';
 import { registerBuiltInChatContributions } from '../../node/chatContributions/builtInChatContributions.js';
+import { AgentHostChatInputService, IAgentHostChatInputService } from '../../node/agentHostChatInputService.js';
+import { AgentHostSubscriptionService } from '../../node/agentHostSubscriptionService.js';
+import { AgentHostDatabase } from '../../node/agentHostDatabase.js';
+import { AgentSessionRegistry, IAgentSessionRegistry } from '../../node/agentSessionRegistry.js';
 import { AdditionalWorktreeLifecycleService, IAdditionalWorktreeLifecycleService } from '../../node/chatContributions/additionalWorktreeLifecycle/additionalWorktreeLifecycleService.js';
 import { ISessionWorkspaceConversionService } from '../../node/chatContributions/sessionWorkspaceConversion/sessionWorkspaceConversionService.js';
 import { IAgentHostProviderService } from '../../node/agentHostProviderService.js';
 import { createTestAgentHostProviderService } from './testAgentHostProviderService.js';
 import { AgentHostSessionTitleController, IAgentHostSessionTitleController } from '../../node/agentHostSessionTitleController.js';
 import { AgentHostTelemetryReporter, IAgentHostTelemetryReporter } from '../../node/agentHostTelemetryReporter.js';
+import { IAgentHostSessionPromptService } from '../../node/agentHostSessionPromptService.js';
 import { AgentHostTelemetryService } from '../../node/agentHostTelemetryService.js';
 import { AgentHostToolCallTracker, IAgentHostToolCallTracker } from '../../node/agentHostToolCallTracker.js';
 import { AgentHostTurnTracker, IAgentHostTurnTracker } from '../../node/agentHostTurnTracker.js';
@@ -51,11 +60,13 @@ import { AgentHostClientConnectionService, IAgentHostClientConnectionService } f
 import { AgentConfigurationService, IAgentConfigurationService } from '../../node/agentConfigurationService.js';
 import { IAgentHostChangesetService } from '../../common/agentHostChangesetService.js';
 import { IAgentHostGitStateService } from '../../common/agentHostGitStateService.js';
+import { IAgentHostGitService } from '../../common/agentHostGitService.js';
 import { AgentSideEffects } from '../../node/agentSideEffects.js';
 import type { IAgentHostCustomizationEnablementService } from '../../node/agentHostCustomizationEnablementService.js';
 import { AgentHostStateManager, IAgentHostStateManager } from '../../node/agentHostStateManager.js';
 import { IAgentHostWorktreeIsolation } from '../../node/shared/worktreeIsolation.js';
-import { createNoopGitStateService, createNullSessionDataService } from '../common/sessionTestHelpers.js';
+import { createNoopGitService, createNoopGitStateService, createNullSessionDataService } from '../common/sessionTestHelpers.js';
+import { createLegacyChatMetadataPersistence } from './chatMetadataTestHelpers.js';
 import { createNoopWorktreeIsolation } from './worktreeTestHelpers.js';
 import { ISessionDataService } from '../../common/sessionDataService.js';
 import { MockAgent } from './mockAgent.js';
@@ -83,6 +94,8 @@ class FakeChangesetService implements IAgentHostChangesetService {
 	onToolCallEditsApplied(): void { }
 	onTurnComplete(): void { }
 	onSessionTruncated(): void { }
+	ensureChatChangesSummary(): void { }
+	refreshChatChangesSummary(): void { }
 }
 
 class CapturingTelemetryService implements ITelemetryService {
@@ -94,14 +107,14 @@ class CapturingTelemetryService implements ITelemetryService {
 	readonly devDeviceId = 'test-dev-device';
 	readonly firstSessionDate = 'test-first-session-date';
 	readonly sendErrorTelemetry = false;
-	readonly events: { eventName: string; data: unknown }[] = [];
+	readonly events: { eventName: string; data: ITelemetryData | undefined }[] = [];
 
 	publicLog(): void { }
-	publicLog2(eventName: string, data?: unknown): void {
+	publicLog2(eventName: string, data?: ITelemetryData): void {
 		this.events.push({ eventName, data });
 	}
 	publicLogError(): void { }
-	publicLogError2(eventName: string, data?: unknown): void {
+	publicLogError2(eventName: string, data?: ITelemetryData): void {
 		this.events.push({ eventName, data });
 	}
 	setExperimentProperty(): void { }
@@ -223,6 +236,10 @@ suite('AgentSideEffects — turn tracker telemetry', () => {
 		return telemetry.events.filter(e => e.eventName === 'agentHost.turnCompleted');
 	}
 
+	function sentEvents() {
+		return telemetry.events.filter(event => event.eventName === 'agentHost.userMessageSent');
+	}
+
 	function capturedModel(data: Record<string, unknown>): { trusted: boolean; value: unknown } {
 		const model = data.model;
 		return model instanceof TelemetryTrustedValue ? { trusted: true, value: model.value } : { trusted: false, value: model };
@@ -261,27 +278,47 @@ suite('AgentSideEffects — turn tracker telemetry', () => {
 			[IAgentHostChangesetService, new FakeChangesetService()],
 			[IAgentHostCheckpointService, NULL_CHECKPOINT_SERVICE],
 			[IAgentHostGitStateService, createNoopGitStateService()],
+			[IAgentHostGitService, createNoopGitService()],
 			[IAgentHostStateManager, stateManager],
+			[IAgentSessionRegistry, disposables.add(new AgentSessionRegistry(disposables.add(new AgentHostDatabase(':memory:'))))],
+			[IFileService, disposables.add(new FileService(logService))],
 			[ITelemetryService, telemetryService],
 			[IAgentHostTerminalManager, disposables.add(new TestAgentHostTerminalManager())],
 			[ISessionDataService, sessionDataService],
 			[IAgentHostWorktreeIsolation, worktreeIsolation],
 			[IAdditionalWorktreeLifecycleService, new AdditionalWorktreeLifecycleService(sessionDataService, worktreeIsolation)],
 			[IAgentHostClientConnectionService, disposables.add(new AgentHostClientConnectionService())],
+			[IAgentHostPeerChatPersistenceService, {
+				...createLegacyChatMetadataPersistence(sessionDataService),
+				_serviceBrand: undefined,
+				setRead: async () => { },
+				setArchived: async () => { },
+			}],
 			[ISessionWorkspaceConversionService, {
 				_serviceBrand: undefined,
-				requestSessionWorkspaceUpdate: () => { },
+				supportsChatIsolation: () => false,
+				canIsolateChat: () => false,
+				requestChatIsolation: () => { },
+				restoreChatIsolation: async () => { },
+				requestSessionWorkspaceUpdate: () => true,
 				isPending: () => false,
+				isConversionTurn: () => false,
 				cancel: () => { },
 				updateSessionWorkspace: async () => { },
-			}],
+			} satisfies ISessionWorkspaceConversionService],
 		);
 		const instantiationService = disposables.add(new InstantiationService(services, /*strict*/ true));
 		chatContributions = disposables.add(new AgentHostChatContributions(logService, instantiationService));
 		services.set(IAgentHostChatContributions, chatContributions);
+		services.set(IAgentHostSessionPromptService, {
+			_serviceBrand: undefined,
+			startSessionPrompt: async () => URI.parse('agent-host-session://comparison-judge'),
+		});
 		services.set(IAgentHostTurnService, new AgentHostTurnService(stateManager, chatContributions, instantiationService));
 		services.set(IAgentHostSessionTitleController, disposables.add(new AgentHostSessionTitleController(stateManager, { sessionDataService }, logService)));
-		services.set(IAgentHostProviderService, createTestAgentHostProviderService(() => agent));
+		const providerService = createTestAgentHostProviderService(() => agent);
+		services.set(IAgentHostProviderService, providerService);
+		services.set(IAgentHostChatInputService, disposables.add(new AgentHostChatInputService(stateManager, providerService, new AgentHostSubscriptionService())));
 		const telemetryReporter = new AgentHostTelemetryReporter(telemetryService);
 		services.set(IAgentHostTelemetryReporter, telemetryReporter);
 		turnTracker = disposables.add(instantiationService.createInstance(AgentHostTurnTracker));
@@ -308,6 +345,51 @@ suite('AgentSideEffects — turn tracker telemetry', () => {
 		sinon.restore();
 	});
 	ensureNoDisposablesAreLeakedInTestSuite();
+
+	for (const provider of ['copilotcli', 'copilot', 'claude', 'codex', 'custom-provider']) {
+		for (const scheme of [provider, 'ahp-session']) {
+			test(`turn and tool telemetry preserves ${provider} for ${scheme} sessions`, () => {
+				sinon.stub(agent, 'id').value(provider);
+				const resource = AgentSession.uri(scheme, 'provider-telemetry');
+				const root = buildDefaultChatUri(resource);
+				const peer = buildChatUri(resource, 'peer');
+				const subagent = buildSubagentChatUri(resource, 'subagent');
+				stateManager.createSession({
+					resource: resource.toString(), provider, title: 'Test', status: SessionStatus.Idle,
+					createdAt: '2025-01-01T00:00:00.000Z', modifiedAt: '2025-01-01T00:00:00.000Z',
+				});
+				stateManager.dispatchServerAction(resource.toString(), { type: ActionType.SessionReady });
+				stateManager.addChat(resource.toString(), peer);
+				stateManager.addChat(resource.toString(), subagent);
+
+				startTurn('success', 'hello', undefined, root);
+				fire({ type: ActionType.ChatToolCallStart, turnId: 'success', toolCallId: 'tool', toolName: 'bash', displayName: 'bash' }, root);
+				fire({ type: ActionType.ChatToolCallReady, turnId: 'success', toolCallId: 'tool', invocationMessage: 'run' }, root);
+				fire({ type: ActionType.ChatToolCallComplete, turnId: 'success', toolCallId: 'tool', result: { success: true, pastTenseMessage: 'ran' } }, root);
+				fire({ type: ActionType.ChatTurnComplete, turnId: 'success', duration: 1 }, root);
+				startTurn('failure', 'hello', undefined, peer);
+				fire({ type: ActionType.ChatError, turnId: 'failure', duration: 1, part: createErrorResponsePart({ errorType: 'test', message: 'failed' }) }, peer);
+				startTurn('cancelled', 'hello', undefined, subagent);
+				fire({ type: ActionType.ChatTurnCancelled, turnId: 'cancelled', duration: 1 }, subagent);
+
+				const providerEvents = telemetry.events.filter(event => event.data?.provider !== undefined);
+				assert.deepStrictEqual({
+					providers: [...new Set(providerEvents.map(event => event.data?.provider))],
+					completions: completedEvents().map(event => {
+						const data = event.data as Record<string, unknown>;
+						return { provider: data.provider, result: data.result };
+					}),
+					failures: failedEvents().length,
+					tools: providerEvents.filter(event => event.eventName === 'languageModelToolInvoked' || event.eventName === 'agentHost.toolInvoked').map(event => event.eventName).sort(),
+				}, {
+					providers: [provider],
+					completions: [{ provider, result: 'success' }, { provider, result: 'error' }, { provider, result: 'cancelled' }],
+					failures: 1,
+					tools: ['agentHost.toolInvoked', 'languageModelToolInvoked'],
+				});
+			});
+		}
+	}
 
 	test('keeps admission context independent across concurrent chats and sessions', async () => {
 		sinon.stub(agent, 'id').value('codex');
@@ -341,9 +423,9 @@ suite('AgentSideEffects — turn tracker telemetry', () => {
 			fire({ type: ActionType.ChatTurnComplete, turnId: 'shared-turn', duration: 1 }, chat);
 		}
 		const expected = [
-			{ chatgptAccountState: 'signedIn', chatgptPlanTier: 'plus', chatgptWeeklyQuotaState: 'available', chatgptWeeklyUsedPercentBucket: 40 },
-			{ chatgptAccountState: 'signedIn', chatgptPlanTier: 'free', chatgptWeeklyQuotaState: 'available', chatgptWeeklyUsedPercentBucket: 60 },
-			{ chatgptAccountState: 'signedOut', chatgptWeeklyQuotaState: 'unavailable' },
+			{ chatgptAccountState: 'signedIn', chatgptPlanTier: 'plus', chatgptWeeklyQuotaState: 'available', chatgptWeeklyUsedPercentBucket: 40, chatgptFiveHourQuotaState: 'missing' },
+			{ chatgptAccountState: 'signedIn', chatgptPlanTier: 'free', chatgptWeeklyQuotaState: 'available', chatgptWeeklyUsedPercentBucket: 60, chatgptFiveHourQuotaState: 'missing' },
+			{ chatgptAccountState: 'signedOut', chatgptWeeklyQuotaState: 'unavailable', chatgptFiveHourQuotaState: 'unavailable' },
 		];
 		const sent = [defaultChatUri, peerChat, secondChat].map(chat => {
 			const context = sends.getCalls().find(call => call.args[0].toString() === chat)?.args[7];
@@ -367,9 +449,11 @@ suite('AgentSideEffects — turn tracker telemetry', () => {
 		codex.chatgptPlanTier = 'pro';
 		codex.chatgptWeeklyQuotaState = 'available';
 		codex.chatgptWeeklyUsedPercentBucket = 100;
+		codex.chatgptFiveHourQuotaState = 'available';
+		codex.chatgptFiveHourUsedPercentBucket = 100;
 		fire({ type: ActionType.ChatTurnComplete, turnId: 'turn', duration: 1 });
 		assert.deepStrictEqual(completedEvents().map(event => Object.fromEntries(Object.entries(event.data as object).filter(([key]) => key.startsWith('chatgpt')))), [
-			{ chatgptAccountState: 'signedIn', chatgptPlanTier: 'plus', chatgptWeeklyQuotaState: 'missing' },
+			{ chatgptAccountState: 'signedIn', chatgptPlanTier: 'plus', chatgptWeeklyQuotaState: 'missing', chatgptFiveHourQuotaState: 'missing' },
 		]);
 	});
 
@@ -406,6 +490,135 @@ suite('AgentSideEffects — turn tracker telemetry', () => {
 			}, { captureCalls: 0, fields: [] });
 		});
 	}
+
+	test('records an admitted send before its outcome and does not recount terminal actions', () => {
+		setupSession();
+		startTurn('turn-1');
+		const beforeCompletion = {
+			sends: sentEvents().map(event => ({
+				turnId: event.data?.turnId,
+				chatSessionId: event.data?.chatSessionId,
+				messageActorKind: event.data?.messageActorKind,
+			})),
+			completions: completedEvents().length,
+		};
+
+		fire({ type: ActionType.ChatTurnComplete, turnId: 'turn-1', duration: 1000 });
+		fire({ type: ActionType.ChatTurnComplete, turnId: 'turn-1', duration: 1000 });
+
+		assert.deepStrictEqual({ beforeCompletion, sendsAfterCompletion: sentEvents().length }, {
+			beforeCompletion: {
+				sends: [{ turnId: 'turn-1', chatSessionId: getTelemetryChatSessionId(defaultChatUri), messageActorKind: 'user' }],
+				completions: 0,
+			},
+			sendsAfterCompletion: 1,
+		});
+	});
+
+	test('does not record rejected or locally handled requests as admitted sends', () => {
+		setupSession();
+		startTurn('local-command', '/rename Renamed');
+		stateManager.dispatchServerAction(sessionKey, { type: ActionType.SessionIsArchivedChanged, isArchived: true });
+		startTurn('rejected');
+
+		assert.deepStrictEqual({
+			sends: sentEvents(),
+			completions: completedEvents(),
+			providerSends: agent.sendMessageCalls,
+		}, { sends: [], completions: [], providerSends: [] });
+	});
+
+	test('records queued messages only on drain and excludes removed messages and steering', () => {
+		setupSession();
+		startTurn('active');
+		for (const id of ['removed', 'drained']) {
+			const action: ChatAction = {
+				type: ActionType.ChatPendingMessageSet, kind: PendingMessageKind.Queued, id,
+				message: { text: id, origin: { kind: MessageKind.User } },
+			};
+			stateManager.dispatchClientAction(defaultChatUri, action, { clientId: 'test', clientSeq: 2 });
+			sideEffects.handleAction(defaultChatUri, action);
+		}
+		const remove: ChatAction = { type: ActionType.ChatPendingMessageRemoved, kind: PendingMessageKind.Queued, id: 'removed' };
+		stateManager.dispatchClientAction(defaultChatUri, remove, { clientId: 'test', clientSeq: 3 });
+		sideEffects.handleAction(defaultChatUri, remove);
+		const steering: ChatAction = {
+			type: ActionType.ChatPendingMessageSet, kind: PendingMessageKind.Steering, id: 'steering',
+			message: { text: 'steer', origin: { kind: MessageKind.User } },
+		};
+		stateManager.dispatchClientAction(defaultChatUri, steering, { clientId: 'test', clientSeq: 4 });
+		sideEffects.handleAction(defaultChatUri, steering);
+		const sendsBeforeDrain = sentEvents().map(event => event.data?.turnId);
+		const removeSteering: ChatAction = { type: ActionType.ChatPendingMessageRemoved, kind: PendingMessageKind.Steering, id: 'steering' };
+		stateManager.dispatchClientAction(defaultChatUri, removeSteering, { clientId: 'test', clientSeq: 5 });
+		sideEffects.handleAction(defaultChatUri, removeSteering);
+		fire({ type: ActionType.ChatTurnComplete, turnId: 'active', duration: 1000 });
+		const drainedTurnId = stateManager.getActiveTurnId(defaultChatUri);
+		assert.ok(drainedTurnId);
+
+		assert.deepStrictEqual({
+			sendsBeforeDrain,
+			sendsAfterDrain: sentEvents().map(event => ({
+				turnId: event.data?.turnId,
+				source: event.data?.source,
+				messageActorKind: event.data?.messageActorKind,
+			})),
+		}, {
+			sendsBeforeDrain: ['active'],
+			sendsAfterDrain: [
+				{ turnId: 'active', source: 'direct', messageActorKind: 'user' },
+				{ turnId: drainedTurnId, source: 'queued', messageActorKind: 'user' },
+			],
+		});
+	});
+
+	test('does not record resuming the same failed turn as a new send', () => {
+		setupSession();
+		startTurn('resumed');
+		const previousRecorder = turnTracker.createProviderStageRecorder(defaultChatUri, 'resumed');
+		fire({ type: ActionType.ChatError, turnId: 'resumed', duration: 100, part: createErrorResponsePart({ errorType: 'requestFailed', message: 'failed' }, true) });
+		const turn = stateManager.getChatState(defaultChatUri)?.turns.at(-1);
+		assert.ok(turn);
+		const action: ChatAction = { type: ActionType.ChatTurnResume, turnId: turn.id };
+		stateManager.dispatchServerAction(defaultChatUri, action);
+		agent.chats.resumeTurn = async (_chat, _turnId, context) => {
+			if (!URI.isUri(context)) {
+				const operation = context.sendStageRecorder?.startOperation?.('permission');
+				operation?.start();
+				operation?.end(false);
+				context.sendStageRecorder?.markMilestone?.('sdkSend');
+			}
+			previousRecorder.markMilestone?.('sdkText');
+		};
+		sideEffects.handleAction(defaultChatUri, action, 'test', AgentHostClientType.EditorWindow, turn);
+		fire({ type: ActionType.ChatTurnComplete, turnId: turn.id, duration: 1000 });
+
+		assert.deepStrictEqual({
+			sends: sentEvents().map(event => event.data?.turnId),
+			completions: completedEvents().length,
+			timings: telemetry.events.filter(event => event.eventName === 'agentHost.providerTiming').map(event => ({
+				group: event.data?.group, result: event.data?.result,
+				permissionCount: event.data?.['permission.count'], staleText: event.data?.['milestone.sdkText'],
+			})),
+		}, {
+			sends: ['resumed'], completions: 2,
+			timings: [
+				{ group: 'permissions', result: 'success', permissionCount: 1, staleText: undefined },
+				{ group: 'milestones', result: 'success', permissionCount: undefined, staleText: undefined },
+			],
+		});
+	});
+
+	test('does not record provider-promoted turns as admitted sends', () => {
+		setupSession();
+		fire({
+			type: ActionType.ChatTurnStarted, turnId: 'provider-turn', startedAt: '2025-01-01T00:00:00.000Z',
+			message: { text: 'provider continuation', origin: { kind: MessageKind.SystemNotification } },
+		});
+		fire({ type: ActionType.ChatTurnComplete, turnId: 'provider-turn', duration: 1000 });
+
+		assert.deepStrictEqual({ sends: sentEvents(), completions: completedEvents().length }, { sends: [], completions: 1 });
+	});
 
 	test('emits turnCompleted with timing and turn-start context on success', () => {
 		setupSession(true, undefined, true);
@@ -646,7 +859,6 @@ suite('AgentSideEffects — turn tracker telemetry', () => {
 
 		const data = completedEvents()[0].data as Record<string, unknown>;
 		assert.strictEqual(data.timeToFirstEdit, 700);
-		assert.strictEqual(data.timeToFirstEditClassifierVersion, 1);
 		assert.strictEqual(data.modelCallCount, 0);
 	});
 
@@ -686,7 +898,6 @@ suite('AgentSideEffects — turn tracker telemetry', () => {
 				return {
 					turnId: data.turnId,
 					timeToFirstEdit: data.timeToFirstEdit,
-					timeToFirstEditClassifierVersion: data.timeToFirstEditClassifierVersion,
 					startedWithSteering: data.startedWithSteering,
 					receivedSteering: data.receivedSteering,
 					hostLaunchKind: data.hostLaunchKind,
@@ -700,7 +911,6 @@ suite('AgentSideEffects — turn tracker telemetry', () => {
 			completed: ['turn-original', 'turn-steering-1', 'turn-steering-2'].map(turnId => ({
 				turnId,
 				timeToFirstEdit: turnId === 'turn-original' ? 100 : 250,
-				timeToFirstEditClassifierVersion: 1,
 				startedWithSteering: turnId !== 'turn-original',
 				receivedSteering: turnId !== 'turn-steering-2',
 				hostLaunchKind: undefined,
@@ -856,7 +1066,6 @@ suite('AgentSideEffects — turn tracker telemetry', () => {
 
 		const data = completedEvents()[0].data as Record<string, unknown>;
 		assert.strictEqual(data.timeToFirstEdit, undefined);
-		assert.strictEqual(data.timeToFirstEditClassifierVersion, undefined);
 	});
 
 	test('does not attribute a stale model-call attempt to the active turn', () => {
@@ -1122,13 +1331,13 @@ suite('AgentSideEffects — turn tracker telemetry', () => {
 		assert.deepStrictEqual({
 			completed: completedEvents().map(event => {
 				const data = event.data as Record<string, unknown>;
-				return { isSubagentSession: data.isSubagentSession, interactionMode: data.interactionMode, modelCallCount: data.modelCallCount, subagentTaskModelSource: data.subagentTaskModelSource };
+				return { isSubagentSession: data.isSubagentSession, subagentKind: data.subagentKind, interactionMode: data.interactionMode, modelCallCount: data.modelCallCount, subagentTaskModelSource: data.subagentTaskModelSource };
 			}),
 			correlations: agent.modelCallTurnCorrelationCalls.map(({ chat, ...correlation }) => ({ chat: chat.toString(), ...correlation })),
 		}, {
 			completed: [
-				{ isSubagentSession: true, interactionMode: 'plan', modelCallCount: 1, subagentTaskModelSource: 'task_argument' },
-				{ isSubagentSession: false, interactionMode: 'plan', modelCallCount: 0, subagentTaskModelSource: undefined },
+				{ isSubagentSession: true, subagentKind: 'task', interactionMode: 'plan', modelCallCount: 1, subagentTaskModelSource: 'task_argument' },
+				{ isSubagentSession: false, subagentKind: undefined, interactionMode: 'plan', modelCallCount: 0, subagentTaskModelSource: undefined },
 			],
 			correlations: [{
 				chat: defaultChatUri,
@@ -1136,6 +1345,73 @@ suite('AgentSideEffects — turn tracker telemetry', () => {
 				turnId: subagentTurnId,
 			}],
 		});
+	});
+
+	test('classifies HydraFusion phase chats separately from task subagents and reports the phase model', () => {
+		setupSession();
+		agent.setModels([
+			{ provider: 'mock', id: 'gpt-5.5', name: 'GPT 5.5', supportsVision: false },
+			{ provider: 'mock', id: 'gpt-5.5-mini', name: 'GPT 5.5 Mini', supportsVision: false },
+		]);
+		startTurn('turn-parent');
+		const phaseToolCallId = 'fusion:fusion-1:phase-1';
+		const phaseChatUri = buildSubagentChatUri(sessionUri, phaseToolCallId);
+		stateManager.addChat(sessionKey, phaseChatUri);
+		const runPhaseTurn = (model: string) => {
+			agent.fireProgress({
+				kind: 'subagent_started',
+				chat: URI.parse(defaultChatUri),
+				toolCallId: phaseToolCallId,
+				agentName: 'hydrafusion-phase',
+				agentDisplayName: 'Main pass',
+				subagentKind: 'fusionPhase',
+				model,
+			});
+			const turnId = stateManager.getActiveTurnId(phaseChatUri);
+			agent.fireProgress({ kind: 'subagent_completed', chat: URI.parse(defaultChatUri), toolCallId: phaseToolCallId });
+			return turnId;
+		};
+		const phaseTurnId = runPhaseTurn('gpt-5.5');
+		const resumedPhaseTurnId = runPhaseTurn('gpt-5.5-mini');
+		fire({ type: ActionType.ChatTurnComplete, turnId: 'turn-parent', duration: 1000 });
+
+		assert.deepStrictEqual({
+			phaseTurnsStarted: phaseTurnId !== undefined && resumedPhaseTurnId !== undefined && phaseTurnId !== resumedPhaseTurnId,
+			completed: completedEvents().map(event => {
+				const data = event.data as Record<string, unknown>;
+				return { turnId: data.turnId, isSubagentSession: data.isSubagentSession, subagentKind: data.subagentKind, parentToolCallId: data.parentToolCallId, model: capturedModel(data).value };
+			}),
+		}, {
+			phaseTurnsStarted: true,
+			completed: [
+				{ turnId: phaseTurnId, isSubagentSession: true, subagentKind: 'fusionPhase', parentToolCallId: phaseToolCallId, model: 'gpt-5.5' },
+				{ turnId: resumedPhaseTurnId, isSubagentSession: true, subagentKind: 'fusionPhase', parentToolCallId: phaseToolCallId, model: 'gpt-5.5-mini' },
+				{ turnId: 'turn-parent', isSubagentSession: false, subagentKind: undefined, parentToolCallId: undefined, model: undefined },
+			],
+		});
+	});
+
+	test('reports the root turn as the parent of a subagent launched inside a HydraFusion phase', () => {
+		setupSession();
+		startTurn('turn-parent');
+		const phaseToolCallId = 'fusion:fusion-1:phase-1';
+		stateManager.addChat(sessionKey, buildSubagentChatUri(sessionUri, phaseToolCallId));
+		stateManager.addChat(sessionKey, buildSubagentChatUri(sessionUri, 'call-task'));
+		const chat = URI.parse(defaultChatUri);
+		agent.fireProgress({ kind: 'subagent_started', chat, toolCallId: phaseToolCallId, agentName: 'hydrafusion-phase', agentDisplayName: 'Main pass', subagentKind: 'fusionPhase' });
+		agent.fireProgress({ kind: 'subagent_started', chat, toolCallId: 'call-task', agentName: 'explore', agentDisplayName: 'Explore', parentToolCallId: phaseToolCallId });
+		agent.fireProgress({ kind: 'subagent_completed', chat, toolCallId: 'call-task' });
+		agent.fireProgress({ kind: 'subagent_completed', chat, toolCallId: phaseToolCallId });
+		fire({ type: ActionType.ChatTurnComplete, turnId: 'turn-parent', duration: 1000 });
+
+		assert.deepStrictEqual(completedEvents().map(event => {
+			const data = event.data as Record<string, unknown>;
+			return { parentToolCallId: data.parentToolCallId, subagentKind: data.subagentKind, parentTurnId: data.parentTurnId };
+		}), [
+			{ parentToolCallId: 'call-task', subagentKind: 'task', parentTurnId: 'turn-parent' },
+			{ parentToolCallId: phaseToolCallId, subagentKind: 'fusionPhase', parentTurnId: 'turn-parent' },
+			{ parentToolCallId: undefined, subagentKind: undefined, parentTurnId: undefined },
+		]);
 	});
 
 	test('attributes subagent model-call attempt durations only to the subagent turn', () => {
@@ -1360,6 +1636,52 @@ suite('AgentSideEffects — turn tracker telemetry', () => {
 		});
 	});
 
+	test('uses the resolved usage model while preserving HydraFusion selection', () => {
+		sinon.stub(agent, 'id').value(COPILOT_CLI_AGENT_PROVIDER_ID);
+		setupSession();
+		agent.setModels([
+			{ provider: 'mock', id: COPILOT_HYDRA_FUSION_MODEL_ID, name: 'HydraFusion', supportsVision: false },
+			{ provider: 'mock', id: 'gpt-5.5', name: 'GPT 5.5', supportsVision: false },
+		]);
+		startTurn('turn-explicit', 'hello', COPILOT_HYDRA_FUSION_MODEL_ID);
+		fire({ type: ActionType.ChatUsage, turnId: 'turn-explicit', usage: { model: 'gpt-5.5' } });
+		fire({ type: ActionType.ChatTurnComplete, turnId: 'turn-explicit', duration: 1000 });
+
+		agent.chatModel = { id: COPILOT_HYDRA_FUSION_MODEL_ID };
+		startTurn('turn-default');
+		fire({ type: ActionType.ChatError, turnId: 'turn-default', duration: 1000, part: createErrorResponsePart({ errorType: 'query', message: 'failed before routing' }) });
+
+		assert.deepStrictEqual(completedEvents().map(event => {
+			const data = event.data as Record<string, unknown>;
+			return {
+				model: capturedModel(data),
+				modelSelectionKind: data.modelSelectionKind,
+				result: data.result,
+			};
+		}), [
+			{ model: { trusted: true, value: 'gpt-5.5' }, modelSelectionKind: 'hydrafusion', result: 'success' },
+			{ model: { trusted: true, value: COPILOT_HYDRA_FUSION_MODEL_ID }, modelSelectionKind: 'hydrafusion', result: 'error' },
+		]);
+	});
+
+	test('does not classify another provider model named HydraFusion as the routing mode', () => {
+		setupSession();
+		agent.setModels([
+			{ provider: 'mock', id: COPILOT_HYDRA_FUSION_MODEL_ID, name: 'HydraFusion', supportsVision: false },
+		]);
+		startTurn('turn-explicit', 'hello', COPILOT_HYDRA_FUSION_MODEL_ID);
+		fire({ type: ActionType.ChatTurnComplete, turnId: 'turn-explicit', duration: 1000 });
+
+		const data = completedEvents()[0].data as Record<string, unknown>;
+		assert.deepStrictEqual({
+			model: capturedModel(data),
+			modelSelectionKind: data.modelSelectionKind,
+		}, {
+			model: { trusted: true, value: COPILOT_HYDRA_FUSION_MODEL_ID },
+			modelSelectionKind: 'explicit',
+		});
+	});
+
 	test('uses the concrete provider default across turn outcomes while preserving Default selection', () => {
 		setupSession();
 		agent.setModels([{ provider: 'mock', id: 'gpt-5.5', name: 'GPT 5.5', supportsVision: false }]);
@@ -1386,7 +1708,7 @@ suite('AgentSideEffects — turn tracker telemetry', () => {
 		]);
 	});
 
-	test('does not treat an Auto provider default as the effective model', () => {
+	test('preserves inherited Auto selection without reporting it as the observed model', () => {
 		setupSession();
 		agent.setModels([
 			{ provider: 'mock', id: 'auto', name: 'Auto', supportsVision: false },
@@ -1403,7 +1725,7 @@ suite('AgentSideEffects — turn tracker telemetry', () => {
 			modelSelectionKind: data.modelSelectionKind,
 		}, {
 			model: undefined,
-			modelSelectionKind: 'default',
+			modelSelectionKind: 'auto',
 		});
 	});
 
@@ -1623,6 +1945,34 @@ suite('AgentSideEffects — turn tracker telemetry', () => {
 		});
 	});
 
+	test('attributes provider time between dispatch and first progress to the stages the provider marked', () => {
+		setupSession();
+		turnTracker.turnStarted(agent, defaultChatUri, 'turn-provider', undefined, undefined, 'default', undefined, undefined);
+		const recorder = turnTracker.createProviderStageRecorder(defaultChatUri, 'turn-provider');
+		// Marks before dispatch belong to the host, not the provider.
+		recorder.mark('queue');
+		turnTracker.markSendDispatched(defaultChatUri, 'turn-provider');
+		recorder.mark('create');
+		recorder.mark('modelResponse');
+		turnTracker.markFirstProgress(defaultChatUri, 'turn-provider');
+		// Work after first progress is not part of time-to-first-progress.
+		recorder.mark('persist');
+		turnTracker.turnCompleted(defaultChatUri, 'turn-provider', 'success');
+
+		const data = completedEvents()[0].data as Record<string, unknown>;
+		assert.deepStrictEqual({
+			queue: data.providerStageQueueMs,
+			create: typeof data.providerStageCreateMs,
+			modelResponse: typeof data.providerStageModelResponseMs,
+			persist: data.providerStagePersistMs,
+		}, {
+			queue: undefined,
+			create: 'number',
+			modelResponse: 'number',
+			persist: undefined,
+		});
+	});
+
 	test('reports the latest per-turn billed nano-AIU from usage updates when available', () => {
 		setupSession();
 		startTurn('turn-1');
@@ -1633,6 +1983,44 @@ suite('AgentSideEffects — turn tracker telemetry', () => {
 		fire({ type: ActionType.ChatTurnComplete, turnId: 'turn-1', duration: 1000 });
 
 		assert.strictEqual((completedEvents()[0].data as Record<string, unknown>).billedNanoAiu, 2_000_000_000);
+	});
+
+	test('provider timing survives cancellation and late recorders cannot affect a reused turn ID', () => {
+		setupSession();
+		turnTracker.turnStarted(agent, defaultChatUri, 'turn-timing', undefined, undefined, 'default', undefined, undefined);
+		const recorder = turnTracker.createProviderStageRecorder(defaultChatUri, 'turn-timing');
+		const pending = recorder.startOperation!('permission')!;
+		pending.start();
+		recorder.markMilestone!('sdkSend');
+		turnTracker.turnCompleted(defaultChatUri, 'turn-timing', 'cancelled');
+		turnTracker.turnStarted(agent, defaultChatUri, 'turn-timing', undefined, undefined, 'default', undefined, undefined);
+		recorder.markMilestone!('sdkText');
+		pending.end(false);
+		turnTracker.turnCompleted(defaultChatUri, 'turn-timing', 'success');
+		assert.deepStrictEqual(telemetry.events.filter(event => event.eventName === 'agentHost.providerTiming').map(event => ({
+			group: event.data?.group, result: event.data?.result, count: event.data?.['permission.count'], incompleteCount: event.data?.['permission.incompleteCount'],
+		})), [
+			{ group: 'permissions', result: 'cancelled', count: 1, incompleteCount: 1 },
+			{ group: 'milestones', result: 'cancelled', count: undefined, incompleteCount: undefined },
+		]);
+	});
+
+	test('detailed provider timing logs require Debug level', () => {
+		setupSession();
+		const level = sinon.stub(logService, 'getLevel');
+		const debug = sinon.spy(logService, 'debug');
+		const info = sinon.spy(logService, 'info');
+		for (const verbosity of [LogLevel.Info, LogLevel.Debug]) {
+			level.returns(verbosity);
+			const turnId = `timing-log-${verbosity}`;
+			turnTracker.turnStarted(agent, defaultChatUri, turnId, undefined, undefined, 'default', undefined, undefined);
+			turnTracker.createProviderStageRecorder(defaultChatUri, turnId).markMilestone!('sdkSend');
+			turnTracker.turnCompleted(defaultChatUri, turnId, 'success');
+		}
+		assert.deepStrictEqual({
+			debug: debug.getCalls().filter(call => String(call.args[0]).startsWith('[AgentHostProviderTiming]')).length,
+			info: info.getCalls().filter(call => String(call.args[0]).startsWith('[AgentHostProviderTiming]')).length,
+		}, { debug: 1, info: 0 });
 	});
 
 	test('does not report billed nano-AIU when the provider does not supply it', () => {
@@ -1953,9 +2341,10 @@ suite('AgentSideEffects — turn tracker telemetry', () => {
 			failureStage: 'sendMessage',
 			errorType: 'sendFailed',
 			errorName: 'Error',
-			msg: 'Error: boom',
+			msg: 'boom',
 			hasStack: true,
 		}]);
+		assert.deepStrictEqual(sentEvents().map(event => event.data?.turnId), ['turn-1']);
 	});
 
 	test('fails the turn when model selection rejects instead of sending with a stale model', async () => {
@@ -1974,7 +2363,7 @@ suite('AgentSideEffects — turn tracker telemetry', () => {
 			sendMessageCalls: agent.sendMessageCalls.length,
 		}, {
 			completed: { result: 'error', errorType: 'modelSelectionFailed', failureStage: 'modelSelection' },
-			failed: { errorType: 'modelSelectionFailed', failureStage: 'modelSelection', msg: 'Error: unknown model' },
+			failed: { errorType: 'modelSelectionFailed', failureStage: 'modelSelection', msg: 'unknown model' },
 			creationErrorType: 'modelSelectionFailed',
 			sendMessageCalls: 0,
 		});
@@ -2000,6 +2389,15 @@ suite('AgentSideEffects — turn tracker telemetry', () => {
 		assert.strictEqual((events[0].data as Record<string, unknown>).result, 'error');
 		assert.strictEqual((events[0].data as Record<string, unknown>).messageOriginKind, 'inline');
 		assert.strictEqual((telemetry.events.find(event => event.eventName === 'agentHost.userMessageSent')?.data as Record<string, unknown>).messageOriginKind, 'inline');
+		assert.deepStrictEqual(sentEvents().map(event => ({
+			turnId: event.data?.turnId,
+			messageActorKind: event.data?.messageActorKind,
+			source: event.data?.source,
+		})), [{
+			turnId: (events[0].data as Record<string, unknown>).turnId,
+			messageActorKind: 'user',
+			source: 'queued',
+		}]);
 	});
 
 	test('captures interactionMode for queued turns', () => {
@@ -2042,8 +2440,8 @@ suite('AgentSideEffects — turn tracker telemetry', () => {
 		account = { usageSource: 'openai', status: 'error' };
 		fire({ type: ActionType.ChatTurnComplete, turnId: queuedTurnId, duration: 1 });
 		assert.deepStrictEqual(completedEvents().map(event => Object.fromEntries(Object.entries(event.data as object).filter(([key]) => key.startsWith('chatgpt')))), [
-			{ chatgptAccountState: 'signedOut', chatgptWeeklyQuotaState: 'unavailable' },
-			{ chatgptAccountState: 'signedIn', chatgptPlanTier: 'plus', chatgptWeeklyQuotaState: 'missing' },
+			{ chatgptAccountState: 'signedOut', chatgptWeeklyQuotaState: 'unavailable', chatgptFiveHourQuotaState: 'unavailable' },
+			{ chatgptAccountState: 'signedIn', chatgptPlanTier: 'plus', chatgptWeeklyQuotaState: 'missing', chatgptFiveHourQuotaState: 'missing' },
 		]);
 	});
 

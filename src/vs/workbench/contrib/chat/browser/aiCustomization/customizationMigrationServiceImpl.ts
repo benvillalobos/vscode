@@ -4,26 +4,41 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { CancellationToken } from '../../../../../base/common/cancellation.js';
+import { Event } from '../../../../../base/common/event.js';
 import { Disposable } from '../../../../../base/common/lifecycle.js';
 import { extUriBiasedIgnorePathCase } from '../../../../../base/common/resources.js';
 import { URI } from '../../../../../base/common/uri.js';
+import { generateUuid } from '../../../../../base/common/uuid.js';
 import { localize } from '../../../../../nls.js';
 import { IConfigurationService } from '../../../../../platform/configuration/common/configuration.js';
 import { isAgentHostSessionResource } from '../../common/chatSessionsService.js';
 import { ICustomizationHarnessService, ICustomizationSourceFolder } from '../../common/customizationHarnessService.js';
 import { getChatSessionType } from '../../common/model/chatUri.js';
 import { PromptsType } from '../../common/promptSyntax/promptTypes.js';
-import { CustomizationMigration, CustomizationMigrationHintTarget, CustomizationMigrationType, FileCustomizationMigration, FileCustomizationMigrationType, getCustomizationMigrationEnablementSetting, getCustomizationMigrationTargetType, ICustomizationMigrationHint, ICustomizationMigrationService, IMcpServerCustomizationMigrationCandidate, IMcpServerCustomizationMigrationResult, isConfiguredLocationMigrationCandidate, isPromptFileMigrationCandidate, isUserDataMigrationCandidate, McpServerCustomizationMigration, McpServerCustomizationMigrationFailureReason, MigratableConfiguration } from '../../common/promptSyntax/service/customizationMigrationService.js';
+import { CustomizationMigration, CustomizationMigrationType, FileCustomizationMigration, FileCustomizationMigrationType, getCustomizationMigrationTargetType, ICustomizationMigrationHint, ICustomizationMigrationService, IMcpServerCustomizationMigrationCandidate, IMcpServerCustomizationMigrationResult, isConfiguredLocationMigrationCandidate, isPromptFileMigrationCandidate, isUserDataMigrationCandidate, McpServerCustomizationMigration, McpServerCustomizationMigrationFailureReason, MigratableConfiguration } from '../../common/promptSyntax/service/customizationMigrationService.js';
+import { ChatConfiguration } from '../../common/constants.js';
 import { IPromptsService, PromptsStorage } from '../../common/promptSyntax/service/promptsService.js';
+import { IMcpService } from '../../../mcp/common/mcpTypes.js';
 
 export class CustomizationMigrationService extends Disposable implements ICustomizationMigrationService {
 	declare readonly _serviceBrand: undefined;
+	readonly onDidChangeCustomizations: Event<void>;
+
 	constructor(
 		@IPromptsService private readonly promptsService: IPromptsService,
 		@ICustomizationHarnessService private readonly customizationHarnessService: ICustomizationHarnessService,
 		@IConfigurationService private readonly configurationService: IConfigurationService,
+		@IMcpService mcpService: IMcpService,
 	) {
 		super();
+		this.onDidChangeCustomizations = Event.any(
+			promptsService.onDidChangeSlashCommands,
+			promptsService.onDidChangeInstructions,
+			promptsService.onDidChangeAgentInstructions,
+			promptsService.onDidChangeSkills,
+			customizationHarnessService.onDidChangeCustomAgents,
+			Event.fromObservableLight(mcpService.servers),
+		);
 	}
 
 	computeMigration(sessionResource: URI, type: FileCustomizationMigrationType, token?: CancellationToken): Promise<FileCustomizationMigration>;
@@ -34,8 +49,10 @@ export class CustomizationMigrationService extends Disposable implements ICustom
 				? this.emptyMcpServerMigration()
 				: { type, files: [], candidates: [] };
 		}
-		if (type !== CustomizationMigrationType.McpServers && !this.isMigrationEnabled(type)) {
-			return { type, files: [], candidates: [] };
+		if (!this.isMigrationEnabled()) {
+			return type === CustomizationMigrationType.McpServers
+				? this.emptyMcpServerMigration()
+				: { type, files: [], candidates: [] };
 		}
 
 		switch (type) {
@@ -82,6 +99,7 @@ export class CustomizationMigrationService extends Disposable implements ICustom
 		return provider?.migrate(sessionResource, requestedCandidates) ?? {
 			migratedCount: 0,
 			failures: requestedCandidates.map(candidate => ({
+				storage: candidate.storage,
 				id: candidate.id,
 				name: candidate.name,
 				sourceUri: candidate.sourceUri,
@@ -97,70 +115,45 @@ export class CustomizationMigrationService extends Disposable implements ICustom
 			return undefined;
 		}
 
+		const mcpMigrationEnabled = this.isMigrationEnabled();
 		const [userDataMigration, promptFilesMigration, configuredLocationsMigration, mcpServerMigration] = await Promise.all([
 			this.computeMigration(sessionResource, CustomizationMigrationType.UserData, token),
 			this.computeMigration(sessionResource, CustomizationMigrationType.PromptFiles, token),
 			this.computeMigration(sessionResource, CustomizationMigrationType.ConfiguredLocations, token),
-			this.computeMigration(sessionResource, CustomizationMigrationType.McpServers, token),
+			mcpMigrationEnabled ? this.computeMigration(sessionResource, CustomizationMigrationType.McpServers, token) : Promise.resolve(this.emptyMcpServerMigration()),
 		]);
 		const fileCandidates = [userDataMigration, promptFilesMigration, configuredLocationsMigration]
-			.filter(migration => this.isMigrationEnabled(migration.type))
+			.filter(() => this.isMigrationEnabled())
 			.flatMap(migration => migration.candidates);
-		const workspaceFileCount = fileCandidates.filter(candidate => candidate.storage === PromptsStorage.local).length;
-		const userFileCount = fileCandidates.filter(candidate => candidate.storage === PromptsStorage.user).length;
-		const migratableMcpServerCount = this.isMigrationEnabled(CustomizationMigrationType.McpServers) ? mcpServerMigration.candidates.length : 0;
-		const unsupportedMcpServerCount = mcpServerMigration.servers.filter(server => !server.supported).length;
-		const fileHint = this.formatFileMigrationHint(workspaceFileCount, userFileCount, harness.label);
-		const migratableMcpHint = migratableMcpServerCount === 0
-			? undefined
-			: migratableMcpServerCount === 1
-				? localize('customizationMigrationHintMigratableMcpSingle', "Found 1 workspace MCP server that can be migrated for {0}.", harness.label)
-				: localize('customizationMigrationHintMigratableMcpMultiple', "Found {0} workspace MCP servers that can be migrated for {1}.", migratableMcpServerCount, harness.label);
-		const unsupportedMcpHint = unsupportedMcpServerCount === 0
-			? undefined
-			: unsupportedMcpServerCount === 1
-				? localize('customizationMigrationHintMcpSingle', "Found 1 MCP server that is not fully supported by {0}.", harness.label)
-				: localize('customizationMigrationHintMcpMultiple', "Found {0} MCP servers that are not fully supported by {1}.", unsupportedMcpServerCount, harness.label);
-		let migrationHint: string | undefined;
-		if (fileHint && migratableMcpHint && unsupportedMcpHint) {
-			migrationHint = localize('customizationMigrationHintCombinedAll', "{0} {1} {2}", fileHint, migratableMcpHint, unsupportedMcpHint);
-		} else {
-			const firstHint = fileHint ?? migratableMcpHint;
-			const secondHint = firstHint === fileHint ? migratableMcpHint ?? unsupportedMcpHint : unsupportedMcpHint;
-			migrationHint = firstHint && secondHint
-				? localize('customizationMigrationHintCombined', "{0} {1}", firstHint, secondHint)
-				: firstHint ?? unsupportedMcpHint;
-		}
-		return migrationHint ? {
-			message: migrationHint,
-			target: fileHint || migratableMcpHint ? CustomizationMigrationHintTarget.FileMigrations : CustomizationMigrationHintTarget.McpServers,
+		const migratableMcpServerCount = mcpServerMigration.candidates.length;
+		const workspaceCount = fileCandidates.filter(candidate => candidate.storage === PromptsStorage.local).length
+			+ mcpServerMigration.candidates.filter(candidate => candidate.storage === PromptsStorage.local).length;
+		const userCount = fileCandidates.filter(candidate => candidate.storage === PromptsStorage.user).length
+			+ mcpServerMigration.candidates.filter(candidate => candidate.storage === PromptsStorage.user).length;
+		return workspaceCount + userCount > 0 ? {
+			migrationFlowId: this.generateMigrationFlowId(),
+			message: this.getMigrationHintMessage(workspaceCount, userCount),
 			counts: [
 				{ type: CustomizationMigrationType.UserData, count: userDataMigration.files.length },
 				{ type: CustomizationMigrationType.PromptFiles, count: promptFilesMigration.files.length },
 				{ type: CustomizationMigrationType.ConfiguredLocations, count: configuredLocationsMigration.files.length },
-				{ type: CustomizationMigrationType.McpServers, count: migratableMcpServerCount + unsupportedMcpServerCount },
+				{ type: CustomizationMigrationType.McpServers, count: migratableMcpServerCount },
 			].filter(({ count }) => count > 0),
 		} : undefined;
 	}
 
-	private formatFileMigrationHint(workspaceCount: number, userCount: number, harnessLabel: string): string | undefined {
-		const fileCount = workspaceCount + userCount;
-		if (fileCount === 0) {
-			return undefined;
+	private getMigrationHintMessage(workspaceCount: number, userCount: number): string {
+		if (userCount === 0) {
+			return workspaceCount === 1
+				? localize('customizationMigrationHintWorkspaceCountSingular', "{0} workspace customization needs an update to keep working.", workspaceCount)
+				: localize('customizationMigrationHintWorkspaceCountPlural', "{0} workspace customizations need an update to keep working.", workspaceCount);
 		}
-
-		const workspaceCounts = workspaceCount === 1
-			? localize('customizationMigrationHintWorkspaceSingle', "1 workspace customization")
-			: localize('customizationMigrationHintWorkspaceMultiple', "{0} workspace customizations", workspaceCount);
-		const userCounts = userCount === 1
-			? localize('customizationMigrationHintUserSingle', "1 user customization")
-			: localize('customizationMigrationHintUserMultiple', "{0} user customizations", userCount);
-		const sourceCounts = workspaceCount > 0 && userCount > 0
-			? localize('customizationMigrationHintWorkspaceAndUser', "{0} and {1}", workspaceCounts, userCounts)
-			: workspaceCount > 0 ? workspaceCounts : userCounts;
-		return fileCount === 1
-			? localize('customizationMigrationHintSingle', "Found {0} that is present but not used by {1} and could be migrated.", sourceCounts, harnessLabel)
-			: localize('customizationMigrationHintMultiple', "Found {0} that are present but not used by {1} and could be migrated.", sourceCounts, harnessLabel);
+		if (workspaceCount === 0) {
+			return userCount === 1
+				? localize('customizationMigrationHintUserCountSingular', "{0} user customization needs an update to keep working.", userCount)
+				: localize('customizationMigrationHintUserCountPlural', "{0} user customizations need an update to keep working.", userCount);
+		}
+		return localize('customizationMigrationHintCounts', "{0} workspace and {1} user customizations need an update to keep working.", workspaceCount, userCount);
 	}
 
 	private async createFileMigration(sessionResource: URI, type: FileCustomizationMigrationType, candidates: readonly MigratableConfiguration[], token: CancellationToken, excludeSupportedLocations = false): Promise<FileCustomizationMigration> {
@@ -175,11 +168,18 @@ export class CustomizationMigrationService extends Disposable implements ICustom
 			const folders = await provider.provideSourceFolders(sessionResource, targetType, token);
 			sourceFolders.set(targetType, folders ?? []);
 		}
-		const filteredCandidates = candidates.filter(customization => {
+		const filteredCandidates = candidates.flatMap(customization => {
 			const targetType = getCustomizationMigrationTargetType(customization);
 			const compatibleFolders = sourceFolders.get(targetType)?.filter(folder => folder.source === customization.storage) ?? [];
-			return compatibleFolders.length > 0
-				&& (!excludeSupportedLocations || !compatibleFolders.some(folder => extUriBiasedIgnorePathCase.isEqualOrParent(customization.uri, folder.uri)));
+			if (compatibleFolders.length === 0
+				|| excludeSupportedLocations && compatibleFolders.some(folder => extUriBiasedIgnorePathCase.isEqualOrParent(customization.uri, folder.uri))
+			) {
+				return [];
+			}
+			return [{
+				...customization,
+				workspaceGroupId: provider.getWorkspaceGroupId?.(sessionResource, customization.uri),
+			}];
 		});
 		return { type, files: filteredCandidates.map(customization => customization.uri), candidates: filteredCandidates };
 	}
@@ -189,6 +189,7 @@ export class CustomizationMigrationService extends Disposable implements ICustom
 			type: CustomizationMigrationType.McpServers,
 			servers: [],
 			candidates: [],
+			exclusions: [],
 			discoveryComplete: true,
 			coverage: {
 				restrictedByMcpAccess: false,
@@ -197,7 +198,11 @@ export class CustomizationMigrationService extends Disposable implements ICustom
 		};
 	}
 
-	private isMigrationEnabled(type: CustomizationMigrationType): boolean {
-		return this.configurationService.getValue<boolean>(getCustomizationMigrationEnablementSetting(type)) === true;
+	private isMigrationEnabled(): boolean {
+		return this.configurationService.getValue<boolean>(ChatConfiguration.ChatCustomizationsMigrationEnabled) === true;
+	}
+
+	protected generateMigrationFlowId(): string {
+		return generateUuid();
 	}
 }

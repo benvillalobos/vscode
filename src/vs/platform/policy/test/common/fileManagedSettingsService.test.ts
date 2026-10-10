@@ -171,6 +171,28 @@ suite('normalizeManagedSettings', () => {
 		assert.deepStrictEqual(normalizeManagedSettings({}), {});
 	});
 
+	test('retains permission-key presence through serialization without treating an empty block as configured', () => {
+		const documents = [{ permissions: {} }, { permissions: { future: {} } }, { permissions: { future: null } }, { permissions: { limitTo: [] } }, { permissions: { disableAssistedPermissionsMode: false } }];
+		assert.deepStrictEqual(documents.map(document => JSON.parse(JSON.stringify(normalizeManagedSettings(document)))), [
+			{}, { 'permissions.future': '{}' }, { 'permissions.future': 'null' }, { 'permissions.limitTo': '[]' }, { 'permissions.disableAssistedPermissionsMode': false },
+		]);
+	});
+
+	test('retains empty and future-only telemetry block presence through JSON serialization', () => {
+		const documents = [{ telemetry: {} }, { telemetry: { capture: {} } }, { telemetry: { future: ['value'] } }];
+		assert.deepStrictEqual(documents.map(document => JSON.parse(JSON.stringify(normalizeManagedSettings(document)))), [
+			{ telemetry: '{}' }, { telemetry: '{}' }, { telemetry: '{}' },
+		]);
+	});
+
+	test('does not interpret malformed or inherited telemetry values as a block anchor', () => {
+		const documents = [
+			{}, { telemetry: null }, { telemetry: false }, { telemetry: '{}' }, { telemetry: [] },
+			Object.create({ telemetry: {} }),
+		];
+		assert.deepStrictEqual(documents.map(document => normalizeManagedSettings(document)), documents.map(() => ({})));
+	});
+
 	test('drops a structured key whose value is not an object', () => {
 		const result = normalizeManagedSettings({
 			[COPILOT_ENABLED_PLUGINS_KEY]: 'already-a-string'
@@ -204,7 +226,7 @@ suite('FileManagedSettingsService', () => {
 		});
 	}));
 
-	test('retains raw settings that are absent from the normalized bag', () => runWithFakedTimers({}, async () => {
+	test('retains permission rules in both raw and normalized settings', () => runWithFakedTimers({}, async () => {
 		const logService = new NullLogService();
 		const fileService = disposables.add(new FileService(logService));
 		const inMemoryProvider = disposables.add(new InMemoryFileSystemProvider());
@@ -224,7 +246,11 @@ suite('FileManagedSettingsService', () => {
 
 		assert.deepStrictEqual({ raw: service.rawManagedSettings, normalized: service.managedSettings }, {
 			raw,
-			normalized: {},
+			normalized: {
+				'permissions.allow': JSON.stringify(raw.permissions.allow),
+				'permissions.ask': JSON.stringify(raw.permissions.ask),
+				'permissions.deny': JSON.stringify(raw.permissions.deny),
+			},
 		});
 	}));
 
@@ -355,6 +381,18 @@ suite('FileManagedSettingsService', () => {
 suite('FileManagedSettingsChannelClient', () => {
 
 	const disposables = ensureNoDisposablesAreLeakedInTestSuite();
+
+	test('retains empty telemetry presence without modifying raw transport', async () => {
+		const channel = disposables.add(new DeferredManagedSettingsChannel());
+		const client = disposables.add(new FileManagedSettingsChannelClient(channel));
+		const raw = { telemetry: {} };
+		channel.resolveInitialRawSnapshot(raw);
+		channel.resolveInitialSnapshot(JSON.parse(JSON.stringify(normalizeManagedSettings(raw))));
+		await client.initialize();
+		assert.deepStrictEqual({ raw: client.rawManagedSettings, normalized: client.managedSettings }, {
+			raw: { telemetry: {} }, normalized: { telemetry: '{}' },
+		});
+	});
 
 	test('keeps newer event state when the initial snapshot resolves later', async () => {
 		const channel = disposables.add(new DeferredManagedSettingsChannel());

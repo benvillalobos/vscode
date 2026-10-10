@@ -4,24 +4,27 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { URI } from '../../../../../base/common/uri.js';
+import { ThemeIcon } from '../../../../../base/common/themables.js';
 import type { JsonPrimitive } from '../../../../../platform/agentHost/common/state/protocol/state.js';
 
 /**
  * How often an automation runs. `hourly` fires every hour from creation/update;
- * `daily`/`weekly` fire at the configured local-time hour/minute (and day-of-week);
+ * `daily`/`weekly` fire at the configured hour/minute (and day-of-week);
+ * `weekdays` fires Monday-Friday at the configured local wall-clock hour/minute;
  * `cron` uses the Agent Host's five-field cron grammar.
  */
-export type AutomationInterval = 'manual' | 'hourly' | 'daily' | 'weekly' | 'cron';
+export type AutomationInterval = 'manual' | 'hourly' | 'daily' | 'weekdays' | 'weekly' | 'cron' | 'custom';
 
 /**
  * Describes the cadence at which an automation should fire.
  *
- * Times are stored in local-time wall-clock values. The Agent Host converts
- * them to UTC when computing concrete run instants so DST transitions are
- * handled correctly.
+ * Fields are local wall-clock values unless timeZone is UTC. Presentation
+ * may convert UTC fields, but provider definitions retain their original zone.
  */
 export interface IAutomationSchedule {
 	readonly interval: AutomationInterval;
+	/** Absent for Agent Host local-time semantics. */
+	readonly timeZone?: 'UTC';
 
 	/** Five-field AHP cron expression. Required for `cron`. */
 	readonly cronExpression?: string;
@@ -29,10 +32,10 @@ export interface IAutomationSchedule {
 	/** Preserved host time zone for `cron`; defaults to the local time zone on creation. */
 	readonly cronTimeZone?: string;
 
-	/** Hour-of-day, 0-23. Only used for `daily` and `weekly`. */
+	/** Hour-of-day, 0-23. Ignored for `manual`, `hourly` and `cron`. */
 	readonly scheduleHour: number;
 
-	/** Minute-of-hour, 0-59. Ignored for `manual` and `cron`. */
+	/** Minute-of-hour, 0-59. Ignored for `manual`, `hourly` and `cron`. */
 	readonly scheduleMinute: number;
 
 	/** Day-of-week, 0 (Sunday) through 6 (Saturday). Only used for `weekly`. */
@@ -106,6 +109,9 @@ export interface IAutomationDescriptor {
 
 	/** Explicit workspace-backed or workspace-less execution target. */
 	readonly target: AutomationTarget;
+	/** Provider-owned display metadata for targets whose URI basename is not a useful label. */
+	readonly targetDisplay?: { readonly label: string; readonly icon: ThemeIcon };
+	readonly externalResource?: URI;
 
 	/** Complete provider-owned session template. */
 	readonly sessionTemplate?: IAutomationSessionTemplate;
@@ -128,6 +134,7 @@ export interface IAutomationDescriptor {
 
 	/** ISO-8601 UTC timestamp; `undefined` when interval is `manual`. */
 	readonly nextRunAt?: string;
+	readonly readOnlyReason?: string;
 }
 
 /**
@@ -141,7 +148,7 @@ export type AutomationRunStatus = 'pending' | 'running' | 'completed' | 'failed'
  * What kicked off a run. `catch_up` reflects the host's misfire policy for a
  * due-time that passed while the host was not running.
  */
-export type AutomationRunTrigger = 'schedule' | 'catch_up' | 'manual';
+export type AutomationRunTrigger = 'schedule' | 'catch_up' | 'manual' | 'external';
 
 export interface IAutomationRun {
 	/** Opaque identifier, unique across concrete providers and historical archives. */
@@ -152,8 +159,12 @@ export interface IAutomationRun {
 
 	/** Session resource URI, recorded as soon as the committed session is available. */
 	readonly sessionResource?: URI;
+	readonly externalResource?: URI;
 
 	readonly startedAt: string;
+	readonly updatedAt?: string;
 	readonly completedAt?: string;
 	readonly errorMessage?: string;
+	readonly needsInput?: boolean;
+	readonly statusDescription?: string;
 }
