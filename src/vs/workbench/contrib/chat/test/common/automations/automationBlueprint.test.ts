@@ -75,6 +75,34 @@ suite('Automation blueprints', () => {
 		assert.throws(() => automationToBlueprint({ ...automation, schedule: { ...automation.schedule, timeZone: 'UTC' } }), AutomationBlueprintParseError);
 	});
 
+	test('refuses to export a cron automation bound to a foreign time zone', () => {
+		const localTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+		const foreignTimeZone = localTimeZone === 'UTC' ? 'Asia/Tokyo' : 'UTC';
+		const automation: IAutomationDescriptor = {
+			id: 'runtime-id',
+			name: 'Cron review',
+			prompt: 'Review the workspace.',
+			schedule: { interval: 'cron', cronExpression: '30 9 * * 1-6', scheduleHour: 0, scheduleMinute: 0, scheduleDay: 0 },
+			target: { kind: 'workspace', folderUri: URI.file('/workspace'), isolation: { kind: 'default' } },
+			enabled: true,
+			createdAt: '2026-01-01T00:00:00.000Z',
+			updatedAt: '2026-01-01T00:00:00.000Z',
+		};
+		// Blueprints only express `timeZone: local`, so exporting a foreign zone would import at the wrong time.
+		assert.throws(() => automationToBlueprint({
+			...automation, schedule: { ...automation.schedule, cronTimeZone: foreignTimeZone },
+		}), AutomationBlueprintParseError);
+		assert.deepStrictEqual({
+			implicitLocal: automationToBlueprint(automation).schedule,
+			explicitLocal: automationToBlueprint({
+				...automation, schedule: { ...automation.schedule, cronTimeZone: localTimeZone },
+			}).schedule,
+		}, {
+			implicitLocal: { interval: 'cron', cronExpression: '30 9 * * 1-6', scheduleHour: 0, scheduleMinute: 0, scheduleDay: 0 },
+			explicitLocal: { interval: 'cron', cronExpression: '30 9 * * 1-6', scheduleHour: 0, scheduleMinute: 0, scheduleDay: 0 },
+		});
+	});
+
 	test('parses a portable automation blueprint', () => {
 		const blueprint = parseAutomationBlueprint([
 			'---',

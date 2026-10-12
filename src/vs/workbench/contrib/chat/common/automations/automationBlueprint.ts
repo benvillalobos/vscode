@@ -165,6 +165,10 @@ function assertPortableSchedule(schedule: IAutomationSchedule): void {
 	if (schedule.interval === 'custom' || (schedule.timeZone === 'UTC' && (schedule.interval === 'daily' || schedule.interval === 'weekdays' || schedule.interval === 'weekly'))) {
 		throw new AutomationBlueprintParseError('unsupportedSchedule', schedule.interval);
 	}
+	// Blueprints can only express `timeZone: local`, so a cron schedule bound to another zone would import at the wrong time.
+	if (schedule.interval === 'cron' && schedule.cronTimeZone && schedule.cronTimeZone !== (Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC')) {
+		throw new AutomationBlueprintParseError('unsupportedTimeZone', schedule.cronTimeZone);
+	}
 }
 
 function readSchedule(root: YamlMapNode): IAutomationSchedule {
