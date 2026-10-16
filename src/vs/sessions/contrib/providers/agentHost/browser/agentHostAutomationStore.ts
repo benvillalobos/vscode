@@ -31,6 +31,7 @@ import { SYNCED_CUSTOMIZATION_SCHEME } from '../../../../../workbench/services/a
 import { assertAutomationSessionTemplate, type AutomationTarget, type IAutomationDescriptor, type IAutomationRun, type IAutomationSchedule, type IAutomationSessionTemplate } from '../../../../../workbench/contrib/chat/common/automations/automation.js';
 import { AutomationUnavailableError, type AutomationCatalogueState, assertAutomationSessionTemplateAuthority, type AutomationMutationGuard, type IAutomationCustomizationChoice, type IAutomationRunRequestResult, type ICreateAutomationOptions, type IGuardedAutomationUpdateResult, serializeAutomationEditableState, type IUpdateAutomationOptions } from '../../../../../workbench/contrib/chat/common/automations/automationService.js';
 import type { ISessionsProviderAutomations } from '../../../../services/sessions/common/sessionsProvider.js';
+import { formatAutomationWeekdays, parseAutomationWeekdays } from '../../../../../workbench/contrib/chat/common/automations/schedule.js';
 
 const MUTATION_TIMEOUT_MS = 30_000;
 const LEGACY_RUN_ARCHIVE_VERSION = 1;
@@ -186,7 +187,7 @@ export class AgentHostAutomationStore extends Disposable implements ISessionsPro
 			throw new Error(current.readOnlyReason);
 		}
 		const updated = this._applyPatch(current, patch);
-		const state = await this._replaceDescriptor(updated, patch.sessionTemplate === null, mutationGuard, patch.customizationIds);
+		const state = await this._replaceDescriptor(updated, patch.schedule !== undefined, patch.sessionTemplate === null, mutationGuard, patch.customizationIds);
 		return this._requireProjectedAutomation(state);
 	}
 
@@ -492,13 +493,13 @@ export class AgentHostAutomationStore extends Disposable implements ISessionsPro
 		}
 	}
 
-	private async _replaceDescriptor(descriptor: IAutomationDescriptor, resetSessionTemplate = false, mutationGuard?: AutomationMutationGuard, customizationIds?: readonly string[]): Promise<AutomationEntry> {
+	private async _replaceDescriptor(descriptor: IAutomationDescriptor, scheduleChanged: boolean, resetSessionTemplate = false, mutationGuard?: AutomationMutationGuard, customizationIds?: readonly string[]): Promise<AutomationEntry> {
 		const current = this._findAutomationEntry(descriptor.id);
 		if (!current) {
 			throw new Error(`Automation does not exist: ${descriptor.id}`);
 		}
 		const resource = current.resource;
-		const definition = this._definitionFromDescriptor(descriptor, current.definition, resetSessionTemplate);
+		const definition = this._definitionFromDescriptor(descriptor, current.definition, resetSessionTemplate, scheduleChanged);
 		const scope = customizationIds !== undefined || !this._isCustomizationTargetUnchanged(descriptor.target, current.definition, definition.session.provider)
 			? this._acquireCustomizationScope(descriptor.target, definition.session.provider)
 			: undefined;
@@ -516,7 +517,7 @@ export class AgentHostAutomationStore extends Disposable implements ISessionsPro
 						message: definition.message,
 						session: definition.session,
 						enabled: definition.enabled,
-						triggers: definition.triggers,
+						...(scheduleChanged ? { triggers: definition.triggers } : {}),
 						_meta: definition._meta,
 					},
 				},
@@ -594,7 +595,7 @@ export class AgentHostAutomationStore extends Disposable implements ISessionsPro
 	}
 
 
-	private _definitionFromDescriptor(descriptor: IAutomationDescriptor, existing?: AutomationDefinition, resetSessionTemplate = false): AutomationDefinition {
+	private _definitionFromDescriptor(descriptor: IAutomationDescriptor, existing?: AutomationDefinition, resetSessionTemplate = false, scheduleChanged = true): AutomationDefinition {
 		if (descriptor.target.providerId !== this._providerId) {
 			throw new AutomationUnavailableError(localize('agentHostAutomation.wrongHost', "The automation target must belong to this Agent Host."));
 		}
@@ -645,7 +646,7 @@ export class AgentHostAutomationStore extends Disposable implements ISessionsPro
 				...(existingSession?.customizations !== undefined && this._connection.initializeResult.get()?.automations?.customizations ? { customizations: existingSession.customizations } : {}),
 			},
 			enabled: descriptor.enabled,
-			triggers: scheduleTrigger(descriptor.schedule),
+			triggers: existing && !scheduleChanged ? existing.triggers : scheduleTrigger(descriptor.schedule),
 			_meta: Object.keys(meta).length > 0 ? meta : undefined,
 		};
 	}
@@ -871,10 +872,10 @@ function projectSchedule(triggers: AutomationDefinition['triggers']): IAutomatio
 		}
 		return { interval: 'weekdays', scheduleHour, scheduleMinute, scheduleDay: 0 };
 	}
-	const scheduleDay = parseCronValue(dayValue, 0, 6);
-	return scheduleDay === undefined
+	const scheduleDays = parseAutomationWeekdays(dayValue);
+	return scheduleDays === undefined
 		? { interval: 'custom', scheduleHour: 0, scheduleMinute: 0, scheduleDay: 0 }
-		: { interval: 'weekly', scheduleHour, scheduleMinute, scheduleDay };
+		: { interval: 'weekly', scheduleHour, scheduleMinute, scheduleDay: scheduleDays[0], ...(scheduleDays.length > 1 ? { scheduleDays } : {}) };
 }
 
 function parseCronValue(value: string | undefined, minimum: number, maximum: number): number | undefined {
@@ -905,7 +906,7 @@ function scheduleTrigger(schedule: IAutomationSchedule): AutomationDefinition['t
 			expression = `${schedule.scheduleMinute} ${schedule.scheduleHour} * * 1-5`;
 			break;
 		case 'weekly':
-			expression = `${schedule.scheduleMinute} ${schedule.scheduleHour} * * ${schedule.scheduleDay}`;
+			expression = `${schedule.scheduleMinute} ${schedule.scheduleHour} * * ${formatAutomationWeekdays(schedule)}`;
 			break;
 	}
 	return [{

@@ -118,6 +118,8 @@ export class AutomationDialogService implements IAutomationDialogService {
 			hour: initialSchedule?.scheduleHour ?? 9,
 			minute: initialSchedule?.scheduleMinute ?? 0,
 			day: initialSchedule?.scheduleDay ?? 1,
+			days: initialSchedule?.scheduleDays,
+			scheduleChanged: existing ? false : undefined,
 			isQuickChat: initialTarget === undefined || initialTarget.kind === 'quickChat',
 			folderUri: initialWorkspaceTarget?.folderUri,
 			providerId: initialTarget?.providerId,
@@ -170,6 +172,7 @@ export class AutomationDialogService implements IAutomationDialogService {
 				scheduleHour: state.hour,
 				scheduleMinute: state.minute,
 				scheduleDay: state.day,
+				...(state.interval === 'weekly' && state.days && state.days.length > 1 ? { scheduleDays: state.days } : {}),
 			};
 			const schedule = state.timeZone === 'UTC' ? automationScheduleToUTC(localSchedule, timezoneOffset) : localSchedule;
 			const prompt = getPrompt();
@@ -184,7 +187,7 @@ export class AutomationDialogService implements IAutomationDialogService {
 				const patch: IUpdateAutomationOptions = {
 					name: state.name,
 					prompt,
-					schedule,
+					...(state.scheduleChanged ? { schedule } : {}),
 					target,
 					...(sessionConfigurationCapture.kind === 'captured' ? {
 						sessionTemplate: sessionTemplate ?? null,

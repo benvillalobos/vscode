@@ -32,7 +32,7 @@ import { CHAT_AUTOMATIONS_ENABLED_SETTING, ChatAutomationsEnabledContext } from 
 import { IAutomationRunner } from '../../../../../workbench/contrib/chat/common/automations/automationRunner.js';
 import { type AutomationDialogCreateInitialValues, IAutomationDialogService } from '../../../../../workbench/contrib/chat/common/automations/automationDialogService.js';
 import { AUTOMATION_BLUEPRINT_FILE_SUFFIX, AutomationBlueprintParseError, automationToBlueprint, createAutomationBlueprintFileName, parseAutomationBlueprint, serializeAutomationBlueprint } from '../../../../../workbench/contrib/chat/common/automations/automationBlueprint.js';
-import { automationScheduleToLocal, DAYS_OF_WEEK } from '../../../../../workbench/contrib/chat/common/automations/schedule.js';
+import { automationScheduleToLocal, DAYS_OF_WEEK, getAutomationScheduleDays } from '../../../../../workbench/contrib/chat/common/automations/schedule.js';
 import { IAgentPluginService } from '../../../../../workbench/contrib/chat/common/plugins/agentPluginService.js';
 import { AgentSessionApprovalModel } from '../../../../../workbench/contrib/chat/browser/agentSessions/agentSessionApprovalModel.js';
 import { IChatService } from '../../../../../workbench/contrib/chat/common/chatService/chatService.js';
@@ -108,6 +108,7 @@ function areAutomationTemplatesEqual(first: readonly IAutomationTemplate[], seco
 			&& template.schedule.scheduleHour === other.schedule.scheduleHour
 			&& template.schedule.scheduleMinute === other.schedule.scheduleMinute
 			&& template.schedule.scheduleDay === other.schedule.scheduleDay
+			&& getAutomationScheduleDays(template.schedule).join(',') === getAutomationScheduleDays(other.schedule).join(',')
 			&& template.source?.label === other.source?.label
 			&& ((!template.source && !other.source) || (!!template.source && !!other.source && isEqual(template.source.uri, other.source.uri)));
 	});
@@ -2019,7 +2020,7 @@ function formatSchedule(schedule: IAutomationSchedule): string {
 		case 'daily': return localize('scheduleDailyAt', "Daily at {0}", time);
 		case 'weekdays': return localize('scheduleWeekdaysAt', "Weekdays at {0}", time);
 		case 'weekly': {
-			const day = DAYS_OF_WEEK[((localSchedule.scheduleDay % 7) + 7) % 7];
+			const day = getAutomationScheduleDays(localSchedule).map(day => DAYS_OF_WEEK[((day % 7) + 7) % 7]).join(', ');
 			return localize('scheduleWeeklyAt', "{0} at {1}", day, time);
 		}
 		case 'manual': return localize('scheduleManual', "Manual");

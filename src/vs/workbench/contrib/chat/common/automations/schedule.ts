@@ -6,6 +6,27 @@
 import { localize } from '../../../../../nls.js';
 import { IAutomationSchedule } from './automation.js';
 
+export function getAutomationScheduleDays(schedule: IAutomationSchedule): readonly number[] {
+	return schedule.scheduleDays ?? [schedule.scheduleDay];
+}
+
+export function formatAutomationWeekdays(schedule: IAutomationSchedule): string {
+	const days = getAutomationScheduleDays(schedule);
+	if (!days.length || days.some(day => !Number.isInteger(day) || day < 0 || day > 6)) {
+		throw new Error(localize('automation.invalidWeekdays', "Select at least one valid day of the week."));
+	}
+	return [...new Set(days)].sort((a, b) => a - b).join(',');
+}
+
+/** Parses numeric cron weekday lists, including the Sunday alias 7. */
+export function parseAutomationWeekdays(value: string | undefined): readonly number[] | undefined {
+	if (!value || !/^\d+(,\d+)*$/.test(value)) {
+		return undefined;
+	}
+	const days = value.split(',').map(Number);
+	return days.some(day => day > 7) ? undefined : [...new Set(days.map(day => day % 7))].sort((a, b) => a - b);
+}
+
 /** Projects a fixed UTC schedule into local wall-clock fields using a Date.getTimezoneOffset() value. */
 export function automationScheduleToLocal(schedule: IAutomationSchedule, timezoneOffset = new Date().getTimezoneOffset()): IAutomationSchedule {
 	if (schedule.timeZone !== 'UTC') {
@@ -33,6 +54,9 @@ function shiftSchedule(schedule: IAutomationSchedule, minutes: number): IAutomat
 		scheduleDay: schedule.interval === 'weekly'
 			? ((schedule.scheduleDay + Math.floor(shifted / 1440)) % 7 + 7) % 7
 			: schedule.scheduleDay,
+		...(schedule.interval === 'weekly' && schedule.scheduleDays !== undefined ? {
+			scheduleDays: schedule.scheduleDays.map(day => ((day + Math.floor(shifted / 1440)) % 7 + 7) % 7).sort((a, b) => a - b),
+		} : {}),
 	};
 }
 

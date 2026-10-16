@@ -36,7 +36,7 @@ import { ContextKeyService } from '../../../../../platform/contextkey/browser/co
 import { TestConfigurationService } from '../../../../../platform/configuration/test/common/testConfigurationService.js';
 import { TestInstantiationService } from '../../../../../platform/instantiation/test/common/instantiationServiceMock.js';
 import { IContext } from '../../../../../platform/contextkey/common/contextkey.js';
-import { ContextViewHandler } from '../../../../../platform/contextview/browser/contextViewService.js';
+import { ContextViewHandler, ContextViewService } from '../../../../../platform/contextview/browser/contextViewService.js';
 import { IContextViewService } from '../../../../../platform/contextview/browser/contextView.js';
 import { IKeybindingService } from '../../../../../platform/keybinding/common/keybinding.js';
 import { ResultKind } from '../../../../../platform/keybinding/common/keybindingResolver.js';
@@ -90,6 +90,7 @@ suite('Automation dialog creation', () => {
 			configurationService: () => configurationService,
 			contextKeyService: () => contextKeyService,
 		}, disposables);
+		instantiationService.stub(IContextViewService, disposables.add(new ContextViewService(instantiationService.get(IWorkbenchLayoutService))));
 		instantiationService.stub(ICommandService, new class extends mock<ICommandService>() { });
 		instantiationService.stub(IMenuService, disposables.add(instantiationService.createInstance(MenuService)));
 		const actionWidgetService = new RecordingActionWidgetService();
@@ -545,6 +546,95 @@ suite('Automation dialog creation', () => {
 		await dialog.result;
 	});
 
+	test('weekly dropdown restores selected days and saves immediate multi-day changes', async () => {
+		const schedule = { interval: 'weekly' as const, scheduleHour: 9, scheduleMinute: 0, scheduleDay: 1, scheduleDays: [1, 3, 5] };
+		const existing: IAutomationDescriptor = {
+			id: 'weekly', name: 'Review', prompt: 'Review changes', enabled: true, createdAt: '', updatedAt: '',
+			target: { kind: 'quickChat', providerId: 'host', sessionTypeId: 'copilotcli' }, schedule,
+		};
+		const dialog = openDialog({ existing });
+		const button = dialog.container.querySelector<HTMLElement>('.automation-form-days-button')!;
+		button.click();
+		const rows = () => [...dialog.container.querySelectorAll<HTMLElement>('[role="menuitemcheckbox"]')];
+		const initial = rows().map(row => row.getAttribute('aria-checked'));
+		rows().find(row => row.textContent?.includes('Wednesday'))!.click();
+		rows().find(row => row.textContent?.includes('Saturday'))!.click();
+		const label = button.getAttribute('aria-label');
+		dialog.saveButton.click();
+		const result = await dialog.result;
+		assert.deepStrictEqual({
+			initial, label, schedule: result?.value.schedule,
+		}, {
+			initial: ['false', 'true', 'false', 'true', 'false', 'true', 'false'],
+			label: 'Days of week: Monday, Friday, Saturday',
+			schedule: { ...schedule, scheduleDays: [1, 5, 6] },
+		});
+	});
+
+	test('empty weekly selection blocks saving and recovers when a day is selected', async () => {
+		const dialog = openDialog({ initialValues: {
+			name: 'Review', prompt: 'Review changes',
+			target: { kind: 'quickChat', providerId: 'host', sessionTypeId: 'copilotcli' },
+			schedule: { interval: 'weekly', scheduleHour: 9, scheduleMinute: 0, scheduleDay: 1 },
+		} });
+		const button = dialog.container.querySelector<HTMLElement>('.automation-form-days-button')!;
+		button.click();
+		const row = () => [...dialog.container.querySelectorAll<HTMLElement>('[role="menuitemcheckbox"]')].find(row => row.textContent?.includes('Monday'))!;
+		row().click();
+		const invalid = {
+			disabled: dialog.saveButton.getAttribute('aria-disabled'),
+			error: dialog.container.querySelector('.automation-form-content > .automation-target-error')?.textContent,
+			aria: button.getAttribute('aria-invalid'),
+		};
+		row().click();
+		dialog.saveButton.click();
+		assert.deepStrictEqual({ invalid, schedule: (await dialog.result)?.value.schedule }, {
+			invalid: { disabled: 'true', error: 'Select at least one day of the week.', aria: 'true' },
+			schedule: { interval: 'weekly', scheduleHour: 9, scheduleMinute: 0, scheduleDay: 1 },
+		});
+	});
+
+	test('weekly menu keyboard toggles do not submit the dialog and Escape restores the trigger', async () => {
+		let commits = 0;
+		const dialog = openDialog({ initialValues: {
+			name: 'Review', prompt: 'Review changes',
+			target: { kind: 'quickChat', providerId: 'host', sessionTypeId: 'copilotcli' },
+			schedule: { interval: 'weekly', scheduleHour: 9, scheduleMinute: 0, scheduleDay: 1 },
+		}, commit: async () => { commits++; } });
+		const button = dialog.container.querySelector<HTMLElement>('.automation-form-days-button')!;
+		button.click();
+		const menu = dialog.container.querySelector<HTMLElement>('[role="menu"]')!;
+		const key = (key: string, keyCode: number) => menu.dispatchEvent(new KeyboardEvent('keydown', { key, keyCode, bubbles: true, cancelable: true }));
+		key('Enter', 13);
+		key('Escape', 27);
+		await timeout(0);
+		assert.deepStrictEqual({
+			commits, label: button.getAttribute('aria-label'), expanded: button.getAttribute('aria-expanded'),
+			focused: document.activeElement === button, dialogOpen: !!dialog.container.querySelector('.automation-form'),
+		}, { commits: 0, label: 'Days of week: Sunday, Monday', expanded: 'false', focused: true, dialogOpen: true });
+		dialog.cancelButton.click();
+		assert.strictEqual(await dialog.result, undefined);
+	});
+
+	for (const scheduleDays of [undefined, [1, 3, 5]]) {
+		test(`renaming preserves an untouched ${scheduleDays ? 'multi-day' : 'single-day'} stored schedule`, async () => {
+			const existing: IAutomationDescriptor = {
+				id: 'weekly', name: 'Review', prompt: 'Review changes', enabled: true, createdAt: '', updatedAt: '',
+				target: { kind: 'quickChat', providerId: 'host', sessionTypeId: 'copilotcli' },
+				schedule: { interval: 'weekly', scheduleHour: 9, scheduleMinute: 7, scheduleDay: 1, ...(scheduleDays ? { scheduleDays } : {}) },
+			};
+			const dialog = openDialog({ existing });
+			const button = dialog.container.querySelector<HTMLElement>('.automation-form-days-button')!;
+			button.click();
+			dialog.setName('Renamed');
+			dialog.saveButton.click();
+			const result = await dialog.result;
+			assert.deepStrictEqual({ name: result?.value.name, writesSchedule: result && Object.hasOwn(result.value, 'schedule') }, {
+				name: 'Renamed', writesSchedule: false,
+			});
+		});
+	}
+
 	for (const interval of ['daily', 'weekly'] as const) {
 		for (const edit of [true, false]) {
 			test(`${edit ? 'edit' : 'duplicate'} ${interval} UTC schedule displays local fields and saves the original UTC values`, async () => {
@@ -556,20 +646,20 @@ suite('Automation dialog creation', () => {
 				const local = automationScheduleToLocal(automation.schedule);
 				const dialog = openDialog(edit ? { existing: automation } : { initialValues: automation }, cloudConfiguration());
 				const time = dialog.container.querySelector<HTMLSelectElement>('.automation-form-time-group select')!;
-				const day = dialog.container.querySelector<HTMLSelectElement>('.automation-form-day-group select')!;
+				const day = dialog.container.querySelector<HTMLElement>('.automation-form-days-button')!;
 				const hour12 = local.scheduleHour % 12 || 12;
 				assert.deepStrictEqual({
 					time: time.selectedOptions[0].textContent,
-					day: day.selectedIndex,
+					day: day.getAttribute('aria-label'),
 					label: time.getAttribute('aria-label'),
 					utcLabel: dialog.container.textContent?.includes('Time (UTC)'),
 				}, {
 					time: `${hour12}:${String(local.scheduleMinute).padStart(2, '0')} ${local.scheduleHour < 12 ? 'AM' : 'PM'}`,
-					day: local.scheduleDay, label: 'Time (Local)', utcLabel: false,
+					day: `Days of week: ${['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][local.scheduleDay]}`, label: 'Time (Local)', utcLabel: false,
 				});
 				dialog.saveButton.click();
 				const result = await dialog.result;
-				assert.deepStrictEqual({ schedule: result?.value.schedule, enabled: result?.value.enabled }, { schedule: automation.schedule, enabled: false });
+				assert.deepStrictEqual({ schedule: result?.value.schedule, enabled: result?.value.enabled }, { schedule: edit ? undefined : automation.schedule, enabled: false });
 			});
 		}
 	}
@@ -591,7 +681,7 @@ suite('Automation dialog creation', () => {
 				dayVisible: dialog.container.querySelector<HTMLElement>('.automation-form-day-group')?.style.display,
 			}, { interval: 'Weekdays', time: '5:45 PM', timeVisible: '', dayVisible: 'none' });
 			dialog.saveButton.click();
-			assert.deepStrictEqual((await dialog.result)?.value.schedule, automation.schedule);
+			assert.deepStrictEqual((await dialog.result)?.value.schedule, edit ? undefined : automation.schedule);
 		});
 	}
 
@@ -1469,7 +1559,7 @@ suite('Automation dialog creation', () => {
 		dialog.saveButton.click();
 		assert.deepStrictEqual(await dialog.result, {
 			kind: 'update', id: existing.id,
-			value: { name: existing.name, prompt: existing.prompt, schedule: existing.schedule, target: existing.target, sessionTemplate: existing.sessionTemplate, enabled: false },
+			value: { name: existing.name, prompt: existing.prompt, target: existing.target, sessionTemplate: existing.sessionTemplate, enabled: false },
 		});
 	});
 
@@ -1895,7 +1985,7 @@ suite('Automation dialog creation', () => {
 			assert.deepStrictEqual(result, {
 				kind: editing ? 'update' : 'create',
 				...(editing ? { id: existing.id } : {}),
-				value: { name: existing.name, prompt: existing.prompt, target: existing.target, schedule: existing.schedule, enabled: existing.enabled },
+				value: { name: existing.name, prompt: existing.prompt, target: existing.target, ...(!editing ? { schedule: existing.schedule } : {}), enabled: existing.enabled },
 			});
 		});
 	}
@@ -2891,6 +2981,22 @@ suite('Automation workspace trust', () => {
 
 suite('Automation dialog target validation', () => {
 	const disposables = ensureNoDisposablesAreLeakedInTestSuite();
+
+	test('cloud multi-day selection blocks saving without affecting other schedule types', () => {
+		const results = (['weekly', 'daily', 'hourly', 'manual'] as const).map(interval => {
+			const state = createFormState({ interval, days: [1, 3, 5], timeZone: 'UTC', timezoneOffset: 0, isolationMode: undefined });
+			const validation: IValidationState = { nameError: undefined, promptError: undefined, folderError: undefined, sessionTypeError: undefined, branchError: undefined };
+			const form = document.createElement('form');
+			const saveButton = disposables.add(new Button(form, defaultButtonStyles));
+			updateSaveButtonState(saveButton, state, validation, form, () => 'prompt', () => undefined,
+				upcastPartial<ISessionsManagementService>({ isNewSessionTargetAvailable: () => true }));
+			return { enabled: saveButton.enabled, error: validation.scheduleError };
+		});
+		assert.deepStrictEqual(results, [
+			{ enabled: false, error: 'Cloud automations support only one day per weekly schedule. Select one day or run locally.' },
+			{ enabled: true, error: undefined }, { enabled: true, error: undefined }, { enabled: true, error: undefined },
+		]);
+	});
 
 	test('an offset outside the quarter-hour grid blocks cloud save with an explicit schedule error', () => {
 		const state = createFormState({ timeZone: 'UTC', timezoneOffset: 44, hour: 9, minute: 45, isolationMode: undefined });

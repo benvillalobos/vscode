@@ -37,6 +37,7 @@ import { State as SuggestState } from '../../../../editor/contrib/suggest/browse
 import { localize, localize2 } from '../../../../nls.js';
 import { Action2, MenuId, registerAction2 } from '../../../../platform/actions/common/actions.js';
 import { ActionListItemKind, IActionListItem } from '../../../../platform/actionWidget/browser/actionList.js';
+import { MultiSelectDropdown } from '../../../../platform/actionWidget/browser/multiSelectDropdown.js';
 import { IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
 import { ContextKeyExpr, IContextKeyService } from '../../../../platform/contextkey/common/contextkey.js';
 import { IContextViewService } from '../../../../platform/contextview/browser/contextView.js';
@@ -229,6 +230,8 @@ export interface IFormState {
 	hour: number;
 	minute: number;
 	day: number;
+	days?: readonly number[];
+	scheduleChanged?: boolean;
 	isQuickChat: boolean;
 	folderUri: URI | undefined;
 	providerId: string | undefined;
@@ -1152,26 +1155,46 @@ export function renderForm(
 		const opt = timeOptions[e.index];
 		state.hour = opt.hour;
 		state.minute = opt.minute;
+		state.scheduleChanged = true;
 		revalidate();
 	}));
 
 	const dayGroup = DOM.append(scheduleRow, $('.automation-form-schedule-group.automation-form-day-group'));
-	DOM.append(dayGroup, $('span.automation-form-label', undefined, localize('automation.form.day', "Day of week")));
-	const dayOptions: ISelectOptionItem[] = DAYS_OF_WEEK.map(d => ({ text: d }));
-	const daySelect = disposables.add(new SelectBox(
-		dayOptions,
-		Math.min(Math.max(state.day, 0), DAYS_OF_WEEK.length - 1),
-		contextViewService,
-		defaultSelectBoxStyles,
-		{ ...scheduleSelectOptions, ariaLabel: localize('automation.form.day', "Day of week") },
-	));
+	const daysLabel = localize('automation.form.days', "Days of week");
+	DOM.append(dayGroup, $('span.automation-form-label', undefined, daysLabel));
 	const daySelectContainer = DOM.append(dayGroup, $('.automation-form-schedule-select-container'));
-	daySelect.render(daySelectContainer);
-	disposables.add(daySelect.onDidSelect(e => {
-		state.day = e.index;
+	const dayButton = disposables.add(new Button(daySelectContainer, { ...unthemedButtonStyles, supportIcons: true }));
+	dayButton.element.classList.add('automation-form-days-button');
+	dayButton.element.setAttribute('aria-haspopup', 'menu');
+	dayButton.element.setAttribute('aria-expanded', 'false');
+	const selectedDays = () => state.days ?? [state.day];
+	const daySummary = () => selectedDays().map(day => DAYS_OF_WEEK[day]).join(', ') || localize('automation.form.selectDays', "Select days");
+	const updateDayButton = () => {
+		dayButton.label = `${daySummary()} $(chevron-down)`;
+		dayButton.element.setAttribute('aria-label', localize('automation.form.selectedDays', "Days of week: {0}", daySummary()));
+	};
+	updateDayButton();
+	if (customizations) {
+		disposables.add(customizations.hoverService.setupDelayedHover(dayButton.element, () => ({ content: daySummary() })));
+	}
+	const dayDropdown = disposables.add(instantiationService.createInstance(MultiSelectDropdown));
+	disposables.add(dayButton.onDidClick(() => {
+		dayDropdown.show({
+			anchor: dayButton.element,
+			ariaLabel: daysLabel,
+			sections: [{ label: daysLabel, items: DAYS_OF_WEEK.map((label, day) => ({ id: String(day), label })) }],
+			selectedIds: selectedDays().map(String),
+			contextViewLayer: 1,
+		});
+	}));
+	disposables.add(dayDropdown.onDidChangeSelection(ids => {
+		state.days = ids.map(Number);
+		state.day = state.days[0] ?? state.day;
+		state.scheduleChanged = true;
+		updateDayButton();
 		revalidate();
 	}));
-	const scheduleError = DOM.append(formContent, $('span.automation-target-error', { role: 'status', 'aria-live': 'polite' }));
+	const scheduleError = DOM.append(formContent, $('span.automation-target-error', { id: 'automation-schedule-error', role: 'status', 'aria-live': 'polite' }));
 	DOM.hide(scheduleError);
 
 	const applyIntervalVisibility = () => {
@@ -1195,6 +1218,7 @@ export function renderForm(
 	applyIntervalVisibility();
 	disposables.add(intervalSelect.onDidSelect(e => {
 		state.interval = intervals[e.index].value;
+		state.scheduleChanged = true;
 		updateIntervalOptions(getProviderConfiguration(state.providerId) !== undefined);
 		revalidate();
 	}));
@@ -2019,6 +2043,12 @@ export function renderForm(
 		showScheduleValidationError: message => {
 			scheduleError.textContent = message ?? '';
 			setAutomationControlVisible(scheduleError, message !== undefined);
+			dayButton.element.setAttribute('aria-invalid', String(state.interval === 'weekly' && message !== undefined));
+			if (state.interval === 'weekly' && message !== undefined) {
+				dayButton.element.setAttribute('aria-describedby', scheduleError.id);
+			} else {
+				dayButton.element.removeAttribute('aria-describedby');
+			}
 		},
 		getCustomizationIds: () => customizationSelection?.getSelectedIds(),
 		waitForCustomizationChoices: async token => customizationSelection?.waitForChoices(token),
@@ -2059,6 +2089,9 @@ export function renderForm(
 			return automationSessionDraftSynchronizer.waitForSync(token);
 		},
 		setSaving: (saving, committing) => {
+			if (saving) {
+				dayDropdown.hide();
+			}
 			formContent.toggleAttribute('inert', saving);
 			formContent.setAttribute('aria-busy', String(saving));
 			form.classList.toggle('saving', saving);
@@ -2353,8 +2386,12 @@ export function updateSaveButtonState(
 	const utcSchedule = state.timeZone === 'UTC' ? automationScheduleToUTC({
 		interval: state.interval, scheduleHour: state.hour, scheduleMinute: state.minute, scheduleDay: state.day,
 	}, state.timezoneOffset) : undefined;
-	validation.scheduleError = !INTERVALS.some(item => item.value === state.interval)
+	validation.scheduleError = state.scheduleChanged === false ? undefined : !INTERVALS.some(item => item.value === state.interval)
 		? localize('automation.form.scheduleRequired', "Choose a supported schedule.")
+		: state.interval === 'weekly' && state.days?.length === 0
+			? localize('automation.form.daysRequired', "Select at least one day of the week.")
+			: utcSchedule && state.interval === 'weekly' && (state.days?.length ?? 1) > 1
+				? localize('automation.form.cloudMultipleDays', "Cloud automations support only one day per weekly schedule. Select one day or run locally.")
 		: utcSchedule && state.interval === 'weekdays'
 			? localize('automation.form.cloudWeekdays', "Weekdays is only available for local automations. Choose a supported schedule for Cloud.")
 			: utcSchedule && (state.interval === 'daily' || state.interval === 'weekly') && utcSchedule.scheduleMinute % 15 !== 0

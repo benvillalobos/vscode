@@ -11,7 +11,7 @@ import { ServicesAccessor } from '../../../../../platform/instantiation/common/i
 import { AccessibilityVerbositySettingId } from '../../../../../workbench/contrib/accessibility/browser/accessibilityConfiguration.js';
 import { IAutomationDescriptor, IAutomationRun, IAutomationSchedule } from '../../../../../workbench/contrib/chat/common/automations/automation.js';
 import { AutomationCatalogueState, type IAutomationProviderDescriptor, IAutomationService } from '../../../../../workbench/contrib/chat/common/automations/automationService.js';
-import { automationScheduleToLocal, DAYS_OF_WEEK } from '../../../../../workbench/contrib/chat/common/automations/schedule.js';
+import { automationScheduleToLocal, DAYS_OF_WEEK, getAutomationScheduleDays } from '../../../../../workbench/contrib/chat/common/automations/schedule.js';
 import { IAgentPluginService } from '../../../../../workbench/contrib/chat/common/plugins/agentPluginService.js';
 import { IChatService } from '../../../../../workbench/contrib/chat/common/chatService/chatService.js';
 import { IChatModel } from '../../../../../workbench/contrib/chat/common/model/chatModel.js';
@@ -54,6 +54,7 @@ class AutomationsCustomViewAccessibilityHelp implements IAccessibleViewImplement
 			localize('automationsCustomView.help.externalDefinition', "For cloud automation cards, More Actions also offers Open on GitHub to open the automation's details in your browser."),
 			localize('automationsCustomView.help.dialog', "In the automation dialog, Target controls are above the prompt. Agent and model pickers are inside the prompt input, and execution mode and permission controls are below it. Use Tab and Shift+Tab to move between fields and pickers. When creating an automation, you only need to enter a prompt. An empty name is derived from the prompt, and the target defaults to No workspace unless one is already supplied. An available Agent Host that supports the target is still required."),
 			localize('automationsCustomView.help.weekdays', "For Agent Host automations, choose Weekdays to run Monday through Friday at the same local time, without choosing a day of the week. Weekdays is not available for Cloud automations."),
+			localize('automationsCustomView.help.weeklyDays', "For Weekly schedules, open Days of week to choose days. Use Up Arrow and Down Arrow to move between days, and Space or Enter to toggle a day. Changes apply immediately; Escape closes the menu and returns focus to the button. Select at least one day. Agent Host automations support multiple days; Cloud supports only one."),
 			...(accessor.get(ISessionsManagementService).getAllProviderSessionTypes().some(type => automationService.getProviderConfiguration?.(type.providerId)?.sessionTypes.includes(type.sessionType.id)) ? [
 				localize('automationsCustomView.help.cloudDialog', "When cloud automations are enabled, a Run in the cloud switch follows the Name field; press Space to turn it on or off. If cloud automations cannot be reached when you turn it on, the switch turns back off and a message asks you to try again in a few moments. When it is on, Cloud is the agent and the workspace picker lists Git-backed workspaces. Only private GitHub repositories can be selected; unavailable repositories are announced with the reason. Choose Add repository to search for a private repository or paste its URL. A matching local folder is retained. If cloud automations become unavailable while the switch is on, Cloud stays selected and Create is unavailable until they return or, for a new automation, you turn the switch off. Turning the switch off restores the previous local workspace and agent, or otherwise selects Copilot when it is available. Cloud models are configured in the prompt section. In the Tools section, the button shows All tools allowed or the number of tools allowed. Activate it to open a searchable checklist of the tools GitHub offers, grouped by category. Categories start collapsed; use Right Arrow to expand one. Press Space to toggle a tool or category. Each change applies immediately to the dialog; Enter or Escape closes the checklist without discarding changes. Save or Create saves the automation. New automations start with every listed tool selected. While the list loads the button is unavailable, and if it cannot be loaded a Retry button appears. These are followed by the schedule in your local time zone. GitHub stores a fixed UTC schedule, so the local run time may shift when daylight saving time changes. When editing a cloud automation, the switch and workspace picker are disabled because changing the repository or provider requires duplication. Editing preserves enabled state; enable or disable an automation from its card."),
 			] : []),
@@ -226,7 +227,7 @@ function formatSchedule(schedule: IAutomationSchedule): string {
 			return localize(
 				'automationsAccessibleView.weekly',
 				"{0} at {1}",
-				DAYS_OF_WEEK[((localSchedule.scheduleDay % 7) + 7) % 7],
+				getAutomationScheduleDays(localSchedule).map(day => DAYS_OF_WEEK[((day % 7) + 7) % 7]).join(', '),
 				time,
 			);
 	}

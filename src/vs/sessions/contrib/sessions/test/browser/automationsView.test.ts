@@ -1524,6 +1524,19 @@ suite('AutomationsCardsWidget', () => {
 		});
 	});
 
+	test('renders weekly selected days consistently in visible, ARIA and accessible summaries', () => {
+		const { automationService, widget } = setup();
+		const item = automation({ schedule: { interval: 'weekly', scheduleHour: 9, scheduleMinute: 0, scheduleDay: 1, scheduleDays: [1, 3, 5] } });
+		const time = new Date(Date.UTC(2000, 0, 1, 9, 0)).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit', timeZone: 'UTC' });
+		const expected = `Monday, Wednesday, Friday at ${time}`;
+		automationService.setAutomations([item]);
+		assert.deepStrictEqual({
+			card: widget.element.querySelector('.automations-card-schedule')?.textContent,
+			aria: widget.element.querySelector('.automations-card')?.getAttribute('aria-label'),
+			accessible: buildAutomationsAccessibleContent([item], [], 'ready').includes(`Schedule: ${expected}`),
+		}, { card: expected, aria: `${item.name} — ${expected}`, accessible: true });
+	});
+
 	test('renders weekdays consistently in visible, ARIA and accessible summaries', () => {
 		const { automationService, widget } = setup();
 		const item = automation({ schedule: { interval: 'weekdays', scheduleHour: 13, scheduleMinute: 5, scheduleDay: 6 } });
