@@ -572,11 +572,13 @@ suite('Automation dialog creation', () => {
 	});
 
 	test('empty weekly selection blocks saving and recovers when a day is selected', async () => {
-		const dialog = openDialog({ initialValues: {
-			name: 'Review', prompt: 'Review changes',
-			target: { kind: 'quickChat', providerId: 'host', sessionTypeId: 'copilotcli' },
-			schedule: { interval: 'weekly', scheduleHour: 9, scheduleMinute: 0, scheduleDay: 1 },
-		} });
+		const dialog = openDialog({
+			initialValues: {
+				name: 'Review', prompt: 'Review changes',
+				target: { kind: 'quickChat', providerId: 'host', sessionTypeId: 'copilotcli' },
+				schedule: { interval: 'weekly', scheduleHour: 9, scheduleMinute: 0, scheduleDay: 1 },
+			}
+		});
 		const button = dialog.container.querySelector<HTMLElement>('.automation-form-days-button')!;
 		button.click();
 		const row = () => [...dialog.container.querySelectorAll<HTMLElement>('[role="menuitemcheckbox"]')].find(row => row.textContent?.includes('Monday'))!;
@@ -596,11 +598,13 @@ suite('Automation dialog creation', () => {
 
 	test('weekly menu keyboard toggles do not submit the dialog and Escape restores the trigger', async () => {
 		let commits = 0;
-		const dialog = openDialog({ initialValues: {
-			name: 'Review', prompt: 'Review changes',
-			target: { kind: 'quickChat', providerId: 'host', sessionTypeId: 'copilotcli' },
-			schedule: { interval: 'weekly', scheduleHour: 9, scheduleMinute: 0, scheduleDay: 1 },
-		}, commit: async () => { commits++; } });
+		const dialog = openDialog({
+			initialValues: {
+				name: 'Review', prompt: 'Review changes',
+				target: { kind: 'quickChat', providerId: 'host', sessionTypeId: 'copilotcli' },
+				schedule: { interval: 'weekly', scheduleHour: 9, scheduleMinute: 0, scheduleDay: 1 },
+			}, commit: async () => { commits++; }
+		});
 		const button = dialog.container.querySelector<HTMLElement>('.automation-form-days-button')!;
 		button.click();
 		const menu = dialog.container.querySelector<HTMLElement>('[role="menu"]')!;

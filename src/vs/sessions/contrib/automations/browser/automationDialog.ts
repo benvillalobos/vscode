@@ -2392,11 +2392,11 @@ export function updateSaveButtonState(
 			? localize('automation.form.daysRequired', "Select at least one day of the week.")
 			: utcSchedule && state.interval === 'weekly' && (state.days?.length ?? 1) > 1
 				? localize('automation.form.cloudMultipleDays', "Cloud automations support only one day per weekly schedule. Select one day or run locally.")
-		: utcSchedule && state.interval === 'weekdays'
-			? localize('automation.form.cloudWeekdays', "Weekdays is only available for local automations. Choose a supported schedule for Cloud.")
-			: utcSchedule && (state.interval === 'daily' || state.interval === 'weekly') && utcSchedule.scheduleMinute % 15 !== 0
-				? localize('automation.form.cloudScheduleMinute', "Choose a time that corresponds to minute 00, 15, 30, or 45 in UTC.")
-				: undefined;
+				: utcSchedule && state.interval === 'weekdays'
+					? localize('automation.form.cloudWeekdays', "Weekdays is only available for local automations. Choose a supported schedule for Cloud.")
+					: utcSchedule && (state.interval === 'daily' || state.interval === 'weekly') && utcSchedule.scheduleMinute % 15 !== 0
+						? localize('automation.form.cloudScheduleMinute', "Choose a time that corresponds to minute 00, 15, 30, or 45 in UTC.")
+						: undefined;
 	const valid = !validation.nameError && !validation.promptError && !validation.folderError && !validation.sessionTypeError && !validation.branchError && !validation.scheduleError;
 	if (saveButton) {
 		saveButton.enabled = valid && !state.targetPending;
