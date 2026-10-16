@@ -566,12 +566,12 @@ suite('Automation dialog creation', () => {
 			initial, label, schedule: result?.value.schedule,
 		}, {
 			initial: ['false', 'true', 'false', 'true', 'false', 'true', 'false'],
-			label: 'Days of week: Monday, Friday, Saturday',
+			label: 'Day of week: Monday, Friday, Saturday',
 			schedule: { ...schedule, scheduleDays: [1, 5, 6] },
 		});
 	});
 
-	test('empty weekly selection blocks saving and recovers when a day is selected', async () => {
+	test('weekly picker keeps one day selected, summarizes counts and toggles closed from its trigger', async () => {
 		const dialog = openDialog({
 			initialValues: {
 				name: 'Review', prompt: 'Review changes',
@@ -580,20 +580,48 @@ suite('Automation dialog creation', () => {
 			}
 		});
 		const button = dialog.container.querySelector<HTMLElement>('.automation-form-days-button')!;
-		button.click();
-		const row = () => [...dialog.container.querySelectorAll<HTMLElement>('[role="menuitemcheckbox"]')].find(row => row.textContent?.includes('Monday'))!;
-		row().click();
-		const invalid = {
-			disabled: dialog.saveButton.getAttribute('aria-disabled'),
-			error: dialog.container.querySelector('.automation-form-content > .automation-target-error')?.textContent,
-			aria: button.getAttribute('aria-invalid'),
+		const text = () => button.textContent?.trim();
+		const clickTrigger = () => {
+			button.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+			button.click();
 		};
-		row().click();
+		clickTrigger();
+		const row = (label: string) => [...dialog.container.querySelectorAll<HTMLElement>('[role="menuitemcheckbox"]')].find(row => row.textContent?.includes(label))!;
+		const headers = dialog.container.querySelectorAll('.group-header').length;
+		row('Monday').click();
+		const single = { text: text(), checked: row('Monday').getAttribute('aria-checked') };
+		row('Wednesday').click();
+		const multiple = text();
+		clickTrigger();
+		const closed = !dialog.container.querySelector('[role="menu"]');
 		dialog.saveButton.click();
-		assert.deepStrictEqual({ invalid, schedule: (await dialog.result)?.value.schedule }, {
-			invalid: { disabled: 'true', error: 'Select at least one day of the week.', aria: 'true' },
-			schedule: { interval: 'weekly', scheduleHour: 9, scheduleMinute: 0, scheduleDay: 1 },
+		assert.deepStrictEqual({ headers, single, multiple, closed, schedule: (await dialog.result)?.value.schedule }, {
+			headers: 0,
+			single: { text: 'Monday', checked: 'true' },
+			multiple: '2 days selected',
+			closed: true,
+			schedule: { interval: 'weekly', scheduleHour: 9, scheduleMinute: 0, scheduleDay: 1, scheduleDays: [1, 3] },
 		});
+	});
+
+	test('choosing Weekly for a new automation expands Day of week with Monday selected', async () => {
+		const dialog = openDialog({
+			initialValues: {
+				name: 'Review', prompt: 'Review changes', target: { kind: 'quickChat', providerId: 'host', sessionTypeId: 'copilotcli' },
+				schedule: { interval: 'daily', scheduleHour: 9, scheduleMinute: 0, scheduleDay: 1 },
+			},
+		});
+		const interval = dialog.container.querySelector<HTMLSelectElement>('select[aria-label="Schedule"]')!;
+		interval.selectedIndex = Array.from(interval.options).findIndex(option => option.textContent === 'Weekly');
+		interval.dispatchEvent(new (DOM.getWindow(interval).Event)('change', { bubbles: true }));
+		await timeout(0);
+		const checked = [...dialog.container.querySelectorAll<HTMLElement>('[role="menuitemcheckbox"][aria-checked="true"]')].map(row => row.textContent?.trim());
+		const button = dialog.container.querySelector<HTMLElement>('.automation-form-days-button')!;
+		assert.deepStrictEqual({
+			checked, expanded: button.getAttribute('aria-expanded'), label: dialog.container.querySelector('.automation-form-day-group .automation-form-label')?.textContent,
+		}, { checked: ['Monday'], expanded: 'true', label: 'Day of week' });
+		dialog.cancelButton.click();
+		await dialog.result;
 	});
 
 	test('weekly menu keyboard toggles do not submit the dialog and Escape restores the trigger', async () => {
@@ -615,7 +643,7 @@ suite('Automation dialog creation', () => {
 		assert.deepStrictEqual({
 			commits, label: button.getAttribute('aria-label'), expanded: button.getAttribute('aria-expanded'),
 			focused: document.activeElement === button, dialogOpen: !!dialog.container.querySelector('.automation-form'),
-		}, { commits: 0, label: 'Days of week: Sunday, Monday', expanded: 'false', focused: true, dialogOpen: true });
+		}, { commits: 0, label: 'Day of week: Sunday, Monday', expanded: 'false', focused: true, dialogOpen: true });
 		dialog.cancelButton.click();
 		assert.strictEqual(await dialog.result, undefined);
 	});
@@ -659,7 +687,7 @@ suite('Automation dialog creation', () => {
 					utcLabel: dialog.container.textContent?.includes('Time (UTC)'),
 				}, {
 					time: `${hour12}:${String(local.scheduleMinute).padStart(2, '0')} ${local.scheduleHour < 12 ? 'AM' : 'PM'}`,
-					day: `Days of week: ${['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][local.scheduleDay]}`, label: 'Time (Local)', utcLabel: false,
+					day: `Day of week: ${['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][local.scheduleDay]}`, label: 'Time (Local)', utcLabel: false,
 				});
 				dialog.saveButton.click();
 				const result = await dialog.result;

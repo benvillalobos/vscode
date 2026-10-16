@@ -776,11 +776,10 @@
 	height: 26px;
 	padding: var(--vscode-spacing-size20) var(--vscode-spacing-size80);
 	justify-content: flex-start;
-	border: var(--vscode-strokeThickness) solid var(--vscode-dropdown-border);
+	text-align: start;
 	border-radius: var(--vscode-cornerRadius-small);
-	background-color: var(--vscode-dropdown-background);
-	color: var(--vscode-dropdown-foreground);
 	font-size: var(--vscode-fontSize-label1);
+	user-select: none;
 }
 
 .automation-form-days-button > span:not(.codicon) {

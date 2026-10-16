@@ -4,6 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import * as dom from '../../../base/browser/dom.js';
+import { status } from '../../../base/browser/ui/aria/aria.js';
 import { Codicon } from '../../../base/common/codicons.js';
 import { BugIndicatingError } from '../../../base/common/errors.js';
 import { Emitter } from '../../../base/common/event.js';
@@ -24,7 +25,8 @@ export interface IMultiSelectDropdownItem {
 }
 
 export interface IMultiSelectDropdownSection {
-	readonly label: string;
+	/** Omit to render the section without a header. */
+	readonly label?: string;
 	readonly items: readonly IMultiSelectDropdownItem[];
 }
 
@@ -39,6 +41,10 @@ export interface IMultiSelectDropdownOptions {
 	readonly width?: number;
 	/** Use a higher layer when opening inside another context view, such as a dialog. */
 	readonly contextViewLayer?: number;
+	/** Preferred side of the anchor. Defaults to below; the popup flips when it does not fit. */
+	readonly anchorPosition?: AnchorPosition;
+	/** Prevents clearing the last selected item. */
+	readonly requireSelection?: boolean;
 }
 
 /** An anchored, sectioned checkbox menu. Selection is immediate; dismissal never rolls it back. */
@@ -73,7 +79,7 @@ export class MultiSelectDropdown extends Disposable {
 		const selected = new Set(options.selectedIds);
 		const buildItems = (): IActionListItem<IMultiSelectDropdownItem>[] => options.sections.filter(section => section.items.length).flatMap((section, index) => [
 			...(index > 0 ? [{ kind: ActionListItemKind.Separator }] : []),
-			{ kind: ActionListItemKind.Header, label: section.label },
+			...(section.label ? [{ kind: ActionListItemKind.Header, label: section.label }] : []),
 			...section.items.map(item => ({
 				kind: ActionListItemKind.Action,
 				item,
@@ -87,6 +93,7 @@ export class MultiSelectDropdown extends Disposable {
 		const popup = new DisposableStore();
 		this.popup.value = popup;
 		let list: ActionList<IMultiSelectDropdownItem> | undefined;
+		const anchorPosition = options.anchorPosition ?? AnchorPosition.BELOW;
 		const expanded = options.anchor.getAttribute('aria-expanded');
 		const hasPopup = options.anchor.getAttribute('aria-haspopup');
 		options.anchor.setAttribute('aria-expanded', 'true');
@@ -102,7 +109,7 @@ export class MultiSelectDropdown extends Disposable {
 		}));
 		const view = this.contextViewService.showContextView({
 			getAnchor: () => options.anchor,
-			get anchorPosition() { return list?.anchorPosition ?? AnchorPosition.BELOW; },
+			get anchorPosition() { return list?.anchorPosition ?? anchorPosition; },
 			layer: options.contextViewLayer,
 			render: container => {
 				const store = new DisposableStore();
@@ -111,6 +118,10 @@ export class MultiSelectDropdown extends Disposable {
 					ActionList<IMultiSelectDropdownItem>, 'multiSelectDropdown', false, buildItems(), {
 					onHide: () => this.hide(),
 					onSelect: item => {
+						if (options.requireSelection && selected.size === 1 && selected.has(item.id)) {
+							status(localize('multiSelectDropdown.selectionRequired', "At least one item must remain selected."));
+							return;
+						}
 						if (selected.has(item.id)) {
 							selected.delete(item.id);
 						} else {
@@ -140,7 +151,7 @@ export class MultiSelectDropdown extends Disposable {
 					minWidth: options.width ?? 280,
 					maxWidth: options.width ?? 280,
 					hideDefaultKeybindingTooltip: true,
-					preferredAnchorPosition: AnchorPosition.BELOW,
+					preferredAnchorPosition: anchorPosition,
 				}, options.anchor,
 				));
 				if (list.filterContainer) {

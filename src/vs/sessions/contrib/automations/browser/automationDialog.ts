@@ -7,10 +7,10 @@ import * as DOM from '../../../../base/browser/dom.js';
 import { StandardKeyboardEvent } from '../../../../base/browser/keyboardEvent.js';
 import { status } from '../../../../base/browser/ui/aria/aria.js';
 import { HoverPosition } from '../../../../base/browser/ui/hover/hoverWidget.js';
-import { raceCancellationError, raceTimeout } from '../../../../base/common/async.js';
+import { disposableTimeout, raceCancellationError, raceTimeout } from '../../../../base/common/async.js';
 import { BaseActionViewItem, IBaseActionViewItemOptions } from '../../../../base/browser/ui/actionbar/actionViewItems.js';
 import { renderIcon } from '../../../../base/browser/ui/iconLabel/iconLabels.js';
-import { Button, IButton, unthemedButtonStyles } from '../../../../base/browser/ui/button/button.js';
+import { Button, IButton, IButtonOptions, unthemedButtonStyles } from '../../../../base/browser/ui/button/button.js';
 import { Checkbox } from '../../../../base/browser/ui/toggle/toggle.js';
 import { Switch } from '../../../../base/browser/ui/toggle/switch.js';
 import { InputBox } from '../../../../base/browser/ui/inputbox/inputBox.js';
@@ -51,7 +51,7 @@ import { IQuickInputService, IQuickTreeItem } from '../../../../platform/quickin
 import { IWorkspaceTrustRequestService } from '../../../../platform/workspace/common/workspaceTrust.js';
 import { defaultButtonStyles, defaultCheckboxStyles, defaultSelectBoxStyles, getInputBoxStyle } from '../../../../platform/theme/browser/defaultStyles.js';
 import { asCssVariable } from '../../../../platform/theme/common/colorUtils.js';
-import { selectBorder } from '../../../../platform/theme/common/colors/inputColors.js';
+import { selectBackground, selectBorder, selectForeground } from '../../../../platform/theme/common/colors/inputColors.js';
 import { hasNativeContextMenu } from '../../../../platform/window/common/window.js';
 import { IResolvedFolderWorkspace, IWorkspacePickerItem, WorkspacePicker } from '../../chat/browser/sessionWorkspacePicker.js';
 import { BranchPicker, IBranchPickerBranch, NEW_WORKTREE_LABEL } from '../../chat/browser/branchPicker.js';
@@ -93,6 +93,15 @@ const automationNameInputBoxStyles = getInputBoxStyle({
 	inputForeground: settingsTextInputForeground,
 	inputBorder: settingsTextInputBorder,
 });
+
+const dayButtonStyles: IButtonOptions = {
+	...defaultButtonStyles,
+	secondary: true,
+	buttonSecondaryBackground: asCssVariable(selectBackground),
+	buttonSecondaryHoverBackground: asCssVariable(selectBackground),
+	buttonSecondaryForeground: asCssVariable(selectForeground),
+	buttonSecondaryBorder: asCssVariable(selectBorder),
+};
 
 const INTERVALS: { readonly value: AutomationInterval; readonly label: string }[] = [
 	{ value: 'manual', label: localize('automation.interval.manual', "Manual") },
@@ -1160,40 +1169,58 @@ export function renderForm(
 	}));
 
 	const dayGroup = DOM.append(scheduleRow, $('.automation-form-schedule-group.automation-form-day-group'));
-	const daysLabel = localize('automation.form.days', "Days of week");
-	DOM.append(dayGroup, $('span.automation-form-label', undefined, daysLabel));
+	const dayLabel = localize('automation.form.day', "Day of week");
+	DOM.append(dayGroup, $('span.automation-form-label', undefined, dayLabel));
 	const daySelectContainer = DOM.append(dayGroup, $('.automation-form-schedule-select-container'));
-	const dayButton = disposables.add(new Button(daySelectContainer, { ...unthemedButtonStyles, supportIcons: true }));
+	const dayButton = disposables.add(new Button(daySelectContainer, { ...dayButtonStyles, supportIcons: true }));
 	dayButton.element.classList.add('automation-form-days-button');
 	dayButton.element.setAttribute('aria-haspopup', 'menu');
 	dayButton.element.setAttribute('aria-expanded', 'false');
-	const selectedDays = () => state.days ?? [state.day];
-	const daySummary = () => selectedDays().map(day => DAYS_OF_WEEK[day]).join(', ') || localize('automation.form.selectDays', "Select days");
+	const selectedDays = () => state.days?.length ? state.days : [state.day];
+	const dayNames = () => selectedDays().map(day => DAYS_OF_WEEK[day]).join(', ');
+	const daySummary = () => {
+		const days = selectedDays();
+		return days.length === 1 ? DAYS_OF_WEEK[days[0]] : localize('automation.form.daysSelected', "{0} days selected", days.length);
+	};
 	const updateDayButton = () => {
 		dayButton.label = `${daySummary()} $(chevron-down)`;
-		dayButton.element.setAttribute('aria-label', localize('automation.form.selectedDays', "Days of week: {0}", daySummary()));
+		dayButton.element.setAttribute('aria-label', localize('automation.form.selectedDay', "Day of week: {0}", dayNames()));
 	};
 	updateDayButton();
 	if (customizations) {
-		disposables.add(customizations.hoverService.setupDelayedHover(dayButton.element, () => ({ content: daySummary() })));
+		disposables.add(customizations.hoverService.setupDelayedHover(dayButton.element, () => ({ content: dayNames() })));
 	}
 	const dayDropdown = disposables.add(instantiationService.createInstance(MultiSelectDropdown));
+	const showDays = () => dayDropdown.show({
+		anchor: dayButton.element,
+		ariaLabel: dayLabel,
+		sections: [{ items: DAYS_OF_WEEK.map((label, day) => ({ id: String(day), label })) }],
+		selectedIds: selectedDays().map(String),
+		width: dayButton.element.offsetWidth || undefined,
+		contextViewLayer: 1,
+		anchorPosition: AnchorPosition.ABOVE,
+		requireSelection: true,
+	});
+	// The dropdown dismisses on pointer-down, so remember whether this click started while it was open.
+	let dayPointerDownWhileOpen = false;
+	disposables.add(DOM.addDisposableListener(DOM.getWindow(form), DOM.EventType.POINTER_DOWN, e => {
+		dayPointerDownWhileOpen = dayDropdown.isVisible && DOM.isHTMLElement(e.target) && DOM.isAncestor(e.target, dayButton.element);
+	}, true));
 	disposables.add(dayButton.onDidClick(() => {
-		dayDropdown.show({
-			anchor: dayButton.element,
-			ariaLabel: daysLabel,
-			sections: [{ label: daysLabel, items: DAYS_OF_WEEK.map((label, day) => ({ id: String(day), label })) }],
-			selectedIds: selectedDays().map(String),
-			contextViewLayer: 1,
-		});
+		if (dayPointerDownWhileOpen) {
+			dayPointerDownWhileOpen = false;
+			return;
+		}
+		showDays();
 	}));
 	disposables.add(dayDropdown.onDidChangeSelection(ids => {
 		state.days = ids.map(Number);
-		state.day = state.days[0] ?? state.day;
+		state.day = state.days[0];
 		state.scheduleChanged = true;
 		updateDayButton();
 		revalidate();
 	}));
+	const pendingDayExpansion = disposables.add(new MutableDisposable());
 	const scheduleError = DOM.append(formContent, $('span.automation-target-error', { id: 'automation-schedule-error', role: 'status', 'aria-live': 'polite' }));
 	DOM.hide(scheduleError);
 
@@ -1217,10 +1244,13 @@ export function renderForm(
 	};
 	applyIntervalVisibility();
 	disposables.add(intervalSelect.onDidSelect(e => {
+		const wasWeekly = state.interval === 'weekly';
 		state.interval = intervals[e.index].value;
 		state.scheduleChanged = true;
 		updateIntervalOptions(getProviderConfiguration(state.providerId) !== undefined);
 		revalidate();
+		// Wait for the Schedule select to close and restore focus before expanding the day picker.
+		pendingDayExpansion.value = state.interval === 'weekly' && !wasWeekly ? disposableTimeout(showDays) : undefined;
 	}));
 
 	// The execution mode constrains the harness before workspace selection.
@@ -2388,15 +2418,13 @@ export function updateSaveButtonState(
 	}, state.timezoneOffset) : undefined;
 	validation.scheduleError = state.scheduleChanged === false ? undefined : !INTERVALS.some(item => item.value === state.interval)
 		? localize('automation.form.scheduleRequired', "Choose a supported schedule.")
-		: state.interval === 'weekly' && state.days?.length === 0
-			? localize('automation.form.daysRequired', "Select at least one day of the week.")
-			: utcSchedule && state.interval === 'weekly' && (state.days?.length ?? 1) > 1
-				? localize('automation.form.cloudMultipleDays', "Cloud automations support only one day per weekly schedule. Select one day or run locally.")
-				: utcSchedule && state.interval === 'weekdays'
-					? localize('automation.form.cloudWeekdays', "Weekdays is only available for local automations. Choose a supported schedule for Cloud.")
-					: utcSchedule && (state.interval === 'daily' || state.interval === 'weekly') && utcSchedule.scheduleMinute % 15 !== 0
-						? localize('automation.form.cloudScheduleMinute', "Choose a time that corresponds to minute 00, 15, 30, or 45 in UTC.")
-						: undefined;
+		: utcSchedule && state.interval === 'weekly' && (state.days?.length ?? 1) > 1
+			? localize('automation.form.cloudMultipleDays', "Cloud automations support only one day per weekly schedule. Select one day or run locally.")
+			: utcSchedule && state.interval === 'weekdays'
+				? localize('automation.form.cloudWeekdays', "Weekdays is only available for local automations. Choose a supported schedule for Cloud.")
+				: utcSchedule && (state.interval === 'daily' || state.interval === 'weekly') && utcSchedule.scheduleMinute % 15 !== 0
+					? localize('automation.form.cloudScheduleMinute', "Choose a time that corresponds to minute 00, 15, 30, or 45 in UTC.")
+					: undefined;
 	const valid = !validation.nameError && !validation.promptError && !validation.folderError && !validation.sessionTypeError && !validation.branchError && !validation.scheduleError;
 	if (saveButton) {
 		saveButton.enabled = valid && !state.targetPending;

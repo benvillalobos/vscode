@@ -6,6 +6,7 @@
 import assert from 'assert';
 import * as dom from '../../../../base/browser/dom.js';
 import { Event } from '../../../../base/common/event.js';
+import { AnchorPosition } from '../../../../base/common/layout.js';
 import { toDisposable } from '../../../../base/common/lifecycle.js';
 import { mock } from '../../../../base/test/common/mock.js';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../base/test/common/utils.js';
@@ -84,6 +85,29 @@ suite('MultiSelectDropdown', () => {
 			label: 'Days', sections: ['Weekdays', 'Weekend'], checks: ['true', 'false', 'true', 'false'],
 			labels: ['Monday, Weekdays', 'Wednesday, Weekdays', 'Friday, Weekdays, disabled', 'Saturday, Weekend'],
 		});
+	});
+
+	test('optional headers, upward placement and required selection keep the last item checked', () => {
+		const anchor = dom.append(document.body, dom.$('button', { style: 'position: fixed; top: 50%; left: 0' }, 'Day'));
+		store.add(toDisposable(() => anchor.remove()));
+		const { container, dropdown, row, changes } = create({
+			anchor,
+			sections: [{ items: [{ id: 'mon', label: 'Monday' }, { id: 'wed', label: 'Wednesday' }] }],
+			selectedIds: ['mon'],
+			anchorPosition: AnchorPosition.ABOVE,
+			requireSelection: true,
+		});
+		row('Monday').click();
+		row('Wednesday').click();
+		row('Monday').click();
+		row('Wednesday').click();
+		assert.deepStrictEqual({
+			headers: container.querySelectorAll('.group-header').length,
+			above: container.querySelector('.context-view')?.classList.contains('top'),
+			changes,
+			checks: [row('Monday'), row('Wednesday')].map(row => row.getAttribute('aria-checked')),
+			visible: dropdown.isVisible,
+		}, { headers: 0, above: true, changes: [['mon', 'wed'], ['wed']], checks: ['false', 'true'], visible: true });
 	});
 
 	for (const modifier of ['shiftKey', 'ctrlKey', 'metaKey'] as const) {
