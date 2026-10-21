@@ -32,7 +32,7 @@ import { CHAT_AUTOMATIONS_ENABLED_SETTING, ChatAutomationsEnabledContext } from 
 import { IAutomationRunner } from '../../../../../workbench/contrib/chat/common/automations/automationRunner.js';
 import { type AutomationDialogCreateInitialValues, IAutomationDialogService } from '../../../../../workbench/contrib/chat/common/automations/automationDialogService.js';
 import { AUTOMATION_BLUEPRINT_FILE_SUFFIX, AutomationBlueprintParseError, automationToBlueprint, createAutomationBlueprintFileName, parseAutomationBlueprint, serializeAutomationBlueprint } from '../../../../../workbench/contrib/chat/common/automations/automationBlueprint.js';
-import { automationScheduleToLocal, DAYS_OF_WEEK, getAutomationScheduleDays } from '../../../../../workbench/contrib/chat/common/automations/schedule.js';
+import { automationScheduleToLocal, DAYS_OF_WEEK, DAYS_OF_WEEK_PLURAL, getAutomationScheduleDays } from '../../../../../workbench/contrib/chat/common/automations/schedule.js';
 import { IAgentPluginService } from '../../../../../workbench/contrib/chat/common/plugins/agentPluginService.js';
 import { AgentSessionApprovalModel } from '../../../../../workbench/contrib/chat/browser/agentSessions/agentSessionApprovalModel.js';
 import { IChatService } from '../../../../../workbench/contrib/chat/common/chatService/chatService.js';
@@ -2019,7 +2019,11 @@ function formatSchedule(schedule: IAutomationSchedule): string {
 		case 'hourly': return localize('scheduleHourly', "Hourly");
 		case 'daily': return localize('scheduleDailyAt', "Daily at {0}", time);
 		case 'weekdays': return localize('scheduleWeekdaysAt', "Weekdays at {0}", time);
-		case 'weekly': return localize('scheduleWeeklyAt', "{0} at {1}", formatWeeklyDays(localSchedule), time);
+		case 'weekly': {
+			const days = getAutomationScheduleDays(localSchedule).map(normalizeWeekday);
+			const label = days.length === 1 ? DAYS_OF_WEEK_PLURAL[days[0]] : formatWeeklyDays(localSchedule);
+			return localize('scheduleWeeklyAt', "{0} at {1}", label, time);
+		}
 		case 'manual': return localize('scheduleManual', "Manual");
 		case 'custom': return localize('scheduleCustom', "Custom schedule");
 		default: return localize('scheduleManual', "Manual");
@@ -2049,19 +2053,21 @@ const WEEKDAY_GLYPH_LETTERS: readonly string[] = [
 ];
 
 /**
- * Renders a schedule summary. Weekly schedules show a Monday-first strip of day squares, where only
- * scheduled days are filled and lettered, followed by the time.
+ * Renders a schedule summary. Single-day weekly schedules use a plural weekday label. Multi-day
+ * schedules show a Monday-first letter strip, outlining the scheduled days.
  */
 function renderScheduleSummary(schedule: IAutomationSchedule, labelClass: string): HTMLElement[] {
 	const localSchedule = automationScheduleToLocal(schedule);
 	if (localSchedule.interval !== 'weekly') {
 		return [$(`span.${labelClass}`, undefined, formatSchedule(schedule))];
 	}
-	const days = new Set(getAutomationScheduleDays(localSchedule).map(normalizeWeekday));
+	const scheduleDays = getAutomationScheduleDays(localSchedule).map(normalizeWeekday);
+	if (scheduleDays.length === 1) {
+		return [$(`span.${labelClass}`, undefined, formatSchedule(schedule))];
+	}
+	const days = new Set(scheduleDays);
 	const strip = $('span.automations-weekday-glyphs', { role: 'img', 'aria-label': formatWeeklyDays(localSchedule) },
-		...WEEKDAY_GLYPH_ORDER.map(day => days.has(day)
-			? $('span.automations-weekday-glyph.active', undefined, WEEKDAY_GLYPH_LETTERS[day])
-			: $('span.automations-weekday-glyph')));
+		...WEEKDAY_GLYPH_ORDER.map(day => $(`span.automations-weekday-glyph${days.has(day) ? '.active' : ''}`, undefined, WEEKDAY_GLYPH_LETTERS[day])));
 	const time = formatHourMinute(localSchedule.scheduleHour, localSchedule.scheduleMinute);
 	return [strip, $(`span.${labelClass}`, undefined, localize('scheduleWeeklyTime', "at {0}", time))];
 }

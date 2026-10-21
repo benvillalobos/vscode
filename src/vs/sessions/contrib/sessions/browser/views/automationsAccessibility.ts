@@ -11,7 +11,7 @@ import { ServicesAccessor } from '../../../../../platform/instantiation/common/i
 import { AccessibilityVerbositySettingId } from '../../../../../workbench/contrib/accessibility/browser/accessibilityConfiguration.js';
 import { IAutomationDescriptor, IAutomationRun, IAutomationSchedule } from '../../../../../workbench/contrib/chat/common/automations/automation.js';
 import { AutomationCatalogueState, type IAutomationProviderDescriptor, IAutomationService } from '../../../../../workbench/contrib/chat/common/automations/automationService.js';
-import { automationScheduleToLocal, DAYS_OF_WEEK, getAutomationScheduleDays } from '../../../../../workbench/contrib/chat/common/automations/schedule.js';
+import { automationScheduleToLocal, DAYS_OF_WEEK, DAYS_OF_WEEK_PLURAL, getAutomationScheduleDays } from '../../../../../workbench/contrib/chat/common/automations/schedule.js';
 import { IAgentPluginService } from '../../../../../workbench/contrib/chat/common/plugins/agentPluginService.js';
 import { IChatService } from '../../../../../workbench/contrib/chat/common/chatService/chatService.js';
 import { IChatModel } from '../../../../../workbench/contrib/chat/common/model/chatModel.js';
@@ -223,13 +223,15 @@ function formatSchedule(schedule: IAutomationSchedule): string {
 			return localize('automationsAccessibleView.daily', "Daily at {0}", time);
 		case 'weekdays':
 			return localize('automationsAccessibleView.weekdays', "Weekdays at {0}", time);
-		case 'weekly':
+		case 'weekly': {
+			const days = getAutomationScheduleDays(localSchedule).map(day => ((day % 7) + 7) % 7);
 			return localize(
 				'automationsAccessibleView.weekly',
 				"{0} at {1}",
-				getAutomationScheduleDays(localSchedule).map(day => DAYS_OF_WEEK[((day % 7) + 7) % 7]).join(', '),
+				days.length === 1 ? DAYS_OF_WEEK_PLURAL[days[0]] : days.map(day => DAYS_OF_WEEK[day]).join(', '),
 				time,
 			);
+		}
 	}
 }
 

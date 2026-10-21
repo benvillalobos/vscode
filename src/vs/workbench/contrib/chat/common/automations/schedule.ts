@@ -69,3 +69,13 @@ export const DAYS_OF_WEEK: readonly string[] = [
 	localize('automation.day.fri', "Friday"),
 	localize('automation.day.sat', "Saturday"),
 ];
+
+export const DAYS_OF_WEEK_PLURAL: readonly string[] = [
+	localize('automation.day.sun.plural', "Sundays"),
+	localize('automation.day.mon.plural', "Mondays"),
+	localize('automation.day.tue.plural', "Tuesdays"),
+	localize('automation.day.wed.plural', "Wednesdays"),
+	localize('automation.day.thu.plural', "Thursdays"),
+	localize('automation.day.fri.plural', "Fridays"),
+	localize('automation.day.sat.plural', "Saturdays"),
+];

@@ -618,7 +618,7 @@
 	text-overflow: ellipsis;
 }
 
-/* Weekly day strip: filled, lettered squares for scheduled days; dim outlines for the rest. */
+/* Weekly day strip: all days remain readable; scheduled days receive a neutral outline. */
 .automations-weekday-glyphs {
 	display: inline-flex;
 	flex-shrink: 0;
@@ -632,19 +632,15 @@
 	box-sizing: border-box;
 	width: 16px;
 	height: 16px;
-	border: var(--vscode-strokeThickness) solid var(--vscode-descriptionForeground);
+	border: var(--vscode-strokeThickness) solid transparent;
 	border-radius: var(--vscode-cornerRadius-xSmall);
 	font-size: var(--vscode-fontSize-label3);
-	font-weight: var(--vscode-fontWeight-semiBold);
+	font-weight: var(--vscode-fontWeight-regular);
 	line-height: 1;
-	opacity: 0.4;
 }
 
 .automations-weekday-glyph.active {
-	border-color: var(--vscode-contrastBorder, transparent);
-	background-color: var(--vscode-toolbar-hoverBackground);
-	color: var(--vscode-foreground);
-	opacity: 1;
+	border-color: currentColor;
 }
 
 /* Run History */
