@@ -1530,11 +1530,31 @@ suite('AutomationsCardsWidget', () => {
 		const time = new Date(Date.UTC(2000, 0, 1, 9, 0)).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit', timeZone: 'UTC' });
 		const expected = `Monday, Wednesday, Friday at ${time}`;
 		automationService.setAutomations([item]);
+		const schedule = widget.element.querySelector('.automations-card-schedule');
 		assert.deepStrictEqual({
-			card: widget.element.querySelector('.automations-card-schedule')?.textContent,
+			glyphs: [...schedule!.querySelectorAll('.automations-weekday-glyph')].map(glyph => ({
+				text: glyph.textContent,
+				active: glyph.classList.contains('active'),
+			})),
+			glyphLabel: schedule!.querySelector('.automations-weekday-glyphs')?.getAttribute('aria-label'),
+			time: schedule!.querySelector('.automations-card-meta-label')?.textContent,
 			aria: widget.element.querySelector('.automations-card')?.getAttribute('aria-label'),
 			accessible: buildAutomationsAccessibleContent([item], [], 'ready').includes(`Schedule: ${expected}`),
-		}, { card: expected, aria: `${item.name} — ${expected}`, accessible: true });
+		}, {
+			glyphs: [
+				{ text: 'M', active: true },
+				{ text: '', active: false },
+				{ text: 'W', active: true },
+				{ text: '', active: false },
+				{ text: 'F', active: true },
+				{ text: '', active: false },
+				{ text: '', active: false },
+			],
+			glyphLabel: 'Monday, Wednesday, Friday',
+			time: `at ${time}`,
+			aria: `${item.name} — ${expected}`,
+			accessible: true,
+		});
 	});
 
 	test('renders weekdays consistently in visible, ARIA and accessible summaries', () => {
@@ -1560,12 +1580,20 @@ suite('AutomationsCardsWidget', () => {
 			const expected = `${interval === 'daily' ? 'Daily' : DAYS_OF_WEEK[local.scheduleDay]} at ${time}`;
 			automationService.setAutomations([item]);
 			const accessible = buildAutomationsAccessibleContent([item], [], 'ready');
+			const schedule = widget.element.querySelector('.automations-card-schedule');
 			assert.deepStrictEqual({
-				card: widget.element.querySelector('.automations-card-schedule')?.textContent,
+				card: interval === 'daily' ? schedule?.textContent : schedule?.querySelector('.automations-card-meta-label')?.textContent,
+				glyphLabel: schedule?.querySelector('.automations-weekday-glyphs')?.getAttribute('aria-label'),
 				accessible: accessible.includes(`Schedule: ${expected}`),
 				canonicalHour: item.schedule.scheduleHour,
 				canonicalZone: item.schedule.timeZone,
-			}, { card: expected, accessible: true, canonicalHour: 2, canonicalZone: 'UTC' });
+			}, {
+				card: interval === 'daily' ? expected : `at ${time}`,
+				glyphLabel: interval === 'daily' ? undefined : DAYS_OF_WEEK[local.scheduleDay],
+				accessible: true,
+				canonicalHour: 2,
+				canonicalZone: 'UTC',
+			});
 		});
 	}
 

@@ -7,7 +7,7 @@ import * as DOM from '../../../../base/browser/dom.js';
 import { StandardKeyboardEvent } from '../../../../base/browser/keyboardEvent.js';
 import { status } from '../../../../base/browser/ui/aria/aria.js';
 import { HoverPosition } from '../../../../base/browser/ui/hover/hoverWidget.js';
-import { disposableTimeout, raceCancellationError, raceTimeout } from '../../../../base/common/async.js';
+import { raceCancellationError, raceTimeout } from '../../../../base/common/async.js';
 import { BaseActionViewItem, IBaseActionViewItemOptions } from '../../../../base/browser/ui/actionbar/actionViewItems.js';
 import { renderIcon } from '../../../../base/browser/ui/iconLabel/iconLabels.js';
 import { Button, IButton, IButtonOptions, unthemedButtonStyles } from '../../../../base/browser/ui/button/button.js';
@@ -1220,7 +1220,6 @@ export function renderForm(
 		updateDayButton();
 		revalidate();
 	}));
-	const pendingDayExpansion = disposables.add(new MutableDisposable());
 	const scheduleError = DOM.append(formContent, $('span.automation-target-error', { id: 'automation-schedule-error', role: 'status', 'aria-live': 'polite' }));
 	DOM.hide(scheduleError);
 
@@ -1244,13 +1243,10 @@ export function renderForm(
 	};
 	applyIntervalVisibility();
 	disposables.add(intervalSelect.onDidSelect(e => {
-		const wasWeekly = state.interval === 'weekly';
 		state.interval = intervals[e.index].value;
 		state.scheduleChanged = true;
 		updateIntervalOptions(getProviderConfiguration(state.providerId) !== undefined);
 		revalidate();
-		// Wait for the Schedule select to close and restore focus before expanding the day picker.
-		pendingDayExpansion.value = state.interval === 'weekly' && !wasWeekly ? disposableTimeout(showDays) : undefined;
 	}));
 
 	// The execution mode constrains the harness before workspace selection.

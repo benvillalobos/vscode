@@ -604,7 +604,7 @@ suite('Automation dialog creation', () => {
 		});
 	});
 
-	test('choosing Weekly for a new automation expands Day of week with Monday selected', async () => {
+	test('choosing Weekly for a new automation selects Monday without opening Day of week', async () => {
 		const dialog = openDialog({
 			initialValues: {
 				name: 'Review', prompt: 'Review changes', target: { kind: 'quickChat', providerId: 'host', sessionTypeId: 'copilotcli' },
@@ -615,11 +615,13 @@ suite('Automation dialog creation', () => {
 		interval.selectedIndex = Array.from(interval.options).findIndex(option => option.textContent === 'Weekly');
 		interval.dispatchEvent(new (DOM.getWindow(interval).Event)('change', { bubbles: true }));
 		await timeout(0);
-		const checked = [...dialog.container.querySelectorAll<HTMLElement>('[role="menuitemcheckbox"][aria-checked="true"]')].map(row => row.textContent?.trim());
 		const button = dialog.container.querySelector<HTMLElement>('.automation-form-days-button')!;
 		assert.deepStrictEqual({
-			checked, expanded: button.getAttribute('aria-expanded'), label: dialog.container.querySelector('.automation-form-day-group .automation-form-label')?.textContent,
-		}, { checked: ['Monday'], expanded: 'true', label: 'Day of week' });
+			menu: !!dialog.container.querySelector('[role="menu"]'),
+			expanded: button.getAttribute('aria-expanded'),
+			text: button.textContent?.trim(),
+			label: dialog.container.querySelector('.automation-form-day-group .automation-form-label')?.textContent,
+		}, { menu: false, expanded: 'false', text: 'Monday', label: 'Day of week' });
 		dialog.cancelButton.click();
 		await dialog.result;
 	});

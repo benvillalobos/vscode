@@ -752,7 +752,7 @@ class AutomationCardsSection extends Disposable {
 			const icon = !automation.enabled ? Codicon.circleSlash : automation.schedule.interval === 'manual' ? Codicon.person : Codicon.clockface;
 			DOM.reset(card.scheduleEl,
 				$('span' + ThemeIcon.asCSSSelector(icon), { 'aria-hidden': 'true' }),
-				$('span.automations-card-meta-label', undefined, schedule));
+				...(automation.enabled ? renderScheduleSummary(automation.schedule, 'automations-card-meta-label') : [$('span.automations-card-meta-label', undefined, schedule)]));
 		}
 
 		const folderLabel = automation.targetDisplay?.label ?? getAutomationTargetLabel(automation.target);
@@ -1086,7 +1086,7 @@ class AutomationCardsSection extends Disposable {
 		this.templateDisposables.add(this.hoverService.setupDelayedHover(description, { content: template.prompt }));
 		card.setAttribute('aria-describedby', description.id);
 		const scheduleElement = DOM.append(card, $('span.automations-template-card-schedule'));
-		scheduleElement.textContent = schedule;
+		DOM.reset(scheduleElement, ...renderScheduleSummary(template.schedule, 'automations-template-card-schedule-label'));
 
 		this.templateDisposables.add(DOM.addDisposableListener(card, DOM.EventType.CLICK, () => {
 			void this.openCreateDialog({
@@ -2019,14 +2019,51 @@ function formatSchedule(schedule: IAutomationSchedule): string {
 		case 'hourly': return localize('scheduleHourly', "Hourly");
 		case 'daily': return localize('scheduleDailyAt', "Daily at {0}", time);
 		case 'weekdays': return localize('scheduleWeekdaysAt', "Weekdays at {0}", time);
-		case 'weekly': {
-			const day = getAutomationScheduleDays(localSchedule).map(day => DAYS_OF_WEEK[((day % 7) + 7) % 7]).join(', ');
-			return localize('scheduleWeeklyAt', "{0} at {1}", day, time);
-		}
+		case 'weekly': return localize('scheduleWeeklyAt', "{0} at {1}", formatWeeklyDays(localSchedule), time);
 		case 'manual': return localize('scheduleManual', "Manual");
 		case 'custom': return localize('scheduleCustom', "Custom schedule");
 		default: return localize('scheduleManual', "Manual");
 	}
+}
+
+function formatWeeklyDays(localSchedule: IAutomationSchedule): string {
+	return getAutomationScheduleDays(localSchedule).map(day => DAYS_OF_WEEK[normalizeWeekday(day)]).join(', ');
+}
+
+function normalizeWeekday(day: number): number {
+	return ((day % 7) + 7) % 7;
+}
+
+/** Monday-first display order for the weekly day strip. */
+const WEEKDAY_GLYPH_ORDER: readonly number[] = [1, 2, 3, 4, 5, 6, 0];
+
+/** One- or two-letter weekday glyphs indexed by day, Sunday first. */
+const WEEKDAY_GLYPH_LETTERS: readonly string[] = [
+	localize({ key: 'weekdayGlyph.sunday', comment: ['Very short abbreviation for Sunday shown inside a small square'] }, "S"),
+	localize({ key: 'weekdayGlyph.monday', comment: ['Very short abbreviation for Monday shown inside a small square'] }, "M"),
+	localize({ key: 'weekdayGlyph.tuesday', comment: ['Very short abbreviation for Tuesday shown inside a small square'] }, "T"),
+	localize({ key: 'weekdayGlyph.wednesday', comment: ['Very short abbreviation for Wednesday shown inside a small square'] }, "W"),
+	localize({ key: 'weekdayGlyph.thursday', comment: ['Very short abbreviation for Thursday shown inside a small square'] }, "Th"),
+	localize({ key: 'weekdayGlyph.friday', comment: ['Very short abbreviation for Friday shown inside a small square'] }, "F"),
+	localize({ key: 'weekdayGlyph.saturday', comment: ['Very short abbreviation for Saturday shown inside a small square'] }, "S"),
+];
+
+/**
+ * Renders a schedule summary. Weekly schedules show a Monday-first strip of day squares, where only
+ * scheduled days are filled and lettered, followed by the time.
+ */
+function renderScheduleSummary(schedule: IAutomationSchedule, labelClass: string): HTMLElement[] {
+	const localSchedule = automationScheduleToLocal(schedule);
+	if (localSchedule.interval !== 'weekly') {
+		return [$(`span.${labelClass}`, undefined, formatSchedule(schedule))];
+	}
+	const days = new Set(getAutomationScheduleDays(localSchedule).map(normalizeWeekday));
+	const strip = $('span.automations-weekday-glyphs', { role: 'img', 'aria-label': formatWeeklyDays(localSchedule) },
+		...WEEKDAY_GLYPH_ORDER.map(day => days.has(day)
+			? $('span.automations-weekday-glyph.active', undefined, WEEKDAY_GLYPH_LETTERS[day])
+			: $('span.automations-weekday-glyph')));
+	const time = formatHourMinute(localSchedule.scheduleHour, localSchedule.scheduleMinute);
+	return [strip, $(`span.${labelClass}`, undefined, localize('scheduleWeeklyTime', "at {0}", time))];
 }
 
 function formatHourMinute(hour: number, minute: number): string {
