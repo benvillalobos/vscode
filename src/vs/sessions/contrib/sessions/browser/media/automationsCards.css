@@ -642,8 +642,8 @@
 
 .automations-weekday-glyph.active {
 	border-color: var(--vscode-contrastBorder, transparent);
-	background-color: var(--vscode-badge-background);
-	color: var(--vscode-badge-foreground);
+	background-color: var(--vscode-toolbar-hoverBackground);
+	color: var(--vscode-foreground);
 	opacity: 1;
 }
 
