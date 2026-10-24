@@ -22,11 +22,12 @@ import { ExternalSessionBanner, getExternalSessionBannerSelectedMode, getExterna
 suite('Sessions - External Session Banner', () => {
 	const disposables = ensureNoDisposablesAreLeakedInTestSuite();
 
-	function externalSession(sessionType: string): ISession {
+	function externalSession(sessionType: string, isAutomation?: ISession['isAutomation']): ISession {
 		return new class extends mock<ISession>() {
 			override readonly resource = URI.parse(`test://${sessionType}`);
 			override readonly sessionType = sessionType;
 			override readonly isExternal = constObservable(true);
+			override readonly isAutomation = isAutomation;
 			override readonly updatedAt = constObservable(new Date());
 		};
 	}
@@ -164,6 +165,40 @@ suite('Sessions - External Session Banner', () => {
 			before: { visible: true, hidden: false },
 			after: { visible: false, hidden: true },
 			layoutChanges: [true, false],
+		});
+	});
+
+	test('hides external automation sessions, including after automation hydration', () => {
+		const instantiationService = workbenchInstantiationService(undefined, disposables);
+		const layoutChanges: boolean[] = [];
+		const banner = disposables.add(instantiationService.createInstance(ExternalSessionBanner, $('div'), {
+			onDidChangeLayout: visible => layoutChanges.push(visible),
+		}));
+		const isAutomation = observableValue('automation', false);
+		const snapshot = () => ({ visible: banner.visible, hidden: banner.domNode.classList.contains('hidden') });
+
+		layoutChanges.length = 0;
+		banner.setSession(externalSession('ordinary'));
+		const ordinaryExternal = snapshot();
+		banner.setSession(externalSession('automation', constObservable(true)));
+		const explicitAutomation = snapshot();
+		banner.setSession(externalSession('hydrating-automation', isAutomation));
+		const beforeHydration = snapshot();
+		isAutomation.set(true, undefined);
+		const afterHydration = snapshot();
+
+		assert.deepStrictEqual({
+			ordinaryExternal,
+			explicitAutomation,
+			beforeHydration,
+			afterHydration,
+			layoutChanges,
+		}, {
+			ordinaryExternal: { visible: true, hidden: false },
+			explicitAutomation: { visible: false, hidden: true },
+			beforeHydration: { visible: true, hidden: false },
+			afterHydration: { visible: false, hidden: true },
+			layoutChanges: [true, false, true, false],
 		});
 	});
 
