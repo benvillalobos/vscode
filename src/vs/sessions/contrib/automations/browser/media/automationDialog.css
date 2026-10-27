@@ -110,7 +110,7 @@
 	--modern-ui-solid-dialog-background: var(--vscode-agentsPanel-background);
 }
 
-.monaco-workbench .monaco-dialog-box.automation-dialog:focus:not(:focus-visible) {
+.monaco-workbench .monaco-dialog-box.automation-dialog:focus {
 	outline: none;
 }
 
