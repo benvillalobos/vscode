@@ -18,7 +18,7 @@ import { Emitter, Event } from '../../../../../base/common/event.js';
 import { CancellationError, getErrorMessage } from '../../../../../base/common/errors.js';
 import { DisposableStore, toDisposable } from '../../../../../base/common/lifecycle.js';
 import { autorun, constObservable, IObservable, observableValue, transaction } from '../../../../../base/common/observable.js';
-import { isEqual } from '../../../../../base/common/resources.js';
+import { isEqual, joinPath } from '../../../../../base/common/resources.js';
 import { URI } from '../../../../../base/common/uri.js';
 import { mock, upcastPartial } from '../../../../../base/test/common/mock.js';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
@@ -68,8 +68,11 @@ import { MobileSessionTypePicker } from '../../../chat/browser/mobile/mobileSess
 import { SessionModelSelection } from '../../../chat/browser/sessionModelSelection.js';
 import { GITHUB_REMOTE_FILE_SCHEME, ISession, ISessionWorkspace, SessionTypeAuthRequirement } from '../../../../services/sessions/common/session.js';
 import { IAutomationSessionConfiguration, ISessionsProvider } from '../../../../services/sessions/common/sessionsProvider.js';
-import { ISessionsManagementService } from '../../../../services/sessions/common/sessionsManagement.js';
+import { ICreateNewSessionOptions, ISendRequestOptions, ISessionsManagementService } from '../../../../services/sessions/common/sessionsManagement.js';
 import { ISessionsProvidersService } from '../../../../services/sessions/browser/sessionsProvidersService.js';
+import { ISessionsService } from '../../../../services/sessions/browser/sessionsService.js';
+import { IPromptsService } from '../../../../../workbench/contrib/chat/common/promptSyntax/service/promptsService.js';
+import { BUILTIN_SKILLS_URI } from '../../../chat/browser/promptsService.js';
 import { AutomationDialogService } from '../../browser/automationDialogService.js';
 import { AutomationCustomizationSelection, AutomationIsolationGroupActionViewItem, AutomationSessionDraftSynchronizer, canSelectAutomationWorkspace, getAutomationDialogProviders, IFormState, IValidationState, isAutomationDialogPopupTarget, MobileAutomationsWorkspacePicker, registerAutomationDialogKeyboardNavigation, renderForm, shouldPassThroughAutomationDialogCommand, updateSaveButtonState } from '../../browser/automationDialog.js';
 import { AutomationInputCompletions } from '../../browser/automationInputCompletions.js';
@@ -81,7 +84,7 @@ const REPOSITORY = URI.from({ scheme: GITHUB_REMOTE_FILE_SCHEME, authority: 'git
 suite('Automation dialog creation', () => {
 	const disposables = ensureNoDisposablesAreLeakedInTestSuite();
 
-	function openDialog(options: IShowAutomationDialogOptions = {}, cloudConfigurationOrChoices?: IAutomationProviderConfiguration | IAutomationService['getCustomizationChoices'], sessionOverrides?: Partial<ISessionsManagementService>, repository?: IGitRepository, cloudCreatable = true, cloudEnabledAtOpen = true, canUpdate = true) {
+	function openDialog(options: IShowAutomationDialogOptions & { guided?: boolean } = {}, cloudConfigurationOrChoices?: IAutomationProviderConfiguration | IAutomationService['getCustomizationChoices'], sessionOverrides?: Partial<ISessionsManagementService>, repository?: IGitRepository, cloudCreatable = true, cloudEnabledAtOpen = true, canUpdate = true) {
 		const cloudConfiguration = typeof cloudConfigurationOrChoices === 'function' ? undefined : cloudConfigurationOrChoices;
 		const getCustomizationChoices = typeof cloudConfigurationOrChoices === 'function' ? cloudConfigurationOrChoices : undefined;
 		const configurationService = new TestConfigurationService();
@@ -98,6 +101,13 @@ suite('Automation dialog creation', () => {
 		instantiationService.stub(IQuickInputService, quickInputService);
 		instantiationService.stub(IChatSessionsService, upcastPartial<IChatSessionsService>({ getChatSessionContribution: () => undefined }));
 		instantiationService.stub(IChatEntitlementService, upcastPartial<IChatEntitlementService>({ entitlement: ChatEntitlement.Pro }));
+		const openedSessions: string[] = [];
+		instantiationService.stub(ISessionsService, upcastPartial<ISessionsService>({
+			openSession: async session => { openedSessions.push(session.sessionId); },
+		}));
+		instantiationService.stub(IPromptsService, upcastPartial<IPromptsService>({
+			listPromptFilesForStorage: async () => [{ uri: joinPath(BUILTIN_SKILLS_URI, 'automate', 'SKILL.md'), name: 'automate' }],
+		}));
 		instantiationService.stub(IGitService, upcastPartial<IGitService>({ openRepository: async () => repository }));
 		const types = [{
 			providerId: 'host',
@@ -207,15 +217,19 @@ suite('Automation dialog creation', () => {
 			layout: () => { },
 			dispose: () => { },
 		});
-		const result = instantiationService.createInstance(AutomationDialogService).showAutomationDialog(options);
+		const result = instantiationService.createInstance(AutomationDialogService).showAutomationDialog(options.guided || options.existing ? options : {
+			initialValues: { name: '', prompt: '', schedule: { interval: 'daily', scheduleHour: 9, scheduleMinute: 0, scheduleDay: 1 } },
+			...options,
+		});
 		const container = instantiationService.get(IWorkbenchLayoutService).activeContainer;
 		const buttons = Array.from(container.querySelectorAll<HTMLElement>('.automation-dialog-footer-actions .monaco-button'));
-		const saveButton = buttons.find(button => button.textContent === (options.existing ? 'Save' : 'Create'))!;
+		const saveButton = buttons.find(button => button.textContent === (options.existing ? 'Save' : options.guided ? 'Start Chat' : 'Create'))
+			?? buttons.find(button => button.textContent === 'Create')!;
 		const cancelButton = buttons.find(button => button.textContent === 'Cancel')!;
 		disposables.add(toDisposable(() => cancelButton.click()));
 		const nameInput = container.querySelector<HTMLInputElement>('.automation-form-input-host input')!;
 		return {
-			result, saveButton, cancelButton, nameInput, container, providers, actionWidgetService,
+			result, saveButton, cancelButton, nameInput, container, providers, actionWidgetService, openedSessions,
 			openEventPicker: () => {
 				container.querySelector<HTMLElement>('.automation-event-button')!.click();
 				const tree = quickInputService.trees.at(-1);
@@ -270,6 +284,48 @@ suite('Automation dialog creation', () => {
 			},
 		};
 	}
+
+	test('plain New Automation starts a workspaceless skill chat with the captured configuration instead of committing an automation', async () => {
+		const configuration: IAutomationSessionConfiguration = {
+			sessionTemplate: { modelId: 'chosen-model', modelConfiguration: { thinkingLevel: 'high' }, config: { mode: 'interactive', autoApprove: 'default' } },
+		};
+		let sent: { request: ISendRequestOptions; options: ICreateNewSessionOptions | undefined } | undefined;
+		let commits = 0;
+		const dialog = openDialog({ guided: true, commit: async () => { commits++; } }, undefined, {
+			supportsAutomationSessionConfiguration: () => true,
+			getAutomationSessionConfiguration: async () => configuration,
+			createAndSendQuickChatRequest: async (request, options) => {
+				sent = { request, options };
+				const session = upcastPartial<ISession>({ sessionId: 'creation-chat' });
+				await options?.onSessionCreated?.(session);
+				return session;
+			},
+		});
+		dialog.setPrompt('Help me decide what to automate. Do not create anything yet.');
+		await timeout(0);
+		dialog.saveButton.click();
+		await dialog.result;
+		assert.deepStrictEqual({
+			commits,
+			opened: dialog.openedSessions,
+			query: sent?.request.query,
+			skill: sent?.request.attachedContext?.map(entry => entry.value),
+			providerId: sent?.options?.providerId,
+			sessionTypeId: sent?.options?.sessionTypeId,
+			configuration: sent?.options?.automationConfiguration,
+		}, {
+			commits: 0,
+			opened: ['creation-chat'],
+			query: '/automate Help me decide what to automate. Do not create anything yet.\n\nSelected automation preferences (not authorization to create or run):\n' + JSON.stringify({
+				target: { kind: 'quickChat', providerId: 'host', sessionTypeId: 'copilotcli' },
+				sessionConfiguration: configuration,
+			}),
+			skill: [joinPath(BUILTIN_SKILLS_URI, 'automate', 'SKILL.md')],
+			providerId: 'host',
+			sessionTypeId: 'copilotcli',
+			configuration,
+		});
+	});
 
 	test('keeps the title outside scrolling content and themes the Name input consistently', async () => {
 		const dialog = openDialog();
