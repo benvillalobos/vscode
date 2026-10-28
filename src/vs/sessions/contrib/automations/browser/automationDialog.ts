@@ -1092,6 +1092,7 @@ export function renderForm(
 	setRepositoryWarningVisible: (visible: boolean) => void = () => { },
 	setDialogMessage: (source: AutomationDialogMessageSource, message: IAutomationDialogMessage | undefined) => void = () => { },
 	focusDialogMessage: () => void = () => { },
+	creationChat = false,
 ): IRenderFormHandle {
 	let reloadCustomizations: () => void = () => { };
 	const validateForm = revalidate;
@@ -1100,7 +1101,8 @@ export function renderForm(
 		validateForm();
 	};
 	const formContent = DOM.append(form, $('.automation-form-content'));
-	const nameRow = DOM.append(formContent, $('.automation-form-row'));
+	const schedulingFields = creationChat ? $('.automation-scheduling-fields') : formContent;
+	const nameRow = DOM.append(schedulingFields, $('.automation-form-row'));
 	DOM.append(nameRow, $('span.automation-form-label', undefined, localize('automation.form.name', "Name")));
 	const nameInputContainer = DOM.append(nameRow, $('.automation-form-input-host'));
 	const nameInput = disposables.add(new InputBox(nameInputContainer, contextViewService, {
@@ -1149,7 +1151,7 @@ export function renderForm(
 	}
 
 	const sessionSection = DOM.append(formContent, $('.automation-session-section'));
-	const scheduleRow = DOM.append(formContent, $('.automation-form-row.automation-form-schedule-row'));
+	const scheduleRow = DOM.append(schedulingFields, $('.automation-form-row.automation-form-schedule-row'));
 	const scheduleSelectOptions: ISelectBoxOptions = {
 		useCustomDrawn: !hasNativeContextMenu(configurationService),
 		anchorPosition: AnchorPosition.ABOVE,
@@ -1207,8 +1209,8 @@ export function renderForm(
 		state.day = e.index;
 		revalidate();
 	}));
-	const triggerContainer = DOM.append(formContent, $('.automation-trigger-editor'));
-	const requiredTriggerFields = DOM.append(formContent, $('.automation-trigger-required-fields'));
+	const triggerContainer = DOM.append(schedulingFields, $('.automation-trigger-editor'));
+	const requiredTriggerFields = DOM.append(schedulingFields, $('.automation-trigger-required-fields'));
 	const eventGroup = DOM.append(scheduleRow, $('.automation-form-schedule-group.automation-form-event-group'));
 	const triggerFields = $('.automation-trigger-fields');
 	const scheduleError = DOM.append(formContent, $('span.automation-target-error.automation-visually-hidden'));
@@ -1713,6 +1715,9 @@ export function renderForm(
 		setDialogMessage('immutableSettings', { severity: 'info', text: initialProviderConfiguration.targetChangeDisabledReason });
 	}
 	const promptSection = DOM.append(sessionSection, $('.automation-prompt-section'));
+	if (creationChat) {
+		DOM.append(promptSection, $('p', undefined, localize('automation.form.guidedCreation', "Describe your goal. A new chat will help choose a target, trigger, and least-privilege permissions, then ask for confirmation before creating anything.")));
+	}
 	const promptRow = DOM.append(promptSection, $('.automation-form-row'));
 	const promptHost = DOM.append(promptRow, $('.automation-form-prompt-host.interactive-session'));
 	const editorOverflowWidgetsDomNode = layoutService.getContainer(DOM.getWindow(promptHost)).appendChild($('.chat-editor-overflow.automation-dialog-editor-overflow.monaco-editor'));

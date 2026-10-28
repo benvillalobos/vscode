@@ -71,7 +71,7 @@ import { IAutomationSessionConfiguration, ISessionsProvider } from '../../../../
 import { ICreateNewSessionOptions, ISendRequestOptions, ISessionsManagementService } from '../../../../services/sessions/common/sessionsManagement.js';
 import { ISessionsProvidersService } from '../../../../services/sessions/browser/sessionsProvidersService.js';
 import { ISessionsService } from '../../../../services/sessions/browser/sessionsService.js';
-import { IPromptsService } from '../../../../../workbench/contrib/chat/common/promptSyntax/service/promptsService.js';
+import { IPromptsService, PromptsStorage } from '../../../../../workbench/contrib/chat/common/promptSyntax/service/promptsService.js';
 import { BUILTIN_SKILLS_URI } from '../../../chat/browser/promptsService.js';
 import { AutomationDialogService } from '../../browser/automationDialogService.js';
 import { AutomationCustomizationSelection, AutomationIsolationGroupActionViewItem, AutomationSessionDraftSynchronizer, canSelectAutomationWorkspace, getAutomationDialogProviders, IFormState, IValidationState, isAutomationDialogPopupTarget, MobileAutomationsWorkspacePicker, registerAutomationDialogKeyboardNavigation, renderForm, shouldPassThroughAutomationDialogCommand, updateSaveButtonState } from '../../browser/automationDialog.js';
@@ -102,11 +102,12 @@ suite('Automation dialog creation', () => {
 		instantiationService.stub(IChatSessionsService, upcastPartial<IChatSessionsService>({ getChatSessionContribution: () => undefined }));
 		instantiationService.stub(IChatEntitlementService, upcastPartial<IChatEntitlementService>({ entitlement: ChatEntitlement.Pro }));
 		const openedSessions: string[] = [];
+		let skillAvailable = true;
 		instantiationService.stub(ISessionsService, upcastPartial<ISessionsService>({
-			openSession: async session => { openedSessions.push(session.sessionId); },
+			openSession: async resource => { openedSessions.push(resource.toString()); },
 		}));
 		instantiationService.stub(IPromptsService, upcastPartial<IPromptsService>({
-			listPromptFilesForStorage: async () => [{ uri: joinPath(BUILTIN_SKILLS_URI, 'automate', 'SKILL.md'), name: 'automate' }],
+			findAgentSkills: async () => skillAvailable ? [{ uri: joinPath(BUILTIN_SKILLS_URI, 'automate', 'SKILL.md'), name: 'automate', description: 'Guide automation creation', storage: PromptsStorage.builtIn, disableModelInvocation: false, userInvocable: true }] : [],
 		}));
 		instantiationService.stub(IGitService, upcastPartial<IGitService>({ openRepository: async () => repository }));
 		const types = [{
@@ -230,6 +231,7 @@ suite('Automation dialog creation', () => {
 		const nameInput = container.querySelector<HTMLInputElement>('.automation-form-input-host input')!;
 		return {
 			result, saveButton, cancelButton, nameInput, container, providers, actionWidgetService, openedSessions,
+			setSkillAvailable: (available: boolean) => { skillAvailable = available; },
 			openEventPicker: () => {
 				container.querySelector<HTMLElement>('.automation-event-button')!.click();
 				const tree = quickInputService.trees.at(-1);
@@ -296,7 +298,7 @@ suite('Automation dialog creation', () => {
 			getAutomationSessionConfiguration: async () => configuration,
 			createAndSendQuickChatRequest: async (request, options) => {
 				sent = { request, options };
-				const session = upcastPartial<ISession>({ sessionId: 'creation-chat' });
+				const session = upcastPartial<ISession>({ sessionId: 'creation-chat', resource: URI.parse('test:creation-chat') });
 				await options?.onSessionCreated?.(session);
 				return session;
 			},
@@ -309,23 +311,76 @@ suite('Automation dialog creation', () => {
 			commits,
 			opened: dialog.openedSessions,
 			query: sent?.request.query,
-			skill: sent?.request.attachedContext?.map(entry => entry.value),
+			skill: sent?.request.attachedContext?.map(entry => URI.isUri(entry.value) ? entry.value.toString() : entry.value),
 			providerId: sent?.options?.providerId,
 			sessionTypeId: sent?.options?.sessionTypeId,
 			configuration: sent?.options?.automationConfiguration,
 		}, {
 			commits: 0,
-			opened: ['creation-chat'],
+			opened: ['test:creation-chat'],
 			query: '/automate Help me decide what to automate. Do not create anything yet.\n\nSelected automation preferences (not authorization to create or run):\n' + JSON.stringify({
 				target: { kind: 'quickChat', providerId: 'host', sessionTypeId: 'copilotcli' },
 				sessionConfiguration: configuration,
 			}),
-			skill: [joinPath(BUILTIN_SKILLS_URI, 'automate', 'SKILL.md')],
+			skill: [joinPath(BUILTIN_SKILLS_URI, 'automate', 'SKILL.md').toString()],
 			providerId: 'host',
 			sessionTypeId: 'copilotcli',
 			configuration,
 		});
 	});
+
+	test('guided creation leads with the prompt and cancel never sends or persists', async () => {
+		let sends = 0;
+		let commits = 0;
+		const dialog = openDialog({ guided: true, commit: async () => { commits++; } }, undefined, {
+			createAndSendQuickChatRequest: async () => { sends++; return undefined; },
+		});
+		const fields = {
+			name: dialog.container.querySelector('.automation-form-input-host'),
+			schedule: dialog.container.querySelector('.automation-form-schedule-row'),
+			prompt: !!dialog.container.querySelector('textarea'),
+			button: dialog.saveButton.textContent,
+		};
+		dialog.setPrompt('Help me design an automation.');
+		dialog.cancelButton.click();
+		await dialog.result;
+		assert.deepStrictEqual({ ...fields, sends, commits }, { name: null, schedule: null, prompt: true, button: 'Start Chat', sends: 0, commits: 0 });
+	});
+
+	for (const failure of ['skill', 'workspaceless', 'send'] as const) {
+		test(`guided creation reports ${failure} failure without creating an automation or substituting a provider`, async () => {
+			let sends = 0;
+			let commits = 0;
+			const dialog = openDialog({ guided: true, commit: async () => { commits++; } }, undefined, {
+				supportsAutomationSessionConfiguration: () => true,
+				getAutomationSessionConfiguration: async () => ({ sessionTemplate: { modelId: 'chosen-model' } }),
+				isQuickChatTargetAvailable: () => failure !== 'workspaceless',
+				createAndSendQuickChatRequest: async () => { sends++; throw new Error('Chosen model is unavailable.'); },
+			});
+			if (failure === 'workspaceless') {
+				dialog.setWorkspace(FOLDER);
+			}
+			dialog.setSkillAvailable(failure !== 'skill');
+			dialog.setPrompt('Help me design an automation.');
+			await timeout(0);
+			dialog.saveButton.click();
+			await timeout(0);
+			const error = dialog.container.querySelector<HTMLElement>('.automation-dialog-notification-center')!;
+			assert.deepStrictEqual({ sends, commits, opened: dialog.openedSessions, error: error.textContent, role: error.getAttribute('role') }, {
+				sends: failure === 'send' ? 1 : 0,
+				commits: 0,
+				opened: [],
+				error: `${failure === 'skill'
+					? 'The built-in /automate skill is unavailable or overridden. Enable it before starting an automation creation chat.'
+					: failure === 'workspaceless'
+						? 'The selected provider cannot start a workspaceless creation chat. Choose a provider that supports chats without a workspace.'
+						: 'Chosen model is unavailable.'}`,
+				role: 'alert',
+			});
+			dialog.cancelButton.click();
+			await dialog.result;
+		});
+	}
 
 	test('keeps the title outside scrolling content and themes the Name input consistently', async () => {
 		const dialog = openDialog();

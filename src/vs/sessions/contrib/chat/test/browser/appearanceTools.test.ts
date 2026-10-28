@@ -8,6 +8,8 @@ import { VSBuffer } from '../../../../../base/common/buffer.js';
 import { CancellationToken } from '../../../../../base/common/cancellation.js';
 import { Event } from '../../../../../base/common/event.js';
 import { Schemas } from '../../../../../base/common/network.js';
+import { ChatAIDisabledSettingId } from '../../../../../platform/chat/common/chatSettings.js';
+import { CHAT_AUTOMATIONS_ENABLED_SETTING } from '../../../../../workbench/contrib/chat/common/automations/automationsEnabled.js';
 import { constObservable } from '../../../../../base/common/observable.js';
 import { basename, dirname, joinPath } from '../../../../../base/common/resources.js';
 import { URI } from '../../../../../base/common/uri.js';
@@ -83,18 +85,18 @@ suite('Sessions - Appearance tools', () => {
 			findAgentSkills: async () => localSkills,
 		});
 		await Promise.all([
-			...['commit', 'generate-chat-background'].map(name => ({ name, uri: joinPath(BUILTIN_SKILLS_URI, name, 'SKILL.md') })),
+			...['commit', 'generate-chat-background', 'automate'].map(name => ({ name, uri: joinPath(BUILTIN_SKILLS_URI, name, 'SKILL.md') })),
 			...localSkills.map(skill => ({ name: 'generate-chat-background', uri: skill.uri })),
 		].map(({ name, uri }) => files.writeFile(uri, VSBuffer.fromString(`---\nname: ${name}\ndescription: A test skill.\n---\nTest instructions.`))));
 
 		const service = disposables.add(instantiationService.createInstance(AgenticPromptsService));
-		const setEnabled = async (value: boolean) => {
+		const setSetting = async (key: string, value: boolean) => {
 			const skillsChanged = Event.toPromise(service.onDidChangeSkills);
 			const slashCommandsChanged = Event.toPromise(service.onDidChangeSlashCommands);
-			await configuration.setUserConfiguration(AGENT_SESSIONS_APPEARANCE_TOOLS_ENABLED_SETTING, value);
+			await configuration.setUserConfiguration(key, value);
 			configuration.onDidChangeConfigurationEmitter.fire(upcastPartial<IConfigurationChangeEvent>({
-				affectsConfiguration: key => key === AGENT_SESSIONS_APPEARANCE_TOOLS_ENABLED_SETTING,
-				affectedKeys: new Set([AGENT_SESSIONS_APPEARANCE_TOOLS_ENABLED_SETTING]),
+				affectsConfiguration: affectedKey => affectedKey === key,
+				affectedKeys: new Set([key]),
 			}));
 			await Promise.all([skillsChanged, slashCommandsChanged]);
 		};
@@ -106,8 +108,26 @@ suite('Sessions - Appearance tools', () => {
 			builtinFiles: (await service.listPromptFilesForStorage(PromptsType.skill, PromptsStorage.builtIn, CancellationToken.None)).map(file => file.name).sort(),
 			forwarded: (await enumerateLocalCustomizationsForHarness(service, syncProvider, 'agent-host-copilot', CancellationToken.None, undefined)).map(file => basename(dirname(file.uri))).sort(),
 		});
-		return { service, configuration, context, instantiationService, setEnabled, snapshot };
+		return { service, configuration, context, instantiationService, setEnabled: (value: boolean) => setSetting(AGENT_SESSIONS_APPEARANCE_TOOLS_ENABLED_SETTING, value), setSetting, snapshot };
 	}
+
+	test('the automate skill follows automation and AI enablement across discovery, slash commands, and harness sync', async () => {
+		const fixture = await setup(false);
+		const visible = async () => {
+			const snapshot = await fixture.snapshot();
+			return Object.fromEntries(Object.entries(snapshot).map(([key, names]) => [key, names?.includes('automate') === true]));
+		};
+		const disabled = await visible();
+		await fixture.setSetting(CHAT_AUTOMATIONS_ENABLED_SETTING, true);
+		const enabled = await visible();
+		await fixture.setSetting(ChatAIDisabledSettingId, true);
+		const aiDisabled = await visible();
+		assert.deepStrictEqual({ disabled, enabled, aiDisabled }, {
+			disabled: { skills: false, slashCommands: false, allFiles: false, builtinFiles: false, forwarded: false },
+			enabled: { skills: true, slashCommands: true, allFiles: true, builtinFiles: true, forwarded: true },
+			aiDisabled: { skills: false, slashCommands: false, allFiles: false, builtinFiles: false, forwarded: false },
+		});
+	});
 
 	test('is advanced, experiment-controlled, and disabled by default', () => {
 		assert.deepStrictEqual({

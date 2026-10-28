@@ -57,6 +57,8 @@ Manual invocation also has two result boundaries: `IAutomationRunRequestResult` 
 
 ## Definitions and session configuration
 
+Plain New Automation starts a guided authoring conversation rather than persisting a definition. The dialog captures provider-owned configuration, starts a new workspaceless session through Sessions management using the same provider and session type, and invokes the discovered built-in `/automate` skill with the selected target and preferences. Unsupported workspaceless creation or unavailable skills fail explicitly without provider fallback. The skill gathers missing information and requests explicit confirmation before using the existing Automation tools; authoring a chat is not an Automation create or run request. Edit, import, duplication, and templates retain the configuration form and its existing persistence path.
+
 Sessions management marks Automation configuration drafts with `isAutomationDraft` independently of their initial configuration. Providers use that purpose to preserve the Automation backend's configuration contract: scheduled Cloud drafts use the scheduled-Cloud model catalogue even when ordinary Cloud sessions use the sandbox experiment.
 
 `IAutomationDescriptor` contains immutable identity, editable name and prompt, schedule, execution target, optional session template, enabled state, and host-projected runtime timestamps.
