@@ -17,6 +17,7 @@ import { Action, IAction } from '../../../../../base/common/actions.js';
 import { Emitter, Event } from '../../../../../base/common/event.js';
 import { CancellationError, getErrorMessage } from '../../../../../base/common/errors.js';
 import { DisposableStore, toDisposable } from '../../../../../base/common/lifecycle.js';
+import { ResourceSet } from '../../../../../base/common/map.js';
 import { autorun, constObservable, IObservable, observableValue, transaction } from '../../../../../base/common/observable.js';
 import { isEqual, joinPath } from '../../../../../base/common/resources.js';
 import { URI } from '../../../../../base/common/uri.js';
@@ -103,11 +104,13 @@ suite('Automation dialog creation', () => {
 		instantiationService.stub(IChatEntitlementService, upcastPartial<IChatEntitlementService>({ entitlement: ChatEntitlement.Pro }));
 		const openedSessions: string[] = [];
 		let skillAvailable = true;
+		const disabledSkills = new ResourceSet();
 		instantiationService.stub(ISessionsService, upcastPartial<ISessionsService>({
 			openSession: async resource => { openedSessions.push(resource.toString()); },
 		}));
 		instantiationService.stub(IPromptsService, upcastPartial<IPromptsService>({
 			findAgentSkills: async () => skillAvailable ? [{ uri: joinPath(BUILTIN_SKILLS_URI, 'automate', 'SKILL.md'), name: 'automate', description: 'Guide automation creation', storage: PromptsStorage.builtIn, disableModelInvocation: false, userInvocable: true }] : [],
+			getDisabledPromptFiles: () => disabledSkills,
 		}));
 		instantiationService.stub(IGitService, upcastPartial<IGitService>({ openRepository: async () => repository }));
 		const types = [{
@@ -232,6 +235,14 @@ suite('Automation dialog creation', () => {
 		return {
 			result, saveButton, cancelButton, nameInput, container, providers, actionWidgetService, openedSessions,
 			setSkillAvailable: (available: boolean) => { skillAvailable = available; },
+			setSkillDisabled: (disabled: boolean) => {
+				const uri = joinPath(BUILTIN_SKILLS_URI, 'automate', 'SKILL.md');
+				if (disabled) {
+					disabledSkills.add(uri);
+				} else {
+					disabledSkills.delete(uri);
+				}
+			},
 			openEventPicker: () => {
 				container.querySelector<HTMLElement>('.automation-event-button')!.click();
 				const tree = quickInputService.trees.at(-1);
@@ -347,7 +358,7 @@ suite('Automation dialog creation', () => {
 		assert.deepStrictEqual({ ...fields, sends, commits }, { name: null, schedule: null, prompt: true, button: 'Start Chat', sends: 0, commits: 0 });
 	});
 
-	for (const failure of ['skill', 'workspaceless', 'send'] as const) {
+	for (const failure of ['skill', 'disabled-skill', 'workspaceless', 'send'] as const) {
 		test(`guided creation reports ${failure} failure without creating an automation or substituting a provider`, async () => {
 			let sends = 0;
 			let commits = 0;
@@ -361,6 +372,7 @@ suite('Automation dialog creation', () => {
 				dialog.setWorkspace(FOLDER);
 			}
 			dialog.setSkillAvailable(failure !== 'skill');
+			dialog.setSkillDisabled(failure === 'disabled-skill');
 			dialog.setPrompt('Help me design an automation.');
 			await timeout(0);
 			dialog.saveButton.click();
@@ -370,8 +382,8 @@ suite('Automation dialog creation', () => {
 				sends: failure === 'send' ? 1 : 0,
 				commits: 0,
 				opened: [],
-				error: `${failure === 'skill'
-					? 'The built-in /automate skill is unavailable or overridden. Enable it before starting an automation creation chat.'
+				error: `${failure === 'skill' || failure === 'disabled-skill'
+					? 'The built-in /automate skill is unavailable, disabled, or overridden. Enable it before starting an automation creation chat.'
 					: failure === 'workspaceless'
 						? 'The selected provider cannot start a workspaceless creation chat. Choose a provider that supports chats without a workspace.'
 						: 'Chosen model is unavailable.'}`,

@@ -17,7 +17,7 @@ import { NullTelemetryService, NullTelemetryServiceShape } from '../../../../../
 import { ChatContextKeys } from '../../../../../workbench/contrib/chat/common/actions/chatContextKeys.js';
 import { AutomationTarget, IAutomationDescriptor, IAutomationRun, IAutomationSchedule } from '../../../../../workbench/contrib/chat/common/automations/automation.js';
 import { IAutomationRunDispatch, IAutomationRunner, IAutomationRunOperation } from '../../../../../workbench/contrib/chat/common/automations/automationRunner.js';
-import { type AutomationCatalogueState, AutomationMutationUncertainError, AutomationSessionTemplateAuthorityError, AutomationUnavailableError, IAutomationProviderConfiguration, IAutomationService, ICreateAutomationOptions, IGuardedAutomationUpdateResult, IUpdateAutomationOptions } from '../../../../../workbench/contrib/chat/common/automations/automationService.js';
+import { type AutomationCatalogueState, AutomationMutationUncertainError, AutomationSessionTemplateAuthorityError, AutomationUnavailableError, IAutomationCustomizationChoice, IAutomationProviderConfiguration, IAutomationService, ICreateAutomationOptions, IGuardedAutomationUpdateResult, IUpdateAutomationOptions } from '../../../../../workbench/contrib/chat/common/automations/automationService.js';
 import { ChatAutomationsEnabledContext, CHAT_AUTOMATIONS_ENABLED_SETTING } from '../../../../../workbench/contrib/chat/common/automations/automationsEnabled.js';
 import { IToolImpl, IToolInvocation, IToolResult, ToolProgress } from '../../../../../workbench/contrib/chat/common/tools/languageModelToolsService.js';
 import { ISessionsProvidersService } from '../../../../services/sessions/browser/sessionsProvidersService.js';
@@ -90,7 +90,9 @@ class FakeAutomationService extends mock<IAutomationService>() {
 	creationAllowed = true;
 	updatesAllowed = true;
 	configuration: IAutomationProviderConfiguration | undefined;
+	customizationChoices: readonly IAutomationCustomizationChoice[] | undefined = [];
 	override getProviderConfiguration() { return this.configuration; }
+	override async getCustomizationChoices() { return this.customizationChoices; }
 
 	override canCreateAutomation(): boolean { return this.available && this.creationAllowed; }
 	override canRunAutomation(): boolean { return this.available; }
@@ -349,6 +351,63 @@ function getText(result: IToolResult): string {
 suite('AutomationTools', () => {
 	ensureNoDisposablesAreLeakedInTestSuite();
 
+	for (const customizationIds of [[], ['read-plugin']]) {
+		test(`configureAutomation preserves an explicit ${customizationIds.length ? 'limited' : 'empty'} customization selection on create and update`, async () => {
+			const existing = createAutomation();
+			const service = new FakeAutomationService([existing]);
+			service.customizationChoices = [{ id: 'read-plugin', label: 'Read', selected: true, outdated: false }];
+			const tool = createConfigureAutomationTool(service, new FakeSessionsManagementService(createSession({ workspace: FOLDER })), createConfigurationService());
+			await invoke(tool, { name: 'New', prompt: 'Review', schedule: { interval: 'manual' }, customizationIds, enabled: false });
+			await invoke(tool, { automationId: existing.id, customizationIds });
+			assert.deepStrictEqual({
+				created: service.created.map(options => options.customizationIds),
+				updated: service.updated.map(update => update.patch),
+			}, { created: [customizationIds], updated: [{ customizationIds }] });
+		});
+	}
+
+	test('configureAutomation preserves Repository ownership and discloses sharing in approval and output', async () => {
+		const service = new FakeAutomationService();
+		service.configuration = upcastPartial<IAutomationProviderConfiguration>({ sessionTypes: ['cloud'] });
+		const tool = createConfigureAutomationTool(service, new FakeSessionsManagementService(undefined, false, [providerSessionType('cloud', 'cloud')]), createConfigurationService());
+		const parameters = {
+			name: 'Shared review', prompt: 'Review', schedule: { interval: 'manual' }, enabled: false,
+			target: { kind: 'workspace', folderUri: FOLDER.toString(), providerId: 'cloud', sessionTypeId: 'cloud' },
+			ownership: 'repository',
+		};
+		const prepared = await tool.prepareToolInvocation!({ parameters, toolCallId: 'shared-create', chatSessionResource: SESSION_RESOURCE }, CancellationToken.None);
+		const result = await invoke(tool, parameters);
+		const message = prepared.confirmationMessages?.message;
+		const confirmation = typeof message === 'string' ? message : message?.value;
+		assert.deepStrictEqual({
+			declaredProperties: Object.keys(tool.getToolData().inputSchema?.properties ?? {}).filter(key => key === 'ownership' || key === 'customizationIds'),
+			ownership: service.created.map(options => options.ownership),
+			sharingDisclosed: confirmation?.includes('repository access'),
+			returnedOwnership: JSON.parse(getText(result)).automation.ownership,
+		}, { declaredProperties: ['ownership', 'customizationIds'], ownership: ['repository'], sharingDisclosed: true, returnedOwnership: 'repository' });
+	});
+
+	test('configureAutomation rejects unsupported ownership and customization selections before mutation', async () => {
+		const existing = createAutomation();
+		const service = new FakeAutomationService([existing]);
+		const tool = createConfigureAutomationTool(service, new FakeSessionsManagementService(createSession({ workspace: FOLDER })), createConfigurationService());
+		const create = { name: 'New', prompt: 'Review', schedule: { interval: 'manual' } };
+		const rejected = await Promise.all([
+			invoke(tool, { ...create, ownership: 'repository' }),
+			invoke(tool, { automationId: existing.id, ownership: 'repository' }),
+			invoke(tool, { ...create, customizationIds: ['missing-plugin'] }),
+			invoke(tool, { ...create, customizationIds: null }),
+			invoke(tool, { ...create, customizationIds: [' '] }),
+		]);
+		service.customizationChoices = undefined;
+		rejected.push(await invoke(tool, { ...create, customizationIds: [] }));
+		assert.deepStrictEqual({
+			rejected: rejected.map(result => typeof result.toolResultError === 'string'),
+			created: service.created,
+			updated: service.updated,
+		}, { rejected: Array(6).fill(true), created: [], updated: [] });
+	});
+
 	test('cloud tool guidance covers consequences, current defaults and unsupported resets', () => {
 		const service = new FakeAutomationService();
 		const config = createConfigurationService();
@@ -361,11 +420,13 @@ suite('AutomationTools', () => {
 			catalog: description.includes('ready provider catalog'),
 			reset: description.includes('Cloud template reset (null)'),
 			credits: description.includes('may consume credits'),
+			ownership: description.includes('"ownership": "repository"') && description.includes('Ownership cannot change after creation'),
+			customizations: description.includes('An empty array selects none') && description.includes('preserves saved selections when updating'),
 			local: run.includes('Local automations can run with scheduling disabled'),
 			uncertain: run.includes('Do not repeat accepted or unknown'),
 			runState: run.includes('inspect activeRun and historyState'),
 			missingRun: run.includes('A missing activeRun does not prove an uncertain request failed'),
-		}, { scope: true, schedule: true, enabled: true, catalog: true, reset: true, credits: true, local: true, uncertain: true, runState: true, missingRun: true });
+		}, { scope: true, schedule: true, enabled: true, catalog: true, reset: true, credits: true, ownership: true, customizations: true, local: true, uncertain: true, runState: true, missingRun: true });
 	});
 
 	test('UTC partial updates retain their timezone and explicit targets respect provider session types', async () => {

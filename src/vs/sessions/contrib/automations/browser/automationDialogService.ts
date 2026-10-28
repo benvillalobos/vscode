@@ -38,6 +38,7 @@ import { AutomationRepositoryOwnershipUnavailableError, IAutomationService, ICre
 import { IHostService } from '../../../../workbench/services/host/browser/host.js';
 import { PromptFileVariableKind, toPromptFileVariableEntry } from '../../../../workbench/contrib/chat/common/attachments/chatVariableEntries.js';
 import { IPromptsService, PromptsStorage } from '../../../../workbench/contrib/chat/common/promptSyntax/service/promptsService.js';
+import { PromptsType } from '../../../../workbench/contrib/chat/common/promptSyntax/promptTypes.js';
 import { BUILTIN_SKILLS_URI } from '../../chat/browser/promptsService.js';
 import { ISessionsService } from '../../../services/sessions/browser/sessionsService.js';
 import { IWorkbenchLayoutService } from '../../../../workbench/services/layout/browser/layoutService.js';
@@ -359,8 +360,8 @@ export class AutomationDialogService implements IAutomationDialogService {
 					const skillUri = joinPath(BUILTIN_SKILLS_URI, 'automate', 'SKILL.md');
 					const skill = (await this.promptsService.findAgentSkills(cancellation.token))?.find(skill =>
 						skill.name === 'automate' && skill.storage === PromptsStorage.builtIn && isEqual(skill.uri, skillUri));
-					if (!skill) {
-						throw new Error(localize('automation.dialog.creationSkillUnavailable', "The built-in /automate skill is unavailable or overridden. Enable it before starting an automation creation chat."));
+					if (!skill || this.promptsService.getDisabledPromptFiles(PromptsType.skill).has(skill.uri)) {
+						throw new Error(localize('automation.dialog.creationSkillUnavailable', "The built-in /automate skill is unavailable, disabled, or overridden. Enable it before starting an automation creation chat."));
 					}
 					const customizationIds = getCustomizationIds();
 					const preferences = {

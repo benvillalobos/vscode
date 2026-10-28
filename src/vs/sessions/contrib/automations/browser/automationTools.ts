@@ -9,6 +9,7 @@ import { Codicon } from '../../../../base/common/codicons.js';
 import { MarkdownString } from '../../../../base/common/htmlContent.js';
 import { Disposable } from '../../../../base/common/lifecycle.js';
 import { URI } from '../../../../base/common/uri.js';
+import { isStringArray } from '../../../../base/common/types.js';
 import { localize } from '../../../../nls.js';
 import { ConfirmationOptionKind } from '../../../../platform/agentHost/common/state/protocol/channels-chat/state.js';
 import { ChatAIDisabledSettingId } from '../../../../platform/chat/common/chatSettings.js';
@@ -47,6 +48,7 @@ const uncertainAutomationRuns = new WeakMap<IAutomationProviderConfiguration, Re
 
 interface IAutomationToolOutput {
 	readonly id: string;
+	readonly ownership?: IAutomationDescriptor['ownership'];
 	readonly name: string;
 	readonly prompt: string;
 	readonly schedule: IAutomationSchedule;
@@ -489,7 +491,9 @@ Omit "automationId" to create an automation; "name", "prompt", and "schedule.int
 
 Use "sessionTemplate" for provider-owned Model, Agent, Mode, Approvals, and other configuration returned by listAutomations. Omit it on unrelated partial updates, or set it to null to reset provider configuration. Do not combine it with the legacy "modelId", "mode", or "permissionLevel" aliases.
 
-Cloud automations are user-owned and require a private or internal GitHub.com repository with default isolation. Daily/weekly cloud schedules require "timeZone": "UTC" and minutes 0, 15, 30, or 45. "manual" removes the schedule. Creation defaults to enabled: scheduled work runs without VS Code and may consume credits. Set "enabled": false to save without scheduling.
+Use "customizationIds" to preserve an explicit customization selection. An empty array selects none. Omission uses all enabled target customizations when creating, and preserves saved selections when updating. The selected provider must support the supplied selection.
+
+Cloud automations default to user-owned and require a private or internal GitHub.com repository with default isolation. Set "ownership": "repository" only when creating a shared automation: repository readers can view it and writers can manage it. Ownership cannot change after creation. Daily/weekly cloud schedules require "timeZone": "UTC" and minutes 0, 15, 30, or 45. "manual" removes the schedule. Creation defaults to enabled: scheduled work runs without VS Code and may consume credits. Set "enabled": false to save without scheduling.
 
 For cloud, use "sessionTemplate.modelId" and "sessionTemplate.config" with "tools" IDs from the ready provider catalog and optional "reasoningEffort". Preserve saved tool IDs outside that catalog on unrelated updates. Cloud template reset (null), custom agents, modelConfiguration, local mode/approval settings, and MCP management are not supported.
 
@@ -504,6 +508,16 @@ The change uses the current tool-approval policy. When approval is required, the
 					automationId: {
 						type: 'string',
 						description: 'Stable automation ID from listAutomations. Omit to create a new automation.',
+					},
+					ownership: {
+						type: 'string',
+						enum: ['user', 'repository'],
+						description: 'Cloud ownership on create only. Defaults to user. Repository ownership shares the automation with repository readers and writers.',
+					},
+					customizationIds: {
+						type: 'array',
+						items: { type: 'string', minLength: 1 },
+						description: 'Explicit customization IDs selected for the target. An empty array selects none. Omit to use provider defaults on create or preserve saved selections on update.',
 					},
 					name: {
 						type: 'string',
@@ -645,6 +659,7 @@ The change uses the current tool-approval policy. When approval is required, the
 			throw error;
 		}
 		const existing = proposal.kind === 'update' ? proposal.existing : undefined;
+		const repositoryOwned = proposal.kind === 'create' && proposal.initialValues.ownership === 'repository';
 		return {
 			invocationMessage: existing
 				? localize('automation.tool.configure.update.invocationMessage', "Configuring automation")
@@ -663,7 +678,11 @@ The change uses the current tool-approval policy. When approval is required, the
 						existing.name,
 						existing.id,
 					))
-					: new MarkdownString(localize(
+					: repositoryOwned ? new MarkdownString(localize(
+						'automation.tool.configure.create.repositoryConfirmationMessage',
+						"Create the automation **{0}**, visible to everyone with repository access and editable by repository writers?",
+						proposal.initialValues.name,
+					)) : new MarkdownString(localize(
 						'automation.tool.configure.create.confirmationMessage',
 						"Create the automation **{0}**?",
 						proposal.initialValues.name,
@@ -755,6 +774,10 @@ The change uses the current tool-approval policy. When approval is required, the
 		if (!this.automationService.canCreateAutomation(options.target.providerId)) {
 			return automationToolError('The selected provider is unavailable or does not support automations. Connect to an Agent Host that supports automations.');
 		}
+		if (options.ownership !== undefined && !this.automationService.getProviderConfiguration?.(options.target.providerId)) {
+			return automationToolError('The selected provider does not support automation ownership. Omit ownership for this provider.');
+		}
+		await this.validateCustomizationSelection(options.target, options.customizationIds, undefined, token);
 		const created = await this.automationService.createAutomation(options, this.createMutationGuard(token));
 		const result = automationToolResult(JSON.stringify({ status: 'created', automation: toAutomationToolOutput(created) }, undefined, 2));
 		result.toolSpecificData = toAutomationConfiguredData(created, 'created');
@@ -767,6 +790,7 @@ The change uses the current tool-approval policy. When approval is required, the
 		if (blocked) {
 			return blocked;
 		}
+		await this.validateCustomizationSelection(patch.target ?? existing.target, patch.customizationIds, existing.id, token);
 		const updateResult = await this.automationService.updateAutomationIfUnchanged(existing.id, patch, existing, this.createMutationGuard(token));
 		if (updateResult.kind === 'conflict' && !updateResult.current) {
 			return automationToolError(`Automation "${existing.id}" was deleted before the update was applied. No changes were made.`);
@@ -779,6 +803,21 @@ The change uses the current tool-approval policy. When approval is required, the
 		result.toolSpecificData = toAutomationConfiguredData(updated, 'updated');
 		result.toolResultMessage = localize('automation.tool.configure.updated', "Updated automation {0}", updated.name);
 		return result;
+	}
+
+	private async validateCustomizationSelection(target: AutomationTarget, customizationIds: readonly string[] | undefined, existingId: string | undefined, token: CancellationToken): Promise<void> {
+		if (customizationIds === undefined) {
+			return;
+		}
+		const choices = await this.automationService.getCustomizationChoices?.(target, existingId, token);
+		if (!choices) {
+			throw new AutomationToolInputError('The selected provider does not support customization selection.');
+		}
+		const available = new Set(choices.map(choice => choice.id));
+		const unavailable = customizationIds.find(id => !available.has(id));
+		if (unavailable !== undefined) {
+			throw new AutomationToolInputError(`Customization "${unavailable}" is unavailable for the selected target. Refresh its customization choices before retrying.`);
+		}
 	}
 
 	private createMutationGuard(token: CancellationToken): AutomationMutationGuard {
@@ -832,12 +871,20 @@ The change uses the current tool-approval policy. When approval is required, the
 			throw new AutomationToolInputError('configureAutomation input must be an object.');
 		}
 		const input = rawInput;
-		assertKnownProperties(input, ['automationId', 'name', 'prompt', 'schedule', 'target', 'modelId', 'mode', 'permissionLevel', 'sessionTemplate', 'enabled'], 'configureAutomation input');
+		assertKnownProperties(input, ['automationId', 'ownership', 'customizationIds', 'name', 'prompt', 'schedule', 'target', 'modelId', 'mode', 'permissionLevel', 'sessionTemplate', 'enabled'], 'configureAutomation input');
 
 		const automationId = readOptionalNonEmptyString(input, 'automationId');
 		const existing = automationId ? this.automationService.getAutomation(automationId) : undefined;
 		if (automationId && !existing) {
 			throw new AutomationToolInputError(`Automation "${automationId}" does not exist. Call listAutomations to refresh the available IDs.`);
+		}
+		const ownership = readOptionalEnum(input, 'ownership', ['user', 'repository']);
+		if (existing && ownership !== undefined) {
+			throw new AutomationToolInputError('"ownership" can only be set when creating an automation.');
+		}
+		const customizationIds = input.customizationIds;
+		if (customizationIds !== undefined && (!isStringArray(customizationIds) || customizationIds.some(id => id.trim() === ''))) {
+			throw new AutomationToolInputError('"customizationIds" must be an array of non-empty strings.');
 		}
 
 		const name = readOptionalRequiredText(input, 'name');
@@ -877,6 +924,7 @@ The change uses the current tool-approval policy. When approval is required, the
 			...(permissionLevel !== undefined ? { permissionLevel } : {}),
 			...(sessionTemplate !== undefined ? { sessionTemplate } : {}),
 			...(enabled !== undefined ? { enabled } : {}),
+			...(customizationIds !== undefined ? { customizationIds } : {}),
 		};
 		const validateTargetAvailability = input.target !== undefined
 			&& !(isRecord(input.target) && input.target.kind === 'currentSession');
@@ -905,6 +953,8 @@ The change uses the current tool-approval policy. When approval is required, the
 				...(permissionLevel ? { permissionLevel } : {}),
 				...(sessionTemplate ? { sessionTemplate } : {}),
 				...(enabled !== undefined ? { enabled } : {}),
+				...(ownership !== undefined ? { ownership } : {}),
+				...(customizationIds !== undefined ? { customizationIds } : {}),
 			},
 			validateTargetAvailability,
 		};
@@ -1170,6 +1220,7 @@ function toAutomationToolOutput(automation: IAutomationDescriptor): IAutomationT
 		};
 	return {
 		id: automation.id,
+		...(automation.ownership !== undefined ? { ownership: automation.ownership } : {}),
 		name: automation.name,
 		prompt: automation.prompt,
 		schedule: automation.schedule,
