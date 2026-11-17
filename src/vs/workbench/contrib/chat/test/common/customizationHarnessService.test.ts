@@ -334,7 +334,7 @@ suite('CustomizationHarnessService', () => {
 	});
 
 	suite('getSlashCommands', () => {
-		function createSlashCommandService(uri: URI, promptsService: IPromptsService): CustomizationHarnessServiceBase {
+		function createSlashCommandService(uri: URI, promptsService: IPromptsService, argumentHint?: string): CustomizationHarnessServiceBase {
 			const testSessionType = 'test-session-type';
 			const emitter = new Emitter<void>();
 			store.add(emitter);
@@ -345,7 +345,7 @@ suite('CustomizationHarnessService', () => {
 				itemProvider: {
 					onDidChange: emitter.event,
 					provideChatSessionCustomizations: async () => [
-						{ uri, type: PromptsType.skill, source: 'local', name: 'init', enabled: true, extensionId: undefined, pluginUri: undefined, userInvocable: undefined },
+						{ uri, type: PromptsType.skill, source: 'local', name: 'init', argumentHint, enabled: true, extensionId: undefined, pluginUri: undefined, userInvocable: undefined },
 					],
 				},
 			}], testSessionType, promptsService);
@@ -437,6 +437,17 @@ suite('CustomizationHarnessService', () => {
 					{ name: 'review', type: PromptsType.skill, userInvocable: true, sessionTypes: undefined },
 				]);
 			}
+		});
+
+		test('preserves argumentHint when resolving built-in or provider-backed slash commands', async () => {
+			const promptsService = new MockPromptsService();
+			const builtInUri = URI.from({ scheme: AGENT_BUILTIN_CUSTOMIZATION_SCHEME, path: '/skill/init' });
+			const service = createSlashCommandService(toAgentHostUri(builtInUri, 'remote'), promptsService, 'Describe a task');
+
+			const command = await service.resolvePromptSlashCommand('init', URI.parse('test-session-type://session'), CancellationToken.None);
+
+			assert.strictEqual(command?.name, 'init');
+			assert.strictEqual(command?.argumentHint, 'Describe a task');
 		});
 
 		test('resolves a wrapped synthetic built-in without reading prompt content', async () => {

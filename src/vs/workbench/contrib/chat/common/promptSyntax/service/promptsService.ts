@@ -173,6 +173,8 @@ export interface IPromptPathBase {
 
 	readonly description?: string;
 
+	readonly argumentHint?: string;
+
 	/**
 	 * Optional session types that describe when this resource should be offered.
 	 */
@@ -455,6 +457,7 @@ export interface IAgentSkill {
 	readonly storage: PromptsStorage;
 	readonly name: string;
 	readonly description: string | undefined;
+	readonly argumentHint?: string;
 	/**
 	 * If true, the skill should not be automatically loaded by the agent.
 	 * Use for workflows you want to trigger manually with /name.

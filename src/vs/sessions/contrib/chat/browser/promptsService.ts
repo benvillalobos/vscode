@@ -73,6 +73,7 @@ export class AgenticPromptsService extends PromptsService {
 						storage: PromptsStorage.builtIn,
 						name,
 						description,
+						argumentHint: parsed.header?.argumentHint,
 						disableModelInvocation: parsed.header?.disableModelInvocation === true,
 						userInvocable: parsed.header?.userInvocable !== false,
 					});
@@ -107,6 +108,7 @@ export class AgenticPromptsService extends PromptsService {
 			type: PromptsType.skill,
 			name: s.name,
 			description: s.description,
+			argumentHint: s.argumentHint,
 		}));
 	}
 
