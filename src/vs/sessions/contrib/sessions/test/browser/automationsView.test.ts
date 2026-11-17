@@ -76,6 +76,9 @@ import { buildAutomationsAccessibleContent } from '../../browser/views/automatio
 import { automationRunWithLocalProgress } from '../../browser/views/automationRunProgress.js';
 import { AUTOMATION_TEMPLATES } from '../../browser/views/automationTemplates.js';
 import { AutomationsCardsWidget, AutomationsCustomViewContribution, DISABLED_AUTOMATIONS_EXPANDED_STORAGE_KEY, SEEN_PLUGIN_AUTOMATION_TEMPLATES_STORAGE_KEY } from '../../browser/views/automationsView.js';
+import { AUTOMATIONS_MODAL_SETTING, AutomationsEditorInput } from '../../browser/views/automationsEditorInput.js';
+import { IEditorService } from '../../../../../workbench/services/editor/common/editorService.js';
+import { EditorInputCapabilities } from '../../../../../workbench/common/editor.js';
 import { workbenchInstantiationService } from '../../../../../workbench/test/browser/workbenchTestServices.js';
 import { ISessionsListModelService } from '../../../../../workbench/contrib/sessions/browser/sessionsListModelService.js';
 import { ISessionsProvidersService } from '../../../../../workbench/contrib/sessions/browser/sessionsProvidersService.js';
@@ -6341,21 +6344,25 @@ suite('AutomationsCardsWidget', () => {
 suite('AutomationsCustomViewContribution — context key', () => {
 	const disposables = ensureNoDisposablesAreLeakedInTestSuite();
 
-	function setup(automationsEnabled = true) {
+	function setup(automationsEnabled = true, modal?: boolean) {
 		const automationService = new FakeAutomationService();
 		const contextKeyService = new MockContextKeyService();
 		ChatAutomationsEnabledContext.bindTo(contextKeyService).set(automationsEnabled);
 		let restore: boolean | undefined;
 		const instantiationService = disposables.add(new TestInstantiationService());
 		instantiationService.stub(IAutomationService, automationService);
-		instantiationService.stub(IConfigurationService, new TestConfigurationService());
+		const configurationService = new TestConfigurationService({ [CHAT_AUTOMATIONS_ENABLED_SETTING]: automationsEnabled, [AUTOMATIONS_MODAL_SETTING]: modal });
+		instantiationService.stub(IConfigurationService, configurationService);
+		let registrations = 0;
+		let unregisters = 0;
 		instantiationService.stub(IStorageService, disposables.add(new InMemoryStorageService()));
 		instantiationService.stub(IContextKeyService, contextKeyService);
 		instantiationService.stub(ICustomViewService, new class extends mock<ICustomViewService>() {
 			override readonly activeCustomView = constObservable(undefined);
 			override registerCustomView(_descriptor: ICustomViewDescriptor, options?: { readonly restore?: boolean }) {
+				registrations++;
 				restore = options?.restore;
-				return { dispose() { } };
+				return toDisposable(() => unregisters++);
 			}
 			override hideCustomView() { }
 		}());
@@ -6363,7 +6370,7 @@ suite('AutomationsCustomViewContribution — context key', () => {
 			override register() { return { dispose() { } }; }
 		}());
 		const contribution = disposables.add(instantiationService.createInstance(AutomationsCustomViewContribution));
-		return { automationService, contextKeyService, contribution, restore };
+		return { automationService, contextKeyService, contribution, restore, configurationService, get registrations() { return registrations; }, get unregisters() { return unregisters; } };
 	}
 
 	test('AutomationsHasItemsContext follows the automations observable (empty → non-empty → empty)', () => {
@@ -6386,5 +6393,51 @@ suite('AutomationsCustomViewContribution — context key', () => {
 			enabled: true,
 			disabled: false,
 		});
+	});
+
+	test('absent and OFF preserve registration; ON and live transitions release the cards view', async () => {
+		const absent = setup();
+		const off = setup(true, false);
+		const on = setup(true, true);
+		const before = [absent.registrations, off.registrations, on.registrations];
+		await off.configurationService.setUserConfiguration(AUTOMATIONS_MODAL_SETTING, true);
+		off.configurationService.onDidChangeConfigurationEmitter.fire({
+			affectsConfiguration: key => key === AUTOMATIONS_MODAL_SETTING,
+			affectedKeys: new Set([AUTOMATIONS_MODAL_SETTING]),
+			change: { keys: [AUTOMATIONS_MODAL_SETTING], overrides: [] },
+			source: ConfigurationTarget.USER,
+		});
+		assert.deepStrictEqual({ before, unregisters: off.unregisters, refreshes: off.automationService.refreshCalls }, {
+			before: [1, 1, 0], unregisters: 1, refreshes: 0,
+		});
+	});
+
+	test('manage command opts into a required singleton modal only for ON', async () => {
+		const results: string[] = [];
+		const services = disposables.add(new TestInstantiationService());
+		const configurationService = new TestConfigurationService({ [CHAT_AUTOMATIONS_ENABLED_SETTING]: true });
+		services.stub(IConfigurationService, configurationService);
+		services.stub(ICustomViewService, new class extends mock<ICustomViewService>() {
+			override showCustomView() { results.push('cards'); }
+			override hideCustomView() { results.push('hide'); }
+		}());
+		services.stub(IEditorService, new class extends mock<IEditorService>() {
+			override async openEditor() {
+				results.push('modal');
+				return undefined;
+			}
+		}());
+		const command = CommandsRegistry.getCommand('sessionsView.manageAutomations');
+		assert.ok(command);
+		for (const value of [undefined, false, true]) {
+			await configurationService.setUserConfiguration(AUTOMATIONS_MODAL_SETTING, value);
+			await services.invokeFunction(accessor => command.handler(accessor));
+		}
+		const input = disposables.add(AutomationsEditorInput.getOrCreate());
+		assert.deepStrictEqual({
+			results,
+			requiresModal: !!(input.capabilities & EditorInputCapabilities.RequiresModal),
+			singleton: !!(input.capabilities & EditorInputCapabilities.Singleton),
+		}, { results: ['cards', 'cards', 'hide', 'modal'], requiresModal: true, singleton: true });
 	});
 });

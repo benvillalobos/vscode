@@ -36,7 +36,7 @@ import { SessionChangesEditorInput } from '../../../../workbench/contrib/session
 import { IChangesViewService } from '../../../../workbench/contrib/sessions/common/changesViewService.js';
 import { VIEW_SESSION_CHANGES_COMMAND_ID } from '../../../../workbench/contrib/sessions/common/changes.js';
 import { ISessionChangesService } from '../../../../workbench/services/sessions/common/sessionChangesService.js';
-import { AUTOMATIONS_CUSTOM_VIEW_ID, AUTOMATIONS_TOUR_SEEN_KEY } from '../../../../workbench/contrib/sessions/browser/automationsConstants.js';
+import { AUTOMATIONS_TOUR_SEEN_KEY } from '../../../../workbench/contrib/sessions/browser/automationsConstants.js';
 import { SessionsList } from '../../../../workbench/contrib/sessions/browser/views/sessionsList.js';
 import { SessionsView, SessionsViewId } from '../../../../workbench/contrib/sessions/browser/views/sessionsView.js';
 import { GetStartedItemId } from '../common/getStartedChecklist.js';
@@ -166,7 +166,7 @@ export class GetStartedTourRunner extends Disposable {
 				}
 			},
 			showAutomations: async () => {
-				this._customViewService.showCustomView(AUTOMATIONS_CUSTOM_VIEW_ID);
+				await this._commandService.executeCommand('sessionsView.manageAutomations');
 			},
 		};
 		return {

@@ -6,10 +6,39 @@
 import { groupByMap } from '../../../../../base/common/collections.js';
 import { localize } from '../../../../../nls.js';
 import { cloudSandboxAddress } from '../../../../../platform/agentHost/common/cloudSandboxAgentHost.js';
-import { agentHostAuthority } from '../../../../../platform/agentHost/common/agentHostUri.js';
-import { getEntryAddress, IRemoteAgentHostEntry, RemoteAgentHostEntryType } from '../../../../../platform/agentHost/common/remoteAgentHostService.js';
-import type { IAutomationDescriptor } from '../../../../../workbench/contrib/chat/common/automations/automation.js';
+import { agentHostAuthority, normalizeRemoteAgentHostAddress } from '../../../../../platform/agentHost/common/agentHostUri.js';
+import { getEntryAddress, IRemoteAgentHostConnectionInfo, IRemoteAgentHostEntry, RemoteAgentHostConnectionStatus, RemoteAgentHostEntryType } from '../../../../../platform/agentHost/common/remoteAgentHostService.js';
+import type { IAutomationDescriptor, IAutomationSchedule } from '../../../../../workbench/contrib/chat/common/automations/automation.js';
 import type { IAutomationProviderDescriptor } from '../../../../../workbench/contrib/chat/common/automations/automationService.js';
+import { automationScheduleToLocal, DAYS_OF_WEEK } from '../../../../../workbench/contrib/chat/common/automations/schedule.js';
+
+export function isAutomationVisible(automation: IAutomationDescriptor, sendLaterEnabled: boolean): boolean {
+	return !sendLaterEnabled || automation.purpose !== 'scheduledChat' || automation.oneTimeDispatchedAt !== undefined;
+}
+
+export function getConnectedAutomationRemoteCount(entries: readonly IRemoteAgentHostEntry[], connections: readonly IRemoteAgentHostConnectionInfo[]): number {
+	const connectedAddresses = new Set(connections
+		.filter(connection => RemoteAgentHostConnectionStatus.isConnected(connection.status))
+		.map(connection => normalizeRemoteAgentHostAddress(connection.address)));
+	return entries.filter(entry => connectedAddresses.has(normalizeRemoteAgentHostAddress(getEntryAddress(entry)))).length;
+}
+
+export function formatSchedule(schedule: IAutomationSchedule): string {
+	const localSchedule = automationScheduleToLocal(schedule);
+	const { interval, scheduleHour, scheduleMinute } = localSchedule;
+	const date = new Date(Date.UTC(2000, 0, 1, Math.max(0, Math.min(23, scheduleHour | 0)), Math.max(0, Math.min(59, scheduleMinute | 0))));
+	const time = date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit', timeZone: 'UTC' });
+	switch (interval) {
+		case 'once': return localize('scheduleOnceAt', "Once: {0}", schedule.runAt ? new Date(schedule.runAt).toLocaleString() : '');
+		case 'cron': return localize('scheduleCron', "Cron: {0}", schedule.cronExpression);
+		case 'hourly': return localize('scheduleHourly', "Hourly");
+		case 'daily': return localize('scheduleDailyAt', "Daily at {0}", time);
+		case 'weekdays': return localize('scheduleWeekdaysAt', "Weekdays at {0}", time);
+		case 'weekly': return localize('scheduleWeeklyAt', "{0} at {1}", DAYS_OF_WEEK[((localSchedule.scheduleDay % 7) + 7) % 7], time);
+		case 'custom': return localize('scheduleCustom', "Custom schedule");
+		default: return localize('scheduleManual', "Manual");
+	}
+}
 
 export function getAutomationOwnershipGroups(automations: readonly IAutomationDescriptor[]) {
 	return [
