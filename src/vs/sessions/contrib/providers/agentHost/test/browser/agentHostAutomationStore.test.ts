@@ -790,10 +790,12 @@ suite('AgentHostAutomationStore', () => {
 		store.setConnection(connection);
 		await store.createAutomation({ ...createOptions(), customizationIds: [second.id, 'unknown', disabled.id, first.id] });
 		await store.createAutomation({ ...createOptions(), customizationIds: [second.id] });
-		assert.deepStrictEqual({ customizations: connection.dispatched.map(({ action }) => {
-			assert.ok(action.type === ActionType.AutomationCreateRequested);
-			return action.definition.session.customizations;
-		}), grants: connection.clientCustomizations }, {
+		assert.deepStrictEqual({
+			customizations: connection.dispatched.map(({ action }) => {
+				assert.ok(action.type === ActionType.AutomationCreateRequested);
+				return action.definition.session.customizations;
+			}), grants: connection.clientCustomizations
+		}, {
 			customizations: [[first, second], [second]],
 			grants: [[first, second], [second]],
 		});
