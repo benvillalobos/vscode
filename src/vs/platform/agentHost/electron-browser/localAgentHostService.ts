@@ -100,7 +100,7 @@ import type { InvokeChangesetOperationParams, InvokeChangesetOperationResult } f
 import type { FetchAutomationRunsParams, FetchAutomationRunsResult, ListAutomationTriggerDefinitionsParams, ListAutomationTriggerDefinitionsResult, RunAutomationParams, RunAutomationResult } from '../common/state/protocol/channels-automation/commands.js';
 import type { CreateResourceWatchParams, CreateResourceWatchResult, ResourceCopyParams, ResourceCopyResult, ResourceDeleteParams, ResourceDeleteResult, ResourceListResult, ResourceMkdirParams, ResourceMkdirResult, ResourceMoveParams, ResourceMoveResult, ResourceReadResult, ResourceResolveParams, ResourceResolveResult, ResourceWriteParams, ResourceWriteResult } from '../common/state/sessionProtocol.js';
 import type { ActionEnvelope, ChatAction, ClientAnnotationsAction, ClientAutomationAction, ClientAutomationRunAction, ClientChangesetAction, INotification, IRootConfigChangedAction, SessionAction, TerminalAction } from '../common/state/sessionActions.js';
-import type { ComponentToState, RootState, StateComponents } from '../common/state/sessionState.js';
+import type { ClientPluginCustomization, ComponentToState, RootState, StateComponents } from '../common/state/sessionState.js';
 
 const LOG_PREFIX = '[AgentHost:renderer]';
 
@@ -470,8 +470,8 @@ export class LocalAgentHostServiceClient extends Disposable implements IAgentHos
 		return this._protocolClient?.getActiveSubscriptions() ?? [];
 	}
 
-	dispatch(channel: string, action: SessionAction | ChatAction | TerminalAction | ClientChangesetAction | ClientAnnotationsAction | ClientAutomationAction | ClientAutomationRunAction | IRootConfigChangedAction): void {
-		this._requireClient().dispatch(channel, action);
+	dispatch(channel: string, action: SessionAction | ChatAction | TerminalAction | ClientChangesetAction | ClientAnnotationsAction | ClientAutomationAction | ClientAutomationRunAction | IRootConfigChangedAction, clientCustomizations?: readonly ClientPluginCustomization[]): void {
+		this._requireClient().dispatch(channel, action, clientCustomizations);
 	}
 
 	dispatchConfirmed<T>(channel: string, subscription: IAgentSubscription<T>, action: SessionAction | ChatAction | TerminalAction | ClientChangesetAction | ClientAnnotationsAction | ClientAutomationAction | ClientAutomationRunAction | IRootConfigChangedAction, token: CancellationToken): Promise<ActionEnvelope> {

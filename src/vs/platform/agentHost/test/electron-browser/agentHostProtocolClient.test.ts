@@ -9,7 +9,7 @@ import { LoadClientCertificatesExtensionMethod, type IAgentHostClientCertificate
 import sinon from 'sinon';
 import { CancelablePromise, DeferredPromise, raceTimeout, timeout } from '../../../../base/common/async.js';
 import { CancellationToken, CancellationTokenSource } from '../../../../base/common/cancellation.js';
-import { VSBuffer } from '../../../../base/common/buffer.js';
+import { encodeBase64, VSBuffer } from '../../../../base/common/buffer.js';
 import { CancellationError, errorHandler, getErrorCode, setUnexpectedErrorHandler, transformErrorForSerialization, transformErrorFromSerialization } from '../../../../base/common/errors.js';
 import { Emitter, Event } from '../../../../base/common/event.js';
 import { Disposable, DisposableStore, toDisposable } from '../../../../base/common/lifecycle.js';
@@ -5369,41 +5369,81 @@ suite('AgentHostProtocolClient', () => {
 			);
 		});
 
-		test('automation create and update dispatch implicit reads for customizations', () => {
-			const { service, calls } = createCapturingPermissionService();
-			const { client } = createClient(undefined, service);
-
-			client.dispatch(AUTOMATION_CATALOG_URI, {
-				type: ActionType.AutomationCreateRequested,
-				resource: 'ahp-automation:/test',
-				definition: {
-					title: 'Review issues',
-					message: { text: 'Review issues', origin: { kind: MessageKind.Automation } },
-					session: {
-						customizations: [
-							{ type: CustomizationType.Plugin, id: customizationId('file:///plugins/create'), uri: 'file:///plugins/create', name: 'Create' },
-						],
+		for (const create of [true, false]) {
+			test(`automation ${create ? 'create' : 'update'} grants customization access before reverse resourceRead`, async () => {
+				const root = URI.parse('virtual://client/plugins/selected');
+				const granted: URI[] = [];
+				const service = createResourceServiceStub({
+					granted: (_identity, uri, mode) => mode === AgentHostPermissionMode.Read && granted.some(parent => extUriBiasedIgnorePathCase.isEqualOrParent(uri, parent)),
+					onGrantImplicitRead: (_identity, uri) => granted.push(uri),
+					readBytes: VSBuffer.fromString('harmless customization fixture'),
+				});
+				const { client, transport } = createClient(undefined, service);
+				const session = {
+					customizations: [{ type: CustomizationType.Plugin as const, id: customizationId(root.toString()), uri: root.toString(), name: 'Selected' }],
+				};
+				client.dispatch(AUTOMATION_CATALOG_URI, create ? {
+					type: ActionType.AutomationCreateRequested,
+					resource: 'other-automation://tenant/opaque',
+					definition: {
+						title: 'Fixture',
+						message: { text: 'Not executed', origin: { kind: MessageKind.Automation } },
+						session,
+						enabled: false,
+						triggers: [],
 					},
-					enabled: true,
-					triggers: [],
-				},
+				} : {
+					type: ActionType.AutomationUpdateRequested,
+					resource: 'other-automation://tenant/opaque',
+					changes: { session },
+				}, session.customizations);
+				transport.fireMessage({
+					jsonrpc: '2.0', id: 42, method: 'resourceRead',
+					params: { channel: ROOT_STATE_URI, uri: URI.joinPath(root, 'plugin.json').toString() },
+				});
+				await flushMicrotasks();
+				assert.deepStrictEqual(transport.sentMessages.at(-1), {
+					jsonrpc: '2.0', id: 42,
+					result: { data: encodeBase64(VSBuffer.fromString('harmless customization fixture')), encoding: ContentEncoding.Base64 },
+				});
 			});
+		}
+
+		test('renaming an automation does not authorize preserved host customization URIs', async () => {
+			const root = URI.parse('file:///synthetic-other-client');
+			const granted: URI[] = [];
+			const service = createResourceServiceStub({
+				granted: (_identity, uri, mode) => mode === AgentHostPermissionMode.Read && granted.some(parent => extUriBiasedIgnorePathCase.isEqualOrParent(uri, parent)),
+				onGrantImplicitRead: (_identity, uri) => granted.push(uri),
+				readBytes: VSBuffer.fromString('harmless sentinel, never a disk read'),
+			});
+			const { client, transport } = createClient(undefined, service);
 			client.dispatch(AUTOMATION_CATALOG_URI, {
 				type: ActionType.AutomationUpdateRequested,
-				resource: 'ahp-automation:/test',
+				resource: 'other-automation://tenant/opaque',
 				changes: {
+					title: 'Renamed',
 					session: {
 						customizations: [
-							{ type: CustomizationType.Plugin, id: customizationId('file:///plugins/update'), uri: 'file:///plugins/update', name: 'Update' },
+							{ type: CustomizationType.Plugin, id: customizationId(root.toString()), uri: root.toString(), name: 'Saved by another client' },
 						],
 					},
 				},
 			});
-
-			assert.deepStrictEqual(
-				calls.map(call => call.uri.toString()),
-				['file:///plugins/create', 'file:///plugins/update'],
-			);
+			const uri = URI.joinPath(root, 'sentinel.txt').toString();
+			transport.fireMessage({ jsonrpc: '2.0', id: 42, method: 'resourceRead', params: { channel: ROOT_STATE_URI, uri } });
+			await flushMicrotasks();
+			assert.deepStrictEqual({ granted, response: transport.sentMessages.at(-1) }, {
+				granted: [],
+				response: {
+					jsonrpc: '2.0', id: 42,
+					error: {
+						code: AhpErrorCodes.PermissionDenied,
+						message: `Access to ${uri} is not granted.`,
+						data: { request: { channel: ROOT_STATE_URI, uri, read: true } },
+					},
+				},
+			});
 		});
 
 		test('ChatTurnStarted grants attachment access before reverse resourceRead', async () => {

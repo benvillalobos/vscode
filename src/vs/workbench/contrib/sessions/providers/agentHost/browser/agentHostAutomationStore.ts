@@ -716,14 +716,13 @@ export class AgentHostAutomationStore extends Disposable implements ISessionsPro
 		const definition = this._definitionFromDescriptor(descriptor);
 		const scope = descriptor.conversation ? undefined : this._acquireCustomizationScope(descriptor.target, definition.session.provider);
 		try {
-			if (scope) {
-				await this._captureCustomizations(definition, scope, undefined, customizationIds);
-			}
+			const clientCustomizations = scope ? await this._captureCustomizations(definition, scope, undefined, customizationIds) : undefined;
 			const state = await this._dispatchAndWait(
 				{ type: ActionType.AutomationCreateRequested, resource, definition },
 				catalog => catalog.entries.some(automation => automation.resource === resource),
 				mutationGuard,
 				true,
+				clientCustomizations,
 			);
 			if (!state) {
 				throw new Error(`Automation create completed without authoritative state: ${resource}`);
@@ -746,9 +745,7 @@ export class AgentHostAutomationStore extends Disposable implements ISessionsPro
 			? this._acquireCustomizationScope(descriptor.target, definition.session.provider)
 			: undefined;
 		try {
-			if (scope) {
-				await this._captureCustomizations(definition, scope, current.definition, customizationIds);
-			}
+			const clientCustomizations = scope ? await this._captureCustomizations(definition, scope, current.definition, customizationIds) : undefined;
 			const expected = this._requireProjectedAutomation({ ...current, definition });
 			const enabledChanged = definition.enabled !== current.definition.enabled;
 			const conditionsChanged = !equals(definition.disableConditions ?? [], current.definition.disableConditions ?? []);
@@ -785,6 +782,7 @@ export class AgentHostAutomationStore extends Disposable implements ISessionsPro
 				},
 				mutationGuard,
 				!!scope,
+				clientCustomizations,
 			);
 			if (!state) {
 				throw new Error(`Automation update completed without authoritative state: ${resource}`);
@@ -815,17 +813,18 @@ export class AgentHostAutomationStore extends Disposable implements ISessionsPro
 		return this._activeClientService.acquireScope(sessionType, target.kind === 'workspace' ? [target.folderUri] : []);
 	}
 
-	private async _captureCustomizations(definition: AutomationDefinition, scope: IAgentCustomizationScope, previous?: AutomationDefinition, customizationIds?: readonly string[]): Promise<void> {
+	private async _captureCustomizations(definition: AutomationDefinition, scope: IAgentCustomizationScope, previous?: AutomationDefinition, customizationIds?: readonly string[]): Promise<readonly ClientPluginCustomization[]> {
 		await scope.whenResolved();
 		const current = scope.customizations.get().filter(isCustomizationEnabled);
 		const currentIds = new Set(current.map(plugin => plugin.id));
 		const selectedIds = customizationIds !== undefined ? new Set(customizationIds) : undefined;
+		const clientCustomizations = selectedIds ? current.filter(plugin => selectedIds.has(plugin.id)) : current;
 		const customizations = selectedIds
-			? [...current, ...(previous?.session.customizations ?? []).filter(plugin => !currentIds.has(plugin.id))].filter(plugin => selectedIds.has(plugin.id))
-			: current;
+			? [...clientCustomizations, ...(previous?.session.customizations ?? []).filter(plugin => !currentIds.has(plugin.id) && selectedIds.has(plugin.id))]
+			: clientCustomizations;
 		definition.session.customizations = customizations;
 		if (!definition.session.agent) {
-			return;
+			return clientCustomizations;
 		}
 		const agentUri = URI.parse(definition.session.agent.uri);
 		const findBundle = (plugins: readonly ClientPluginCustomization[] | undefined, contains?: URI) => plugins?.map(plugin => URI.parse(plugin.uri))
@@ -842,6 +841,7 @@ export class AgentHostAutomationStore extends Disposable implements ISessionsPro
 		if (syncedUri && customizations.some(plugin => isEqualOrParent(syncedUri, URI.parse(plugin.uri)))) {
 			definition.session.agent = { uri: syncedUri.toString() };
 		}
+		return clientCustomizations;
 	}
 
 
@@ -1050,6 +1050,7 @@ export class AgentHostAutomationStore extends Disposable implements ISessionsPro
 		predicate: (catalog: AutomationState) => boolean,
 		mutationGuard?: AutomationMutationGuard,
 		waitForCatalogChange = false,
+		clientCustomizations?: readonly ClientPluginCustomization[],
 	): Promise<AutomationEntry | undefined> {
 		await this._waitForCatalog(() => true);
 		if (this._store.isDisposed) {
@@ -1068,7 +1069,7 @@ export class AgentHostAutomationStore extends Disposable implements ISessionsPro
 			Event.None,
 			resourceStateBeforeDispatch,
 		);
-		this._connection.dispatch(AUTOMATION_CATALOG_URI, action);
+		this._connection.dispatch(AUTOMATION_CATALOG_URI, action, clientCustomizations);
 		const catalog = await result;
 		const state = catalog.entries.find(automation => automation.resource === action.resource);
 		return state;

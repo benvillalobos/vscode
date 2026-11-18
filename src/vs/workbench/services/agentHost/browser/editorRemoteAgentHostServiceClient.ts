@@ -36,7 +36,7 @@ import type { FetchAutomationRunsParams, FetchAutomationRunsResult, ListAutomati
 import type { ActionEnvelope, ChatAction, ClientAnnotationsAction, ClientAutomationAction, ClientAutomationRunAction, ClientChangesetAction, INotification, IRootConfigChangedAction, SessionAction, TerminalAction } from '../../../../platform/agentHost/common/state/sessionActions.js';
 import type { IRemoteWatchHandle } from '../../../../platform/agentHost/common/agentHostFileSystemProvider.js';
 import type { CreateResourceWatchParams, CreateResourceWatchResult, ResourceCopyParams, ResourceCopyResult, ResourceDeleteParams, ResourceDeleteResult, ResourceListResult, ResourceMkdirParams, ResourceMkdirResult, ResourceMoveParams, ResourceMoveResult, ResourceReadResult, ResourceResolveParams, ResourceResolveResult, ResourceWriteParams, ResourceWriteResult } from '../../../../platform/agentHost/common/state/sessionProtocol.js';
-import { ComponentToState, RootState, StateComponents } from '../../../../platform/agentHost/common/state/sessionState.js';
+import { ComponentToState, RootState, StateComponents, type ClientPluginCustomization } from '../../../../platform/agentHost/common/state/sessionState.js';
 import type { OtlpExportLogsParams } from '../../../../platform/agentHost/common/state/protocol/channels-otlp/notifications.js';
 import type { InitializeResult } from '../../../../platform/agentHost/common/state/protocol/common/commands.js';
 import { IRemoteAgentService } from '../../remote/common/remoteAgentService.js';
@@ -315,8 +315,8 @@ export class EditorRemoteAgentHostServiceClient extends Disposable implements IA
 		return this._protocolClient?.getActiveSubscriptions() ?? [];
 	}
 
-	dispatch(channel: string, action: SessionAction | ChatAction | TerminalAction | ClientChangesetAction | ClientAnnotationsAction | ClientAutomationAction | ClientAutomationRunAction | IRootConfigChangedAction): void {
-		this._protocolClient?.dispatch(channel, action);
+	dispatch(channel: string, action: SessionAction | ChatAction | TerminalAction | ClientChangesetAction | ClientAnnotationsAction | ClientAutomationAction | ClientAutomationRunAction | IRootConfigChangedAction, clientCustomizations?: readonly ClientPluginCustomization[]): void {
+		this._protocolClient?.dispatch(channel, action, clientCustomizations);
 	}
 
 	async dispatchConfirmed<T>(channel: string, subscription: IAgentSubscription<T>, action: SessionAction | ChatAction | TerminalAction | ClientChangesetAction | ClientAnnotationsAction | ClientAutomationAction | ClientAutomationRunAction | IRootConfigChangedAction, token: CancellationToken): Promise<ActionEnvelope> {

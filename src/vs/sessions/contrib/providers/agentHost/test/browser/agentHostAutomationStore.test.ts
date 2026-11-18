@@ -62,6 +62,7 @@ class TestAutomationConnection {
 	readonly runRequests: string[] = [];
 	lastRunResource = '';
 	readonly dispatched: { readonly channel: string; readonly action: Parameters<IAgentConnection['dispatch']>[1] }[] = [];
+	readonly clientCustomizations: (readonly ClientPluginCustomization[] | undefined)[] = [];
 	subscribedChannel: string | undefined;
 	runPrimarySession: string | undefined = 'mock:/session';
 	readonly runRequested = new DeferredPromise<void>();
@@ -192,8 +193,9 @@ class TestAutomationConnection {
 		this._onDidCatalogChange.fire(this._catalog);
 	}
 
-	dispatch(channel: string, action: Parameters<IAgentConnection['dispatch']>[1]): void {
+	dispatch(channel: string, action: Parameters<IAgentConnection['dispatch']>[1], clientCustomizations?: readonly ClientPluginCustomization[]): void {
 		this.dispatched.push({ channel, action });
+		this.clientCustomizations.push(clientCustomizations);
 		if (action.type === ActionType.AutomationCreateRequested) {
 			void this.createRequested.complete();
 			if (this.suppressCreatePublication) {
@@ -788,10 +790,13 @@ suite('AgentHostAutomationStore', () => {
 		store.setConnection(connection);
 		await store.createAutomation({ ...createOptions(), customizationIds: [second.id, 'unknown', disabled.id, first.id] });
 		await store.createAutomation({ ...createOptions(), customizationIds: [second.id] });
-		assert.deepStrictEqual(connection.dispatched.map(({ action }) => {
+		assert.deepStrictEqual({ customizations: connection.dispatched.map(({ action }) => {
 			assert.ok(action.type === ActionType.AutomationCreateRequested);
 			return action.definition.session.customizations;
-		}), [[first, second], [second]]);
+		}), grants: connection.clientCustomizations }, {
+			customizations: [[first, second], [second]],
+			grants: [[first, second], [second]],
+		});
 	});
 
 	test('updating customization ids refreshes current refs and keeps saved-only refs verbatim', async () => {
@@ -803,7 +808,7 @@ suite('AgentHostAutomationStore', () => {
 		const connection = customizationConnection();
 		store.setConnection(connection);
 		const automation = await store.createAutomation(createOptions());
-		const refreshed = { ...saved, nonce: 'v2' };
+		const refreshed = { ...saved, uri: 'virtual://client/plugins/refreshed', nonce: 'v2' };
 		activeClient.customizations.set([refreshed, plugin('virtual://client/plugins/unselected')], undefined);
 		await store.updateAutomation(automation.id, { customizationIds: [missing.id, saved.id, 'unknown'] });
 		const update = connection.dispatched[1].action;
@@ -811,10 +816,12 @@ suite('AgentHostAutomationStore', () => {
 		assert.deepStrictEqual({
 			customizations: update.changes.session?.customizations,
 			savedRefReused: update.changes.session?.customizations?.[1] === missing,
+			grants: connection.clientCustomizations[1],
 			scopes: activeClient.scopes,
 		}, {
 			customizations: [refreshed, missing],
 			savedRefReused: true,
+			grants: [refreshed],
 			scopes: [
 				{ sessionType: 'copilotcli', roots: [], disposed: true },
 				{ sessionType: 'copilotcli', roots: [], disposed: true },
@@ -1008,10 +1015,35 @@ suite('AgentHostAutomationStore', () => {
 				sameEntries: action.changes.session?.customizations === create.definition.session.customizations,
 			};
 		});
-		assert.deepStrictEqual({ updates, scopes: activeClient.scopes }, {
+		assert.deepStrictEqual({ updates, scopes: activeClient.scopes, grants: connection.clientCustomizations.slice(1) }, {
 			updates: [{ customizations: saved, sameEntries: true }, { customizations: saved, sameEntries: true }],
 			scopes: [{ sessionType: 'copilotcli', roots: ['file:///workspace'], disposed: true }],
+			grants: [undefined, undefined],
 		});
+	});
+
+	test('renaming another client automation preserves its refs without authorizing reads', async () => {
+		const activeClient = new TestActiveClientService();
+		const { store } = reconnectable(true, activeClient);
+		const connection = customizationConnection();
+		const saved = plugin('file:///synthetic-other-client');
+		connection.setAutomation({
+			resource: 'other-automation://tenant/opaque',
+			definition: {
+				title: 'Other client', message: { text: 'Not executed', origin: { kind: MessageKind.Automation } },
+				session: { provider: 'copilotcli', customizations: [saved] }, enabled: false, triggers: [],
+			},
+			runs: [], operations: [AutomationOperation.Update],
+			createdAt: '2026-01-01T00:00:00Z', modifiedAt: '2026-01-01T00:00:00Z',
+		});
+		store.setConnection(connection);
+		await store.updateAutomation(store.automations.get()[0].id, { name: 'Renamed' });
+		const action = connection.dispatched[0].action;
+		assert.ok(action.type === ActionType.AutomationUpdateRequested);
+		assert.deepStrictEqual({
+			title: action.changes.title, customizations: action.changes.session?.customizations,
+			grants: connection.clientCustomizations, scopes: activeClient.scopes,
+		}, { title: 'Renamed', customizations: [saved], grants: [undefined], scopes: [] });
 	});
 
 	test('retargeting recaptures for the mapped harness and client workspace roots', async () => {

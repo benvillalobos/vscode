@@ -24,7 +24,9 @@ import { editorWindowAgentHostClientInfo } from '../../../../../platform/agentHo
 import { AgentHostClientConnectionKind } from '../../../../../platform/agentHost/common/agentHostTelemetry.js';
 import type { IAgentHostTcpConnection } from '../../../../../platform/agentHost/common/agentHostTcpConnection.js';
 import { agentHostAuthority } from '../../../../../platform/agentHost/common/agentHostUri.js';
-import type { IAgentHostDebugLogsArtifact, IAgentHostService } from '../../../../../platform/agentHost/common/agentService.js';
+import type { IAgentConnection, IAgentHostDebugLogsArtifact, IAgentHostService } from '../../../../../platform/agentHost/common/agentService.js';
+import { ActionType } from '../../../../../platform/agentHost/common/state/sessionActions.js';
+import { AUTOMATION_CATALOG_URI, CustomizationType } from '../../../../../platform/agentHost/common/state/sessionState.js';
 import type { IAgentHostManagedWorktree, IAgentHostWorktreeCleanupStatus } from '../../../../../platform/agentHost/common/agentHostWorktreeCleanup.js';
 import type { IClientTransport } from '../../../../../platform/agentHost/common/state/sessionTransport.js';
 import { IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
@@ -195,6 +197,22 @@ suite('EditorRemoteAgentHostServiceClient', () => {
 			});
 		});
 	}
+
+	test('forwards client-local customization grants separately from automation actions', () => {
+		const calls: Parameters<AgentHostProtocolClient['dispatch']>[] = [];
+		const service: IAgentConnection = createService({ dispatch: (...args) => { calls.push(args); } }, 'ssh-remote+test');
+		const customizations = [{
+			type: CustomizationType.Plugin as const,
+			id: 'selected', uri: 'virtual://client/plugins/selected', name: 'Selected',
+		}];
+		const action = {
+			type: ActionType.AutomationUpdateRequested as const,
+			resource: 'other-automation://tenant/opaque',
+			changes: { session: { customizations } },
+		};
+		service.dispatch(AUTOMATION_CATALOG_URI, action, customizations);
+		assert.deepStrictEqual(calls, [[AUTOMATION_CATALOG_URI, action, customizations]]);
+	});
 
 	test('forwards the location preference alongside the resolver environment', async () => {
 		const calls: unknown[] = [];

@@ -1909,7 +1909,10 @@ export class AgentHostProtocolClient extends Disposable implements IAgentConnect
 		return this._subscriptionManager.getActiveSubscriptions();
 	}
 
-	dispatch(channel: string, action: SessionAction | ChatAction | TerminalAction | ClientChangesetAction | ClientAnnotationsAction | ClientAutomationAction | ClientAutomationRunAction | IRootConfigChangedAction): void {
+	dispatch(channel: string, action: SessionAction | ChatAction | TerminalAction | ClientChangesetAction | ClientAnnotationsAction | ClientAutomationAction | ClientAutomationRunAction | IRootConfigChangedAction, clientCustomizations?: readonly ClientPluginCustomization[]): void {
+		if (clientCustomizations) {
+			this._grantImplicitReadsForCustomizations(clientCustomizations);
+		}
 		// Assisted permissions feedback is restricted telemetry: it goes only to the host, never into this
 		// client's state. A replay after a reconnect resends the optimistic copy, so it drops the feedback.
 		const optimistic = action.type === ActionType.ChatToolCallConfirmed ? withoutAgentPermissionFeedback(action) : action;
@@ -3160,16 +3163,6 @@ export class AgentHostProtocolClient extends Disposable implements IAgentConnect
 			case ActionType.SessionActiveClientSet:
 				if (action.activeClient.customizations) {
 					this._grantImplicitReadsForCustomizations(action.activeClient.customizations);
-				}
-				break;
-			case ActionType.AutomationCreateRequested:
-				if (action.definition.session.customizations) {
-					this._grantImplicitReadsForCustomizations(action.definition.session.customizations);
-				}
-				break;
-			case ActionType.AutomationUpdateRequested:
-				if (action.changes.session?.customizations) {
-					this._grantImplicitReadsForCustomizations(action.changes.session.customizations);
 				}
 				break;
 			case ActionType.ChatTurnStarted:
