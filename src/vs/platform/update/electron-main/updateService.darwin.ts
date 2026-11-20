@@ -72,13 +72,13 @@ export class DarwinUpdateService extends AbstractUpdateService implements IRelau
 		lifecycleMainService.setRelaunchHandler(this);
 	}
 
-	isUpdateRelaunch(options?: IRelaunchOptions): boolean {
-		return !options?.addArgs && !options?.removeArgs && this.state.type === StateType.Ready;
-	}
-
 	handleRelaunch(options?: IRelaunchOptions): boolean {
-		if (!this.isUpdateRelaunch(options)) {
-			return false;
+		if (options?.addArgs || options?.removeArgs) {
+			return false; // we cannot apply an update and restart with different args
+		}
+
+		if (this.state.type !== StateType.Ready) {
+			return false; // we only handle the relaunch when we have a pending update
 		}
 
 		this.logService.trace('update#handleRelaunch(): running raw#quitAndInstall()');

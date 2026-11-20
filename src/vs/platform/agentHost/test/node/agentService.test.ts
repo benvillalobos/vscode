@@ -3555,12 +3555,12 @@ suite('AgentService (node dispatcher)', () => {
 				{ errorType: 'requestFailed', resumable: true, turnId: 'turn-1', available: false },
 				{ errorType: 'executionInterrupted', resumable: true, turnId: 'old-turn', available: false },
 			]) {
-				test(`update recovery validates interruption and exact turn: ${JSON.stringify(scenario)}`, async () => {
+				test(`restart recovery validates interruption and exact turn: ${JSON.stringify(scenario)}`, async () => {
 					const { session, chat } = await createErroredTurn(scenario.resumable, scenario.errorType);
 					const calls: string[] = [];
 					copilotAgent.chats.resumeTurn = async (_chat, turnId) => { calls.push(turnId); };
 					// eslint-disable-next-line local/code-no-bracket-notation-for-identifiers -- Exercise the production adapter without exposing a test-only API.
-					const recovery = await service['_automationService']['_execution'].prepareUpdateResume!(session, URI.parse(chat), scenario.turnId, undefined);
+					const recovery = await service['_automationService']['_execution'].prepareRunResume!(session, URI.parse(chat), scenario.turnId, undefined);
 					if (recovery && typeof recovery !== 'string') {
 						recovery.resume();
 					}
@@ -3568,11 +3568,11 @@ suite('AgentService (node dispatcher)', () => {
 				});
 			}
 
-			test('update recovery revalidates a prepared resume after another turn starts', async () => {
+			test('restart recovery revalidates a prepared resume after another turn starts', async () => {
 				const { session, chat } = await createErroredTurn(true, 'executionInterrupted');
 				copilotAgent.chats.resumeTurn = async () => { throw new Error('Must not resume a stale turn'); };
 				// eslint-disable-next-line local/code-no-bracket-notation-for-identifiers -- Exercise the production adapter without exposing a test-only API.
-				const recovery = await service['_automationService']['_execution'].prepareUpdateResume!(session, URI.parse(chat), 'turn-1', undefined);
+				const recovery = await service['_automationService']['_execution'].prepareRunResume!(session, URI.parse(chat), 'turn-1', undefined);
 				assert.ok(recovery && typeof recovery !== 'string');
 				getStateManager(service).dispatchServerAction(chat, chatTurnStarted('later-turn', 'later', '2026-08-11T00:01:00.000Z'));
 				assert.throws(() => recovery.resume(), /Cannot resume while a turn is active/);

@@ -35,7 +35,6 @@ import { deepClone } from '../../../base/common/objects.js';
 import '../common/agentHostStarter.config.contribution.js';
 import { AgentHostAhpJsonlLoggingEnvVar } from '../common/ahpJsonlLogger.js';
 import { AgentHostWakeNetworkMonitor } from '../common/agentHostWakeNetworkMonitor.js';
-import { IUpdateService, StateType } from '../../update/common/update.js';
 
 /** The distributed notification macOS posts when it changes which apps it trusts for Accessibility. */
 const MacAccessibilityTrustChangedNotification = 'com.apple.accessibility.api';
@@ -81,7 +80,6 @@ export class ElectronAgentHostStarter extends Disposable implements IAgentHostSt
 		@ILogService private readonly _logService: ILogService,
 		@ITelemetryService private readonly _telemetryService: ITelemetryService,
 		@IWindowsMainService private readonly _windowsMainService: IWindowsMainService,
-		@IUpdateService updateService: IUpdateService,
 	) {
 		super();
 
@@ -91,7 +89,6 @@ export class ElectronAgentHostStarter extends Disposable implements IAgentHostSt
 			}
 		}));
 		this._register(this._lifecycleMainService.onWillShutdown(event => this._onWillShutdown.fire({
-			forUpdate: event.forUpdate === true || updateService.state.type === StateType.Restarting,
 			join: promise => event.join('join.agentHost', promise),
 		})));
 
@@ -294,7 +291,7 @@ export class ElectronAgentHostStarter extends Disposable implements IAgentHostSt
 				client,
 				store,
 				onDidProcessExit: exitDiagnostics.onDidExit,
-				shutdown: forUpdate => managementService.shutdown(forUpdate),
+				shutdown: () => managementService.shutdown(),
 			};
 		} catch (error) {
 			exitDiagnostics.dispose();

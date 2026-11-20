@@ -80,7 +80,7 @@ import { IAdditionalWorktreeLifecycleService } from './chatContributions/additio
 import { IAgentHostWorktreeCleanupService } from './agentHostWorktreeCleanupService.js';
 import type { IScratchFolder } from './agentHostScratchFolderDatabase.js';
 import type { WorktreeRemovalMode } from './agentHostWorktreeRemovalDatabase.js';
-import { AgentHostAutomationService, enqueueAutomationConversation, type AutomationUpdateRecovery } from './agentHostAutomationService.js';
+import { AgentHostAutomationService, enqueueAutomationConversation, type AutomationRunRecovery } from './agentHostAutomationService.js';
 import { agentHostAutomationSessionOrigin, getAgentHostScheduledChat } from '../common/meta/agentHostAutomationsMeta.js';
 import { createAgentChatContext, createAgentChatCreationContext, inheritedChatFolders } from './agentChatContext.js';
 import { captureCredentialSource, parseCredentialPrincipal, type IAgentHostAuthenticationScope, type IAgentHostCredentialSource } from '../common/agentHostCredentials.js';
@@ -1477,7 +1477,7 @@ export class AgentService extends Disposable implements IAgentService {
 			},
 			cancelSession: (session, turnId) => this._cancelAutomationSession(session, turnId),
 			resumeTurn: (session, turnId) => this._resumeAutomationTurn(session, turnId),
-			prepareUpdateResume: (session, chat, turnId, activeClient) => this._prepareAutomationUpdateResume(session, chat, turnId, activeClient),
+			prepareRunResume: (session, chat, turnId, activeClient) => this._prepareAutomationRunResume(session, chat, turnId, activeClient),
 		}));
 		this._register(this._providerService.registerProviderInitializer(provider => this._initializeProvider(provider)));
 		this._register(this._providerService.onDidRegisterProvider(provider => this._onDidRegisterProvider(provider)));
@@ -2958,7 +2958,7 @@ export class AgentService extends Disposable implements IAgentService {
 		}
 	}
 
-	private async _prepareAutomationUpdateResume(session: URI, chat: URI, turnId: string, activeClient: SessionActiveClient | undefined): Promise<AutomationUpdateRecovery | undefined> {
+	private async _prepareAutomationRunResume(session: URI, chat: URI, turnId: string, activeClient: SessionActiveClient | undefined): Promise<AutomationRunRecovery | undefined> {
 		const sessionKey = session.toString();
 		const chatKey = chat.toString();
 		if (this._catalogSyncService.isSessionDeletionFenced(session) || this._sessionResidency.isBeingDisposed(session)) {
@@ -3002,7 +3002,7 @@ export class AgentService extends Disposable implements IAgentService {
 				if (rejection !== undefined || this._store.isDisposed || this._defaultChat(session) !== chatKey
 					|| this._catalogSyncService.isSessionDeletionFenced(session) || this._sessionResidency.isBeingDisposed(session)
 					|| getErrorResponsePart(turn)?.error.errorType !== 'executionInterrupted') {
-					throw new Error(rejection ?? 'Automation update recovery is no longer available.');
+					throw new Error(rejection ?? 'Automation recovery is no longer available.');
 				}
 				if (credentials) {
 					const provider = this._providerService.getProviderForChat(sessionKey, chatKey);
@@ -16582,7 +16582,7 @@ export class AgentService extends Disposable implements IAgentService {
 		});
 	}
 
-	async shutdown(forUpdate = false): Promise<void> {
+	async shutdown(): Promise<void> {
 		this._logService.info('AgentService: shutting down all providers...');
 		this._chatContributions.willShutdown();
 		this._catalogReconciliationService.dispose();
@@ -16591,7 +16591,7 @@ export class AgentService extends Disposable implements IAgentService {
 				while (this._clientDispatchQueues.size > 0) {
 					await Promise.allSettled([...this._clientDispatchQueues.values()]);
 				}
-				await this._automationService.prepareForShutdown(forUpdate);
+				await this._automationService.prepareForShutdown();
 				await this.whenCatalogReconciliationIdle();
 			} finally {
 				await this._providerService.shutdown();

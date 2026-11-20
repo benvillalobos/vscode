@@ -66,7 +66,7 @@ export class AgentHostProcessManager extends Disposable {
 		if (this._starter.onWillShutdown) {
 			this._register(this._starter.onWillShutdown(request => {
 				this._wasQuitRequested = true;
-				request.join(this._shutdown(request.forUpdate).finally(() => this.dispose()));
+				request.join(this._shutdown().finally(() => this.dispose()));
 			}));
 		}
 	}
@@ -247,9 +247,9 @@ export class AgentHostProcessManager extends Disposable {
 		}
 	}
 
-	private async _shutdown(forUpdate = false): Promise<void> {
+	private async _shutdown(): Promise<void> {
 		try {
-			await raceTimeout(this._shutdownGracefully(forUpdate), Constants.ShutdownTimeoutMs, () => {
+			await raceTimeout(this._shutdownGracefully(), Constants.ShutdownTimeoutMs, () => {
 				this._logService.warn(`AgentHostProcessManager: agent host did not shut down within ${Constants.ShutdownTimeoutMs}ms; terminating it`);
 			});
 		} catch (error) {
@@ -259,7 +259,7 @@ export class AgentHostProcessManager extends Disposable {
 		}
 	}
 
-	private async _shutdownGracefully(forUpdate: boolean): Promise<void> {
+	private async _shutdownGracefully(): Promise<void> {
 		try {
 			await this._startPromise;
 		} catch (error) {
@@ -267,6 +267,6 @@ export class AgentHostProcessManager extends Disposable {
 			return;
 		}
 
-		await this._connection?.shutdown(forUpdate);
+		await this._connection?.shutdown();
 	}
 }

@@ -41,7 +41,6 @@ class TestAgentHostStarter implements IAgentHostStarter {
 	readonly connectionStores: DisposableStore[] = [];
 	startCount = 0;
 	shutdownCount = 0;
-	readonly updateShutdowns: boolean[] = [];
 	isDisposed = false;
 	private _startError: Error | undefined;
 	private _startBarrier: DeferredPromise<void> | undefined;
@@ -74,9 +73,8 @@ class TestAgentHostStarter implements IAgentHostStarter {
 			client,
 			store,
 			onDidProcessExit: exitEmitter.event,
-			shutdown: async forUpdate => {
+			shutdown: async () => {
 				this.shutdownCount++;
-				this.updateShutdowns.push(forUpdate === true);
 				await this._shutdownBarrier?.p;
 			},
 		};
@@ -122,10 +120,9 @@ class TestAgentHostStarter implements IAgentHostStarter {
 		return this._shutdownBarrier;
 	}
 
-	requestShutdown(forUpdate = false): Promise<void> {
+	requestShutdown(): Promise<void> {
 		let shutdownPromise: Promise<void> | undefined;
 		this._onWillShutdown.fire({
-			forUpdate,
 			join: promise => shutdownPromise = promise,
 		});
 		if (!shutdownPromise) {
@@ -536,15 +533,6 @@ suite('AgentHostProcessManager', () => {
 			connectionDisposed: true,
 		});
 	});
-
-	for (const forUpdate of [false, true]) {
-		test(`forwards update intent only during application shutdown: ${forUpdate}`, async () => {
-			const { manager, starter } = await createManager();
-			await manager.restart();
-			await starter.requestShutdown(forUpdate);
-			assert.deepStrictEqual(starter.updateShutdowns, [false, forUpdate]);
-		});
-	}
 
 	test('bounds graceful shutdown before disposing the connection', () => runWithFakedTimers({ useFakeTimers: true }, async () => {
 		const { starter } = await createManager();

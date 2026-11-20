@@ -177,7 +177,7 @@ suite('AgentHostAutomationService', () => {
 			prepareSessionMessage: execution?.prepareSessionMessage,
 			cancelSession: execution?.cancelSession ?? (async () => false),
 			resumeTurn: execution?.resumeTurn ?? (async () => false),
-			prepareUpdateResume: execution?.prepareUpdateResume,
+			prepareRunResume: execution?.prepareRunResume,
 		}, stateManager, createTestChatOwnershipService(stateManager), storageService, new NullLogService(), telemetry, providers, pluginManager, fileService, upcastPartial<INativeEnvironmentService>({ userHome: URI.file('/home') }), clientConnections, systemWake);
 		return disposables.add(service);
 	}
@@ -186,8 +186,8 @@ suite('AgentHostAutomationService', () => {
 		await service.handleCreate(createAction(resource));
 	}
 
-	async function startUpdateRun() {
-		const session = URI.parse('mock:/update-session');
+	async function startInterruptedRun() {
+		const session = URI.parse('mock:/restart-session');
 		const chat = buildDefaultChatUri(session);
 		const started = new DeferredPromise<void>();
 		const service = createService({
@@ -204,52 +204,61 @@ suite('AgentHostAutomationService', () => {
 			},
 		});
 		await enableAndCreate(service);
-		const run = await service.runAutomation({ channel: AUTOMATION_CATALOG_URI, automation: createAction().resource, requestId: 'update' });
+		const run = await service.runAutomation({ channel: AUTOMATION_CATALOG_URI, automation: createAction().resource, requestId: 'restart' });
 		await started.p;
+		const hasRecordedTurn = () => storageService.get<{ runTurns?: readonly { run: string }[] }>('automations')?.runTurns?.some(turn => turn.run === run.resource) === true;
+		if (!hasRecordedTurn()) {
+			await Event.toPromise(Event.filter(storageService.onDidChange, key => key === 'automations' && hasRecordedTurn()));
+		}
+		await storageService.whenIdle();
 		return { service, run, session, chat };
 	}
 
-	test('update recovery waits for credentials without opening a conversation and resumes once', async () => {
-		const { service, run, session, chat } = await startUpdateRun();
-		await service.prepareForShutdown(true);
-		stateManager.dispatchServerAction(chat, { type: ActionType.ChatTurnCancelled, turnId: 'original-turn', duration: 0 });
-		service.dispose();
-		const ready = observableValue('ready', false);
-		const prepared: string[] = [];
-		const resumed = new DeferredPromise<void>();
-		const restored = createService({
-			isSessionTemplateAvailable: (_template, reader) => ready.read(reader),
-			prepareUpdateResume: async (target, targetChat, turnId) => {
-				prepared.push(`${target}:${targetChat}:${turnId}`);
-				return { turnId: 'restored-turn', resume: () => { void resumed.complete(); } };
-			},
+	for (const graceful of [false, true]) {
+		test(`restart recovery waits for credentials and resumes once after ${graceful ? 'ordinary shutdown' : 'a crash without shutdown'}`, async () => {
+			const { service, run, session, chat } = await startInterruptedRun();
+			if (graceful) {
+				await service.prepareForShutdown();
+				stateManager.dispatchServerAction(chat, { type: ActionType.ChatTurnCancelled, turnId: 'original-turn', duration: 0 });
+			}
+			service.dispose();
+			stateManager = disposables.add(new AgentHostStateManager(new NullLogService()));
+			stateManager.dispatchServerAction(ROOT_STATE_URI, { type: ActionType.RootConfigChanged, config: { [AGENT_HOST_AUTOMATIONS_ENABLED_CONFIG_KEY]: true } });
+			const ready = observableValue('ready', false);
+			const prepared: string[] = [];
+			const resumed = new DeferredPromise<void>();
+			const restored = createService({
+				isSessionTemplateAvailable: (_template, reader) => ready.read(reader),
+				prepareRunResume: async (target, targetChat, turnId) => {
+					prepared.push(`${target}:${targetChat}:${turnId}`);
+					return { turnId: 'restored-turn', resume: () => { void resumed.complete(); } };
+				},
+			});
+			await storageService.whenIdle();
+			assert.deepStrictEqual(prepared, []);
+			ready.set(true, undefined);
+			await resumed.p;
+			restored.handleAgentsChanged();
+			await storageService.whenIdle();
+			const stored = storageService.get<{ runTurns?: readonly unknown[] }>('automations');
+			assert.deepStrictEqual({ prepared, marker: stored?.runTurns, status: stateManager.getAutomationRunState(run.resource)?.lifecycle.status }, {
+				prepared: [`${session}:${chat}:original-turn`], marker: undefined, status: AutomationRunStatus.Running,
+			});
+			restored.dispose();
+			createService({ prepareRunResume: async () => { throw new Error('Already consumed recovery must not run twice'); } });
+			await terminalRun(run.resource);
+			assert.strictEqual(stateManager.getAutomationRunState(run.resource)?.lifecycle.status, AutomationRunStatus.Failed);
 		});
-		await storageService.whenIdle();
-		assert.deepStrictEqual(prepared, []);
-		ready.set(true, undefined);
-		await resumed.p;
-		restored.handleAgentsChanged();
-		await storageService.whenIdle();
-		const stored = storageService.get<{ updateResumes?: readonly unknown[] }>('automations');
-		assert.deepStrictEqual({ prepared, marker: stored?.updateResumes, status: stateManager.getAutomationRunState(run.resource)?.lifecycle.status }, {
-			prepared: [`${session}:${chat}:original-turn`], marker: undefined, status: AutomationRunStatus.Running,
-		});
-		restored.dispose();
-		const restarted = createService({ prepareUpdateResume: async () => { throw new Error('Already consumed recovery must not run twice'); } });
-		await terminalRun(run.resource);
-		assert.strictEqual(stateManager.getAutomationRunState(run.resource)?.lifecycle.status, AutomationRunStatus.Failed);
-		restarted.dispose();
-	});
+	}
 
-	test('cancelling while update recovery is being prepared prevents execution', async () => {
-		const { service, run } = await startUpdateRun();
-		await service.prepareForShutdown(true);
+	test('cancelling while restart recovery is being prepared prevents execution', async () => {
+		const { service, run } = await startInterruptedRun();
 		service.dispose();
 		const preparing = new DeferredPromise<void>();
 		const prepared = new DeferredPromise<{ turnId: string; resume: () => void }>();
 		let resumeCount = 0;
 		const restored = createService({
-			prepareUpdateResume: async () => {
+			prepareRunResume: async () => {
 				await preparing.complete();
 				return prepared.p;
 			},
@@ -262,35 +271,52 @@ suite('AgentHostAutomationService', () => {
 	});
 
 	for (const outcome of ['completed', 'cancelled', undefined] as const) {
-		test(`update recovery handles an already settled or unavailable turn: ${outcome}`, async () => {
-			const { service, run } = await startUpdateRun();
-			await service.prepareForShutdown(true);
+		test(`restart recovery handles an already settled or unavailable turn: ${outcome}`, async () => {
+			const { service, run } = await startInterruptedRun();
 			service.dispose();
-			createService({ prepareUpdateResume: async () => outcome });
+			createService({ prepareRunResume: async () => outcome });
 			await terminalRun(run.resource);
 			assert.strictEqual(stateManager.getAutomationRunState(run.resource)?.lifecycle.status,
 				outcome === 'completed' ? AutomationRunStatus.Completed : outcome === 'cancelled' ? AutomationRunStatus.Cancelled : AutomationRunStatus.Failed);
 		});
 	}
 
-	test('ordinary restart does not opt an interrupted automation into automatic recovery', async () => {
-		const { service, run } = await startUpdateRun();
-		await service.prepareForShutdown(false);
+	test('intentional cancellation is not resumed after a restart', async () => {
+		const { service, run, chat } = await startInterruptedRun();
+		stateManager.dispatchServerAction(chat, { type: ActionType.ChatTurnCancelled, turnId: 'original-turn', duration: 0 });
+		await terminalRun(run.resource);
 		service.dispose();
 		let prepareCount = 0;
-		createService({ prepareUpdateResume: async () => { prepareCount++; return undefined; } });
-		await terminalRun(run.resource);
-		assert.deepStrictEqual({ status: stateManager.getAutomationRunState(run.resource)?.lifecycle.status, prepareCount }, { status: AutomationRunStatus.Failed, prepareCount: 0 });
+		createService({ prepareRunResume: async () => { prepareCount++; return undefined; } });
+		await timeout(0);
+		assert.deepStrictEqual({ status: stateManager.getAutomationRunState(run.resource)?.lifecycle.status, prepareCount }, { status: AutomationRunStatus.Cancelled, prepareCount: 0 });
 	});
 
-	test('update recovery retains its receipt while fresh credentials are unavailable', () => runWithFakedTimers({ useFakeTimers: true }, async () => {
-		const { service, run } = await startUpdateRun();
-		await service.prepareForShutdown(true);
+	test('normal session turns do not acquire automation recovery receipts', async () => {
+		const { service, run, session, chat } = await startInterruptedRun();
+		const normalSession = URI.parse('mock:/normal-session');
+		const normalChat = buildDefaultChatUri(normalSession);
+		stateManager.createSession({
+			resource: normalSession.toString(), provider: 'mock', title: '', status: SessionStatus.Idle,
+			createdAt: new Date().toISOString(), modifiedAt: new Date().toISOString(), defaultChat: normalChat,
+		});
+		stateManager.dispatchServerAction(normalChat, {
+			type: ActionType.ChatTurnStarted, turnId: 'normal-turn', startedAt: new Date().toISOString(),
+			message: { text: 'Normal request', origin: { kind: MessageKind.User } },
+		});
+		await service.prepareForShutdown();
+		assert.deepStrictEqual(storageService.get<{ runTurns: readonly unknown[] }>('automations')?.runTurns, [
+			{ run: run.resource, session: session.toString(), chat, turnId: 'original-turn' },
+		]);
+	});
+
+	test('restart recovery retains its receipt while fresh credentials are unavailable', () => runWithFakedTimers({ useFakeTimers: true }, async () => {
+		const { service, run } = await startInterruptedRun();
 		service.dispose();
 		let attempts = 0;
 		let resumed = 0;
 		createService({
-			prepareUpdateResume: async () => {
+			prepareRunResume: async () => {
 				if (++attempts === 1) {
 					throw new ProtocolError(AhpErrorCodes.AuthRequired, 'Credentials are not ready');
 				}
@@ -298,18 +324,17 @@ suite('AgentHostAutomationService', () => {
 			},
 		});
 		await timeout(1);
-		const awaitingCredentials = storageService.get<{ updateResumes: readonly { run: string }[] }>('automations')?.updateResumes.map(target => target.run);
+		const awaitingCredentials = storageService.get<{ runTurns: readonly { run: string }[] }>('automations')?.runTurns.map(target => target.run);
 		await timeout(60_000);
 		assert.deepStrictEqual({ awaitingCredentials, attempts, resumed }, { awaitingCredentials: [run.resource], attempts: 2, resumed: 1 });
 	}));
 
-	test('update recovery never executes when consuming its durable receipt fails', () => runWithFakedTimers({ useFakeTimers: true }, async () => {
-		const { service } = await startUpdateRun();
-		await service.prepareForShutdown(true);
+	test('restart recovery never executes when consuming its durable receipt fails', () => runWithFakedTimers({ useFakeTimers: true }, async () => {
+		const { service } = await startInterruptedRun();
 		service.dispose();
 		let resumed = 0;
 		createService({
-			prepareUpdateResume: async () => {
+			prepareRunResume: async () => {
 				writeFailures = 1;
 				return { turnId: 'original-turn', resume: () => { resumed++; } };
 			},
