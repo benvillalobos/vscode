@@ -89,7 +89,7 @@ export interface IAgentHostConnection {
 	readonly store: DisposableStore;
 	readonly onDidProcessExit: Event<IAgentHostProcessExitEvent>;
 	/** Gracefully shuts down Agent Host providers before the process is disposed. */
-	shutdown(): Promise<void>;
+	shutdown(forUpdate?: boolean): Promise<void>;
 }
 
 /** Allows a connection request to join the shared process startup. */
@@ -99,6 +99,7 @@ export interface IAgentHostStartRequest {
 
 /** Allows the Agent Host process to join application shutdown. */
 export interface IAgentHostShutdownRequest {
+	readonly forUpdate?: boolean;
 	join(promise: Promise<void>): void;
 }
 

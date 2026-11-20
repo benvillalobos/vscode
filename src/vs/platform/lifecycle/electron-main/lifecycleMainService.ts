@@ -62,6 +62,8 @@ export interface ShutdownEvent {
 	 * More details why the application is shutting down.
 	 */
 	reason: ShutdownReason;
+	/** Whether the relaunch handler will apply an update after shutdown. */
+	readonly forUpdate?: boolean;
 
 	/**
 	 * Allows to join the shutdown. The promise can be a long running operation but it
@@ -71,6 +73,8 @@ export interface ShutdownEvent {
 }
 
 export interface IRelaunchHandler {
+	/** Reports update intent before shutdown participants run. */
+	isUpdateRelaunch?(options?: IRelaunchOptions): boolean;
 
 	/**
 	 * Allows a handler to deal with relaunching the application. The return
@@ -251,6 +255,7 @@ export class LifecycleMainService extends Disposable implements ILifecycleMainSe
 	private readonly phaseWhen = new Map<LifecycleMainPhase, Barrier>();
 
 	private relaunchHandler: IRelaunchHandler | undefined = undefined;
+	private updateRelaunch = false;
 
 	constructor(
 		@ILogService private readonly logService: ILogService,
@@ -355,6 +360,7 @@ export class LifecycleMainService extends Disposable implements ILifecycleMainSe
 
 		this._onWillShutdown.fire({
 			reason,
+			forUpdate: this.updateRelaunch,
 			join(id, promise) {
 				logService.trace(`Lifecycle#onWillShutdown - begin '${id}'`);
 				joiners.push(promise.finally(() => {
@@ -570,6 +576,9 @@ export class LifecycleMainService extends Disposable implements ILifecycleMainSe
 	}
 
 	private resolvePendingQuitPromise(veto: boolean): void {
+		if (veto) {
+			this.updateRelaunch = false;
+		}
 		if (this.pendingQuitPromiseResolve) {
 			this.pendingQuitPromiseResolve(veto);
 			this.pendingQuitPromiseResolve = undefined;
@@ -705,6 +714,7 @@ export class LifecycleMainService extends Disposable implements ILifecycleMainSe
 
 		// `app.relaunch()` does not quit automatically, so we quit first,
 		// check for vetoes and then relaunch from the `app.on('quit')` event
+		this.updateRelaunch = this.relaunchHandler?.isUpdateRelaunch?.(options) === true;
 		const veto = await this.quit(true /* will restart */);
 		if (veto) {
 			electron.app.removeListener('quit', quitListener);

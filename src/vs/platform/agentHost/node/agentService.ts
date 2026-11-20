@@ -66,7 +66,7 @@ import { readChatSurfaceMeta, withChatSurfaceMeta } from '../common/meta/agentCh
 import { AH_META_DEV_CONTAINER_WORKTREE_DB_KEY, readAgentDevContainerWorktreeMetadata, withAgentDevContainerWorktreeMetadata } from '../common/meta/agentDevContainerWorktreeMeta.js';
 import { readCodexSessionModel, withCodexSessionModel } from '../common/meta/codexSessionModel.js';
 import { IRemoteSessionOrigin, parseRemoteSessionOrigin, readRemoteSessionOrigin, REMOTE_SESSION_ORIGIN_METADATA_KEY, withRemoteSessionOrigin } from '../common/meta/agentRemoteSessionMeta.js';
-import type { SessionOrigin } from '../common/state/protocol/channels-session/state.js';
+import type { SessionActiveClient, SessionOrigin } from '../common/state/protocol/channels-session/state.js';
 import { getLegacySessionInitiator, parseSessionInitiator, readSessionInitiator, SESSION_INITIATOR_METADATA_KEY, withSessionInitiator } from '../common/meta/agentSessionInitiatorMeta.js';
 import { AgentConfigurationService } from './agentConfigurationService.js';
 import { agentModelConfigurationReportKey } from '../common/agentModelConfiguration.js';
@@ -80,7 +80,7 @@ import { IAdditionalWorktreeLifecycleService } from './chatContributions/additio
 import { IAgentHostWorktreeCleanupService } from './agentHostWorktreeCleanupService.js';
 import type { IScratchFolder } from './agentHostScratchFolderDatabase.js';
 import type { WorktreeRemovalMode } from './agentHostWorktreeRemovalDatabase.js';
-import { AgentHostAutomationService, enqueueAutomationConversation } from './agentHostAutomationService.js';
+import { AgentHostAutomationService, enqueueAutomationConversation, type AutomationUpdateRecovery } from './agentHostAutomationService.js';
 import { agentHostAutomationSessionOrigin, getAgentHostScheduledChat } from '../common/meta/agentHostAutomationsMeta.js';
 import { createAgentChatContext, createAgentChatCreationContext, inheritedChatFolders } from './agentChatContext.js';
 import { captureCredentialSource, parseCredentialPrincipal, type IAgentHostAuthenticationScope, type IAgentHostCredentialSource } from '../common/agentHostCredentials.js';
@@ -1471,17 +1471,13 @@ export class AgentService extends Disposable implements IAgentService {
 						throw new Error('The session is being deleted.');
 					}
 					// A restored session has no active clients, and the Automation's customizations may have changed since the session was created.
-					const current = this._stateManager.getSessionState(key)?.activeClients.find(client => client.clientId === AUTOMATION_ACTIVE_CLIENT_ID);
-					if (!equals(current, activeClient)) {
-						const action = activeClient ? { type: ActionType.SessionActiveClientSet, activeClient } as const : { type: ActionType.SessionActiveClientRemoved, clientId: AUTOMATION_ACTIVE_CLIENT_ID } as const;
-						this._stateManager.dispatchServerAction(key, action);
-						this._sideEffects.handleAction(key, action);
-					}
+					this._setAutomationActiveClient(key, activeClient);
 					this._stateManager.dispatchServerAction(chat, { type: ActionType.ChatPendingMessageSet, kind: PendingMessageKind.Queued, id: messageId, message });
 				};
 			},
 			cancelSession: (session, turnId) => this._cancelAutomationSession(session, turnId),
 			resumeTurn: (session, turnId) => this._resumeAutomationTurn(session, turnId),
+			prepareUpdateResume: (session, chat, turnId, activeClient) => this._prepareAutomationUpdateResume(session, chat, turnId, activeClient),
 		}));
 		this._register(this._providerService.registerProviderInitializer(provider => this._initializeProvider(provider)));
 		this._register(this._providerService.onDidRegisterProvider(provider => this._onDidRegisterProvider(provider)));
@@ -2951,6 +2947,76 @@ export class AgentService extends Disposable implements IAgentService {
 		this._stateManager.dispatchServerAction(chat, action);
 		this._sideEffects.handleAction(chat, action, undefined, AgentHostClientType.Unknown, turn);
 		return true;
+	}
+
+	private _setAutomationActiveClient(session: string, activeClient: SessionActiveClient | undefined): void {
+		const current = this._stateManager.getSessionState(session)?.activeClients.find(client => client.clientId === AUTOMATION_ACTIVE_CLIENT_ID);
+		if (!equals(current, activeClient)) {
+			const action = activeClient ? { type: ActionType.SessionActiveClientSet, activeClient } as const : { type: ActionType.SessionActiveClientRemoved, clientId: AUTOMATION_ACTIVE_CLIENT_ID } as const;
+			this._stateManager.dispatchServerAction(session, action);
+			this._sideEffects.handleAction(session, action);
+		}
+	}
+
+	private async _prepareAutomationUpdateResume(session: URI, chat: URI, turnId: string, activeClient: SessionActiveClient | undefined): Promise<AutomationUpdateRecovery | undefined> {
+		const sessionKey = session.toString();
+		const chatKey = chat.toString();
+		if (this._catalogSyncService.isSessionDeletionFenced(session) || this._sessionResidency.isBeingDisposed(session)) {
+			return undefined;
+		}
+		const credentials = await this._resolveExecutionCredentials(sessionKey);
+		await this.restoreSession(session, undefined, credentials);
+		if (this._defaultChat(session) !== chatKey || this._chatOwnership.getChatOwner(chatKey) !== sessionKey) {
+			return undefined;
+		}
+		await this._stateManager.resolveChatState(chatKey, credentials);
+		const reference = await this._sessionDataService.tryOpenDatabase(URI.parse(this._chatOwnership.resolveChatStorageResource(sessionKey, chatKey)));
+		let restoredTurnId: string | undefined;
+		try {
+			restoredTurnId = await reference?.object.getTurnEventId(turnId);
+		} finally {
+			reference?.dispose();
+		}
+		const state = this._stateManager.getChatState(chatKey);
+		const latest = state?.turns.at(-1);
+		if (state?.activeTurn || !latest || (latest.id !== turnId && latest.id !== restoredTurnId)) {
+			return undefined;
+		}
+		if (latest.state === TurnState.Complete) {
+			return 'completed';
+		}
+		if (latest.state === TurnState.Cancelled) {
+			return 'cancelled';
+		}
+		if (getErrorResponsePart(latest)?.error.errorType !== 'executionInterrupted'
+			|| this._getResumableTurn(chatKey, sessionKey, latest.id).rejection !== undefined) {
+			return undefined;
+		}
+		if (credentials) {
+			await this._bindExecutionCredentials(sessionKey, credentials, chatKey);
+		}
+		return {
+			turnId: latest.id,
+			resume: () => {
+				const { turn, rejection } = this._getResumableTurn(chatKey, sessionKey, latest.id);
+				if (rejection !== undefined || this._store.isDisposed || this._defaultChat(session) !== chatKey
+					|| this._catalogSyncService.isSessionDeletionFenced(session) || this._sessionResidency.isBeingDisposed(session)
+					|| getErrorResponsePart(turn)?.error.errorType !== 'executionInterrupted') {
+					throw new Error(rejection ?? 'Automation update recovery is no longer available.');
+				}
+				if (credentials) {
+					const provider = this._providerService.getProviderForChat(sessionKey, chatKey);
+					if (!provider) {
+						throw new Error('Automation provider is no longer available.');
+					}
+					this._requireProviderCredentials(provider, credentials);
+				}
+				this._setAutomationActiveClient(sessionKey, activeClient);
+				const action = { type: ActionType.ChatTurnResume, turnId: turn.id } as const;
+				this._stateManager.dispatchServerAction(chatKey, action);
+				this._sideEffects.handleAction(chatKey, action, undefined, AgentHostClientType.Unknown, turn, false, undefined, credentials);
+			},
+		};
 	}
 
 	private _startAgentMergePrompt(chat: string, turnId: string, prompt: string, credentials?: IAgentHostCredentialSource): boolean {
@@ -16516,7 +16582,7 @@ export class AgentService extends Disposable implements IAgentService {
 		});
 	}
 
-	async shutdown(): Promise<void> {
+	async shutdown(forUpdate = false): Promise<void> {
 		this._logService.info('AgentService: shutting down all providers...');
 		this._chatContributions.willShutdown();
 		this._catalogReconciliationService.dispose();
@@ -16525,6 +16591,7 @@ export class AgentService extends Disposable implements IAgentService {
 				while (this._clientDispatchQueues.size > 0) {
 					await Promise.allSettled([...this._clientDispatchQueues.values()]);
 				}
+				await this._automationService.prepareForShutdown(forUpdate);
 				await this.whenCatalogReconciliationIdle();
 			} finally {
 				await this._providerService.shutdown();

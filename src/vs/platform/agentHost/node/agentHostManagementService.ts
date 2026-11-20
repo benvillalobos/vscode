@@ -326,15 +326,15 @@ export class AgentHostManagementService implements IAgentHostManagementService {
 		this._macAccessibilityTrust.reportChange();
 	}
 
-	shutdown(): Promise<void> {
+	shutdown(forUpdate = false): Promise<void> {
 		if (!this._shutdownPromise) {
 			this._shuttingDown = true;
-			this._shutdownPromise = this._doShutdown();
+			this._shutdownPromise = this._doShutdown(forUpdate);
 		}
 		return this._shutdownPromise;
 	}
 
-	private async _doShutdown(): Promise<void> {
+	private async _doShutdown(forUpdate: boolean): Promise<void> {
 		const protocolDrain = raceTimeout(this._shutdownProtocolIngress(), SHUTDOWN_DRAIN_TIMEOUT_MS, () => {
 			this._logService.warn(`Agent Host protocol requests did not finish within ${SHUTDOWN_DRAIN_TIMEOUT_MS}ms during shutdown.`);
 		}).catch(error => this._logService.error('Agent Host protocol shutdown failed.', error));
@@ -343,7 +343,7 @@ export class AgentHostManagementService implements IAgentHostManagementService {
 		}).catch(error => this._logService.error('An in-flight Agent Host management operation failed during shutdown.', error));
 		await Promise.all([protocolDrain, managementDrain]);
 		try {
-			await raceTimeout(this._agentService.shutdown(), PROVIDER_SHUTDOWN_TIMEOUT_MS, () => {
+			await raceTimeout(this._agentService.shutdown(forUpdate), PROVIDER_SHUTDOWN_TIMEOUT_MS, () => {
 				this._logService.warn(`Agent Host providers did not finish shutting down within ${PROVIDER_SHUTDOWN_TIMEOUT_MS}ms.`);
 			});
 		} catch (error) {

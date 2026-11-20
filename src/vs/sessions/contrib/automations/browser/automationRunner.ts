@@ -87,7 +87,14 @@ export class AutomationRunner implements IAutomationRunner {
 				if (token.isCancellationRequested) {
 					forwardCancellation();
 				}
-				await result.whenCompleted;
+				try {
+					await result.whenCompleted;
+				} catch (error) {
+					if (!isCancellationError(error) || token.isCancellationRequested) {
+						throw error;
+					}
+					this.logService.warn(`[AutomationRunner] Stopped observing ${automation.id}; its host run may still be active.`, error);
+				}
 			} finally {
 				cancellationListener?.dispose();
 			}

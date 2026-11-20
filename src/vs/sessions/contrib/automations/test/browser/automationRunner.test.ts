@@ -6,6 +6,7 @@
 import assert from 'assert';
 import { DeferredPromise } from '../../../../../base/common/async.js';
 import { CancellationTokenSource } from '../../../../../base/common/cancellation.js';
+import { CancellationError } from '../../../../../base/common/errors.js';
 import { constObservable } from '../../../../../base/common/observable.js';
 import { URI } from '../../../../../base/common/uri.js';
 import { mock, upcastPartial } from '../../../../../base/test/common/mock.js';
@@ -89,6 +90,20 @@ suite('AutomationRunner', () => {
 		assert.deepStrictEqual(await operation.whenDispatched, { kind: 'alreadyRunning', activeRun: run });
 		await operation.whenCompleted;
 		assert.deepStrictEqual(calls, ['automation']);
+	});
+
+	test('losing completion observation during a host restart does not report the run as failed', async () => {
+		const completion = new DeferredPromise<void>();
+		const { runner, calls, errors } = setup(async () => ({ kind: 'dispatched', run, whenCompleted: completion.p }));
+		const operation = runner.runOnce(automation);
+		const dispatch = await operation.whenDispatched;
+		await completion.error(new CancellationError());
+		await operation.whenCompleted;
+		assert.deepStrictEqual({ dispatch, calls, errors }, {
+			dispatch: { kind: 'started', run, sessionResource: run.sessionResource },
+			calls: ['automation'],
+			errors: [],
+		});
 	});
 
 	test('queue admission succeeds without owning the existing conversation, even if cancellation arrives', async () => {

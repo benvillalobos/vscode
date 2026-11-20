@@ -25,7 +25,7 @@ import { AGENT_HOST_AUTOMATIONS_ENABLED_CONFIG_KEY } from '../../common/automati
 import { SessionConfigKey } from '../../common/sessionConfigKeys.js';
 import { ActionType } from '../../common/state/sessionActions.js';
 import { chatTurnComplete } from '../common/chatActionBuilders.js';
-import { AuthenticateTargetKind } from '../../common/state/sessionProtocol.js';
+import { AhpErrorCodes, AuthenticateTargetKind, ProtocolError } from '../../common/state/sessionProtocol.js';
 import { AutomationDisableConditionKind, AutomationMisfirePolicy, AutomationOperation, AutomationTargetKind, AutomationTriggerKind, type AutomationDefinition, type AutomationEntry } from '../../common/state/protocol/channels-automation/state.js';
 import { AutomationRunOriginKind, AutomationRunStatus, type AutomationRunState } from '../../common/state/protocol/channels-automation-run/state.js';
 import type { RunAutomationParams } from '../../common/state/protocol/channels-automation/commands.js';
@@ -177,6 +177,7 @@ suite('AgentHostAutomationService', () => {
 			prepareSessionMessage: execution?.prepareSessionMessage,
 			cancelSession: execution?.cancelSession ?? (async () => false),
 			resumeTurn: execution?.resumeTurn ?? (async () => false),
+			prepareUpdateResume: execution?.prepareUpdateResume,
 		}, stateManager, createTestChatOwnershipService(stateManager), storageService, new NullLogService(), telemetry, providers, pluginManager, fileService, upcastPartial<INativeEnvironmentService>({ userHome: URI.file('/home') }), clientConnections, systemWake);
 		return disposables.add(service);
 	}
@@ -184,6 +185,138 @@ suite('AgentHostAutomationService', () => {
 	async function enableAndCreate(service: AgentHostAutomationService, resource = 'ahp-automation:/review-changes'): Promise<void> {
 		await service.handleCreate(createAction(resource));
 	}
+
+	async function startUpdateRun() {
+		const session = URI.parse('mock:/update-session');
+		const chat = buildDefaultChatUri(session);
+		const started = new DeferredPromise<void>();
+		const service = createService({
+			createSession: async () => {
+				stateManager.createSession({
+					resource: session.toString(), provider: 'mock', title: '', status: SessionStatus.Idle,
+					createdAt: new Date().toISOString(), modifiedAt: new Date().toISOString(), defaultChat: chat,
+				});
+				return session;
+			},
+			startSession: async (_session, message) => {
+				stateManager.dispatchServerAction(chat, { type: ActionType.ChatTurnStarted, turnId: 'original-turn', startedAt: new Date().toISOString(), message });
+				await started.complete();
+			},
+		});
+		await enableAndCreate(service);
+		const run = await service.runAutomation({ channel: AUTOMATION_CATALOG_URI, automation: createAction().resource, requestId: 'update' });
+		await started.p;
+		return { service, run, session, chat };
+	}
+
+	test('update recovery waits for credentials without opening a conversation and resumes once', async () => {
+		const { service, run, session, chat } = await startUpdateRun();
+		await service.prepareForShutdown(true);
+		stateManager.dispatchServerAction(chat, { type: ActionType.ChatTurnCancelled, turnId: 'original-turn', duration: 0 });
+		service.dispose();
+		const ready = observableValue('ready', false);
+		const prepared: string[] = [];
+		const resumed = new DeferredPromise<void>();
+		const restored = createService({
+			isSessionTemplateAvailable: (_template, reader) => ready.read(reader),
+			prepareUpdateResume: async (target, targetChat, turnId) => {
+				prepared.push(`${target}:${targetChat}:${turnId}`);
+				return { turnId: 'restored-turn', resume: () => { void resumed.complete(); } };
+			},
+		});
+		await storageService.whenIdle();
+		assert.deepStrictEqual(prepared, []);
+		ready.set(true, undefined);
+		await resumed.p;
+		restored.handleAgentsChanged();
+		await storageService.whenIdle();
+		const stored = storageService.get<{ updateResumes?: readonly unknown[] }>('automations');
+		assert.deepStrictEqual({ prepared, marker: stored?.updateResumes, status: stateManager.getAutomationRunState(run.resource)?.lifecycle.status }, {
+			prepared: [`${session}:${chat}:original-turn`], marker: undefined, status: AutomationRunStatus.Running,
+		});
+		restored.dispose();
+		const restarted = createService({ prepareUpdateResume: async () => { throw new Error('Already consumed recovery must not run twice'); } });
+		await terminalRun(run.resource);
+		assert.strictEqual(stateManager.getAutomationRunState(run.resource)?.lifecycle.status, AutomationRunStatus.Failed);
+		restarted.dispose();
+	});
+
+	test('cancelling while update recovery is being prepared prevents execution', async () => {
+		const { service, run } = await startUpdateRun();
+		await service.prepareForShutdown(true);
+		service.dispose();
+		const preparing = new DeferredPromise<void>();
+		const prepared = new DeferredPromise<{ turnId: string; resume: () => void }>();
+		let resumeCount = 0;
+		const restored = createService({
+			prepareUpdateResume: async () => {
+				await preparing.complete();
+				return prepared.p;
+			},
+		});
+		await preparing.p;
+		await restored.handleCancel(run.resource, { type: ActionType.AutomationRunCancelRequested });
+		await prepared.complete({ turnId: 'restored', resume: () => resumeCount++ });
+		await timeout(0);
+		assert.deepStrictEqual({ status: stateManager.getAutomationRunState(run.resource)?.lifecycle.status, resumeCount }, { status: AutomationRunStatus.Cancelled, resumeCount: 0 });
+	});
+
+	for (const outcome of ['completed', 'cancelled', undefined] as const) {
+		test(`update recovery handles an already settled or unavailable turn: ${outcome}`, async () => {
+			const { service, run } = await startUpdateRun();
+			await service.prepareForShutdown(true);
+			service.dispose();
+			createService({ prepareUpdateResume: async () => outcome });
+			await terminalRun(run.resource);
+			assert.strictEqual(stateManager.getAutomationRunState(run.resource)?.lifecycle.status,
+				outcome === 'completed' ? AutomationRunStatus.Completed : outcome === 'cancelled' ? AutomationRunStatus.Cancelled : AutomationRunStatus.Failed);
+		});
+	}
+
+	test('ordinary restart does not opt an interrupted automation into automatic recovery', async () => {
+		const { service, run } = await startUpdateRun();
+		await service.prepareForShutdown(false);
+		service.dispose();
+		let prepareCount = 0;
+		createService({ prepareUpdateResume: async () => { prepareCount++; return undefined; } });
+		await terminalRun(run.resource);
+		assert.deepStrictEqual({ status: stateManager.getAutomationRunState(run.resource)?.lifecycle.status, prepareCount }, { status: AutomationRunStatus.Failed, prepareCount: 0 });
+	});
+
+	test('update recovery retains its receipt while fresh credentials are unavailable', () => runWithFakedTimers({ useFakeTimers: true }, async () => {
+		const { service, run } = await startUpdateRun();
+		await service.prepareForShutdown(true);
+		service.dispose();
+		let attempts = 0;
+		let resumed = 0;
+		createService({
+			prepareUpdateResume: async () => {
+				if (++attempts === 1) {
+					throw new ProtocolError(AhpErrorCodes.AuthRequired, 'Credentials are not ready');
+				}
+				return { turnId: 'original-turn', resume: () => { resumed++; } };
+			},
+		});
+		await timeout(1);
+		const awaitingCredentials = storageService.get<{ updateResumes: readonly { run: string }[] }>('automations')?.updateResumes.map(target => target.run);
+		await timeout(60_000);
+		assert.deepStrictEqual({ awaitingCredentials, attempts, resumed }, { awaitingCredentials: [run.resource], attempts: 2, resumed: 1 });
+	}));
+
+	test('update recovery never executes when consuming its durable receipt fails', () => runWithFakedTimers({ useFakeTimers: true }, async () => {
+		const { service } = await startUpdateRun();
+		await service.prepareForShutdown(true);
+		service.dispose();
+		let resumed = 0;
+		createService({
+			prepareUpdateResume: async () => {
+				writeFailures = 1;
+				return { turnId: 'original-turn', resume: () => { resumed++; } };
+			},
+		});
+		await timeout(1);
+		assert.strictEqual(resumed, 0);
+	}));
 
 	test('silently authenticates run-linked MCP servers once per challenge', async () => {
 		const session = URI.parse('mock:/mcp-run');

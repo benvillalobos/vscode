@@ -986,7 +986,7 @@ export interface IAgentHostManagementService {
 	 * computer through Accessibility.
 	 */
 	reportMacAccessibilityTrustChange(): Promise<void>;
-	shutdown(): Promise<void>;
+	shutdown(forUpdate?: boolean): Promise<void>;
 	getNetworkDiagnosticsInfo(): Promise<IAgentHostNetworkDiagnosticsInfo>;
 	getManagedSettingsDiagnostics(): Promise<readonly IAgentHostManagedSettingsDiagnostics[]>;
 	diagnosticsFetch(url: string): Promise<IAgentHostNetworkFetchResult>;
@@ -1200,7 +1200,7 @@ export interface IAgentService {
 	readonly onMcpNotification: Event<IMcpNotification>;
 
 	/** Gracefully shut down all sessions and the underlying client. */
-	shutdown(): Promise<void>;
+	shutdown(forUpdate?: boolean): Promise<void>;
 
 	/**
 	 * Host-level network context for diagnostics — agent host version, OS/arch,

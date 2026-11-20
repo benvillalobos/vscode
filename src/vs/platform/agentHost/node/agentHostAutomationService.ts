@@ -42,7 +42,7 @@ import { getModelTelemetryContext } from './agentHostTurnTelemetryContext.js';
 import { getAutomationDisableConditionsError, getAutomationAfterDate, isAutomationDisableConditions, isAutomationAfterDateExpired } from '../common/automationDisableConditions.js';
 import { IAgentHostClientConnectionService } from './agentHostClientConnectionService.js';
 import { IAgentHostSystemWakeService } from './agentHostSystemWakeService.js';
-import { AuthenticateTargetKind } from '../common/state/sessionProtocol.js';
+import { AhpErrorCodes, AuthenticateTargetKind, ProtocolError } from '../common/state/sessionProtocol.js';
 import { getMcpServerCustomizations } from './shared/mcpCustomizationController.js';
 import { McpServerStatus, type AutomationSessionOrigin, type McpAuthRequirement } from '../common/state/protocol/channels-session/state.js';
 import type { IAgentHostMcpAuthenticationRequest } from '../common/agentHostExtensionProtocol.js';
@@ -73,6 +73,15 @@ interface IStoredSessionCreation {
 	readonly provider: string;
 }
 
+interface IStoredUpdateResume {
+	readonly run: string;
+	readonly session: string;
+	readonly chat: string;
+	readonly turnId: string;
+}
+
+export type AutomationUpdateRecovery = { readonly turnId: string; readonly resume: () => void } | 'completed' | 'cancelled';
+
 interface IStoredHistoryDeletion {
 	readonly automation: string;
 	readonly requestId?: string;
@@ -99,6 +108,7 @@ interface IStoredAutomations {
 	readonly oneTimeCreationResources?: readonly string[];
 	/** The {@link toSessionShape} of the template each session that a run created was created from, by session. */
 	readonly sessionShapes?: Readonly<Record<string, string>>;
+	readonly updateResumes?: readonly IStoredUpdateResume[];
 }
 
 /** Host-side session operations for executing an Automation's saved template. */
@@ -125,6 +135,7 @@ export interface IAgentHostAutomationExecution {
 	cancelSession(session: URI, turnId?: string): Promise<boolean>;
 	/** Resumes a session's latest turn if it failed with a resumable error; returns whether it resumed. */
 	resumeTurn(session: URI, turnId: string): Promise<boolean>;
+	prepareUpdateResume?(session: URI, chat: URI, turnId: string, activeClient: SessionActiveClient | undefined): Promise<AutomationUpdateRecovery | undefined>;
 }
 
 export const IAgentHostAutomationService = createDecorator<IAgentHostAutomationService>('agentHostAutomationService');
@@ -145,6 +156,7 @@ export interface IAgentHostAutomationService {
 	fetchAutomationRuns(params: FetchAutomationRunsParams): Promise<FetchAutomationRunsResult>;
 	handleConfigurationChanged(): Promise<void>;
 	handleAgentsChanged(): void;
+	prepareForShutdown(forUpdate: boolean): Promise<void>;
 }
 
 /**
@@ -165,6 +177,10 @@ export class AgentHostAutomationService extends Disposable implements IAgentHost
 	private readonly _historyDeletionPromises = new Map<string, Promise<readonly string[]>>();
 	private readonly _runsToRecover = new Set<string>();
 	private readonly _recoveringRuns = new Set<string>();
+	private _updateResumes = new Map<string, IStoredUpdateResume>();
+	private _shuttingDown = false;
+	private readonly _updateShutdownTargets = new Set<string>();
+	private readonly _updateRecoveryRetry = this._register(new MutableDisposable());
 	private readonly _startingRuns = new Set<string>();
 	private readonly _recoveringHistoryDeletions = new Set<string>();
 	private _mutationTail: Promise<void> = Promise.resolve();
@@ -212,6 +228,7 @@ export class AgentHostAutomationService extends Disposable implements IAgentHost
 			...stored?.catalog.automations.filter(entry => entry.definition.triggers.some(trigger => trigger.kind === AutomationTriggerKind.OneTime)).map(entry => entry.resource) ?? [],
 		]);
 		this._runs = new Map(stored?.runs?.map(run => [run.resource, migrateLegacyScheduledChatRun(run)]));
+		this._updateResumes = new Map(stored?.updateResumes?.map(resume => [resume.run, resume]));
 		this._runProviders = new Map(Object.entries(stored?.runProviders ?? {}));
 		this._sessionCreations = new Map(stored?.sessionCreations?.map(creation => [creation.run, creation]));
 		this._historyDeletions = new Map(stored?.historyDeletions?.map(deletion => [deletion.automation, deletion]));
@@ -337,6 +354,33 @@ export class AgentHostAutomationService extends Disposable implements IAgentHost
 		}
 		this._recoverRuns();
 		this._scheduleNext();
+	}
+
+	async prepareForShutdown(forUpdate: boolean): Promise<void> {
+		this._shuttingDown = true;
+		this._executionAvailabilityWatcher.clear();
+		this._scheduleTimer.clear();
+		this._updateRecoveryRetry.clear();
+		this._resumeAfterWakeTimer.clear();
+		await this._enqueueMutation(async () => {
+			if (!forUpdate) {
+				return;
+			}
+			const resumes = new Map(this._updateResumes);
+			for (const run of this._runs.values()) {
+				const session = run.primarySession;
+				const chat = session ? this._chatOwnership.getDefaultChat(session) : undefined;
+				const turn = chat ? this._stateManager.getChatState(chat)?.activeTurn : undefined;
+				if (run.lifecycle.status === AutomationRunStatus.Running && session && chat && turn
+					&& this._activeRunForChat(chat, turn.id)?.resource === run.resource) {
+					resumes.set(run.resource, { run: run.resource, session, chat, turnId: turn.id });
+					this._updateShutdownTargets.add(run.resource);
+				}
+			}
+			if (this._catalog) {
+				await this._persist(this._catalog, this._runs, this._manualRunRequests, undefined, undefined, undefined, undefined, resumes);
+			}
+		});
 	}
 
 	getLegacySessionOrigin(session: string, provider: string): AutomationSessionOrigin | undefined {
@@ -852,6 +896,7 @@ export class AgentHostAutomationService extends Disposable implements IAgentHost
 		sessionCreations: ReadonlyMap<string, IStoredSessionCreation> = this._sessionCreations,
 		historyDeletions: ReadonlyMap<string, IStoredHistoryDeletion> = this._historyDeletions,
 		historyDeletionReceipts: ReadonlyMap<string, IStoredHistoryDeletionReceipt> = this._historyDeletionReceipts,
+		updateResumes: ReadonlyMap<string, IStoredUpdateResume> = this._updateResumes,
 	): Promise<void> {
 		const nextRunProviders = new Map([...runProviders].filter(([resource]) => runs.has(resource)));
 		const runSessions = new Set([...runs.values()].flatMap(run => run.sessions));
@@ -860,6 +905,10 @@ export class AgentHostAutomationService extends Disposable implements IAgentHost
 			...this._oneTimeCreationResources,
 			...catalog.entries.filter(entry => entry.definition.triggers.some(trigger => trigger.kind === AutomationTriggerKind.OneTime)).map(entry => entry.resource),
 		]);
+		const nextUpdateResumes = new Map([...updateResumes].filter(([resource]) => {
+			const run = runs.get(resource);
+			return run !== undefined && !isTerminalLifecycle(run.lifecycle);
+		}));
 		await this._storageService.setAndFlush<IStoredAutomations>(STORAGE_KEY, {
 			version: 1,
 			catalog: {
@@ -874,6 +923,7 @@ export class AgentHostAutomationService extends Disposable implements IAgentHost
 			...(historyDeletions.size > 0 ? { historyDeletions: [...historyDeletions.values()] } : {}),
 			...(historyDeletionReceipts.size > 0 ? { historyDeletionReceipts: [...historyDeletionReceipts.values()] } : {}),
 			...(sessionShapes.size > 0 ? { sessionShapes: Object.fromEntries(sessionShapes) } : {}),
+			...(nextUpdateResumes.size > 0 ? { updateResumes: [...nextUpdateResumes.values()] } : {}),
 		});
 		this._runProviders = nextRunProviders;
 		this._sessionShapes = sessionShapes;
@@ -881,6 +931,7 @@ export class AgentHostAutomationService extends Disposable implements IAgentHost
 		this._historyDeletions = new Map(historyDeletions);
 		this._historyDeletionReceipts = new Map(historyDeletionReceipts);
 		this._oneTimeCreationResources = oneTimeCreationResources;
+		this._updateResumes = nextUpdateResumes;
 	}
 
 	private _requireCatalog(): AutomationState {
@@ -923,7 +974,7 @@ export class AgentHostAutomationService extends Disposable implements IAgentHost
 	private _scheduleNext(): void {
 		this._executionAvailabilityWatcher.clear();
 		this._scheduleTimer.clear();
-		if (!this._catalog || !this._isAutomationsEnabled()) {
+		if (!this._catalog || !this._isAutomationsEnabled() || this._shuttingDown) {
 			return;
 		}
 		const catalog = this._catalog;
@@ -935,6 +986,9 @@ export class AgentHostAutomationService extends Disposable implements IAgentHost
 			}
 			// Scheduled work waits until the machine is fully awake and reconnected; manual runs are never held.
 			const readyForScheduledWork = this._systemWake.isReadyForScheduledWork.read(reader);
+			if (readyForScheduledWork) {
+				this._recoverRuns();
+			}
 			this._startPendingRuns(available, readyForScheduledWork);
 			if (!readyForScheduledWork) {
 				return;
@@ -970,7 +1024,7 @@ export class AgentHostAutomationService extends Disposable implements IAgentHost
 
 	private async _claimDueRuns(): Promise<readonly { readonly run: AutomationRunState; readonly definition: AutomationDefinition }[]> {
 		const catalog = this._requireAvailableCatalog();
-		if (!this._systemWake.isReadyForScheduledWork.get()) {
+		if (this._shuttingDown || !this._systemWake.isReadyForScheduledWork.get()) {
 			return [];
 		}
 		const now = new Date();
@@ -1085,13 +1139,25 @@ export class AgentHostAutomationService extends Disposable implements IAgentHost
 	}
 
 	private _recoverRuns(): void {
+		if (this._shuttingDown || this._store.isDisposed) {
+			return;
+		}
 		for (const resource of this._runsToRecover) {
 			if (this._recoveringRuns.has(resource)) {
 				continue;
 			}
 			this._recoveringRuns.add(resource);
-			void this._enqueueMutation(() => this._recoverRun(resource)).catch(error => {
+			const recovery = this._updateResumes.has(resource)
+				? this._recoverUpdatedRun(resource)
+				: this._enqueueMutation(() => this._recoverRun(resource));
+			void recovery.catch(error => {
 				this._logService.error(`[AgentHostAutomationService] Failed to recover interrupted Automation run: run=${resource}`, error);
+				if (this._updateResumes.has(resource) && !this._updateRecoveryRetry.value) {
+					this._updateRecoveryRetry.value = disposableTimeout(() => {
+						this._updateRecoveryRetry.clear();
+						this._recoverRuns();
+					}, SCHEDULE_RETRY_DELAY_MS);
+				}
 			}).finally(() => this._recoveringRuns.delete(resource));
 		}
 		for (const resource of this._historyDeletions.keys()) {
@@ -1103,6 +1169,58 @@ export class AgentHostAutomationService extends Disposable implements IAgentHost
 				this._logService.error(`[AgentHostAutomationService] Failed to recover Automation history deletion: ${resource}`, error);
 			}).finally(() => this._recoveringHistoryDeletions.delete(resource));
 		}
+	}
+
+	private async _recoverUpdatedRun(resource: string): Promise<void> {
+		const target = this._updateResumes.get(resource);
+		const run = this._runs.get(resource);
+		const automation = this._catalog?.entries.find(entry => entry.resource === run?.automation);
+		if (!target || !run || isTerminalLifecycle(run.lifecycle)) {
+			this._runsToRecover.delete(resource);
+			return;
+		}
+		if (!automation || !this._isAutomationsEnabled() || !this._systemWake.isReadyForScheduledWork.get()
+			|| !this._isExecutionAvailable(automation)) {
+			return;
+		}
+		let recovery: AutomationUpdateRecovery | undefined;
+		try {
+			recovery = await this._execution.prepareUpdateResume?.(URI.parse(target.session), URI.parse(target.chat), target.turnId, this._customizations.toRunActiveClient(automation));
+		} catch (error) {
+			if (error instanceof ProtocolError && error.code === AhpErrorCodes.AuthRequired) {
+				throw error;
+			}
+			this._logService.error(`[AgentHostAutomationService] Cannot restore update-interrupted run: run=${resource}`, error);
+		}
+		await this._enqueueMutation(async () => {
+			const current = this._runs.get(resource);
+			if (this._shuttingDown || this._store.isDisposed || !current || isTerminalLifecycle(current.lifecycle)
+				|| this._updateResumes.get(resource) !== target) {
+				return;
+			}
+			if (!recovery) {
+				await this._failRun(resource, new Error('The update-interrupted automation request can no longer be resumed.'));
+			} else if (typeof recovery === 'string') {
+				const completedAt = new Date().toISOString();
+				const lifecycle: AutomationRunLifecycle = recovery === 'cancelled'
+					? toCancelledLifecycle(current.lifecycle, completedAt)
+					: { status: AutomationRunStatus.Completed, createdAt: current.lifecycle.createdAt, startedAt: current.lifecycle.status === AutomationRunStatus.Running ? current.lifecycle.startedAt : current.lifecycle.createdAt, completedAt };
+				await this._commitRun({ ...current, lifecycle }, [{ type: ActionType.AutomationRunLifecycleChanged, lifecycle }]);
+			} else {
+				const remaining = new Map(this._updateResumes);
+				remaining.delete(resource);
+				// Consume the durable retry before execution, so another restart cannot replay it.
+				await this._persist(this._requireCatalog(), this._runs, this._manualRunRequests, undefined, undefined, undefined, undefined, remaining);
+				this._queuedRuns.set(resource, recovery.turnId);
+				try {
+					recovery.resume();
+					this._logService.info(`[AgentHostAutomationService] Resumed automation after update: run=${resource}, turnId=${recovery.turnId}.`);
+				} catch (error) {
+					await this._failRun(resource, error);
+				}
+			}
+			this._runsToRecover.delete(resource);
+		});
 	}
 
 	private async _recoverRun(resource: string, creationError?: unknown): Promise<void> {
@@ -1215,7 +1333,7 @@ export class AgentHostAutomationService extends Disposable implements IAgentHost
 
 	private async _startRun(initialRun: AutomationRunState, definition: AutomationDefinition): Promise<void> {
 		// A run whose message is queued in its session starts once that chat consumes the message.
-		if (this._startingRuns.has(initialRun.resource) || this._queuedRuns.has(initialRun.resource)) {
+		if (this._shuttingDown || this._startingRuns.has(initialRun.resource) || this._queuedRuns.has(initialRun.resource)) {
 			return;
 		}
 		this._startingRuns.add(initialRun.resource);
@@ -1426,7 +1544,7 @@ export class AgentHostAutomationService extends Disposable implements IAgentHost
 		}
 		// A run waiting to resume after a wake has no active turn to cancel, nor has one whose queued message no turn started from.
 		const waitsForTurn = run.lifecycle.status === AutomationRunStatus.Pending && this._queuedRuns.get(resource) === undefined;
-		if (run.sessions.length > 0 && !this._resumesAfterWake.has(resource) && !waitsForTurn) {
+		if (run.sessions.length > 0 && !this._resumesAfterWake.has(resource) && !this._updateResumes.has(resource) && !waitsForTurn) {
 			return run.sessions;
 		}
 		this._withdrawQueuedMessage(run);
@@ -1515,6 +1633,9 @@ export class AgentHostAutomationService extends Disposable implements IAgentHost
 		}
 		const run = this._activeRunForChat(envelope.channel, action.turnId);
 		if (!run) {
+			return;
+		}
+		if (this._shuttingDown && this._updateShutdownTargets.has(run.resource) && action.type !== ActionType.ChatTurnComplete) {
 			return;
 		}
 		void this._enqueueMutation(async () => {
@@ -2030,10 +2151,19 @@ function isStoredAutomations(value: unknown): value is IStoredAutomations {
 		&& (runProviders === undefined || !!runProviders && typeof runProviders === 'object' && !Array.isArray(runProviders)
 			&& Object.values(runProviders).every(provider => typeof provider === 'string' && provider.length > 0))
 		&& (stored['sessionCreations'] === undefined || Array.isArray(stored['sessionCreations']) && stored['sessionCreations'].every(isStoredSessionCreation))
+		&& (stored['updateResumes'] === undefined || Array.isArray(stored['updateResumes']) && stored['updateResumes'].every(isStoredUpdateResume))
 		&& (stored['historyDeletions'] === undefined || Array.isArray(stored['historyDeletions']) && stored['historyDeletions'].every(isStoredHistoryDeletion))
 		&& (stored['historyDeletionReceipts'] === undefined || Array.isArray(stored['historyDeletionReceipts']) && stored['historyDeletionReceipts'].every(isStoredHistoryDeletionReceipt))
 		&& (stored['oneTimeCreationResources'] === undefined || Array.isArray(stored['oneTimeCreationResources']) && stored['oneTimeCreationResources'].every(resource => typeof resource === 'string'))
 		&& (stored['manualRunRequests'] === undefined || Array.isArray(stored['manualRunRequests']) && stored['manualRunRequests'].every(isStoredManualRunRequest));
+}
+
+function isStoredUpdateResume(value: unknown): value is IStoredUpdateResume {
+	if (!value || typeof value !== 'object') {
+		return false;
+	}
+	const record = value as Record<string, unknown>;
+	return ['run', 'session', 'chat', 'turnId'].every(key => typeof record[key] === 'string' && record[key].length > 0);
 }
 
 function isStoredSessionCreation(value: unknown): value is IStoredSessionCreation {
