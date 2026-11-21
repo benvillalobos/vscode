@@ -53,6 +53,8 @@ const STORAGE_KEY = 'automations';
 const SCHEDULE_CURSORS_META_KEY = 'vscode.scheduleCursors';
 const SCHEDULE_RETRY_DELAY_MS = 60_000;
 const RUN_HISTORY_PAGE_SIZE = 50;
+const MAX_RESTART_INTERRUPTIONS = 3;
+const RESTART_INTERRUPTION_WINDOW_MS = 5 * 60_000;
 /** Gives the network time to reconnect after a full wake before resuming a turn that sleep broke; resumes also wait until scheduled work is ready. */
 const RESUME_AFTER_WAKE_DELAY_MS = 10_000;
 
@@ -78,6 +80,8 @@ interface IStoredRunTurn {
 	readonly session: string;
 	readonly chat: string;
 	readonly turnId: string;
+	readonly interruptions?: readonly number[];
+	readonly awaitingReadiness?: boolean;
 }
 
 export type AutomationRunRecovery = { readonly turnId: string; readonly resume: () => void } | 'completed' | 'cancelled';
@@ -178,6 +182,8 @@ export class AgentHostAutomationService extends Disposable implements IAgentHost
 	private readonly _runsToRecover = new Set<string>();
 	private readonly _recoveringRuns = new Set<string>();
 	private _runTurns = new Map<string, IStoredRunTurn>();
+	private readonly _restartObservedAt = Date.now();
+	private readonly _countedInterruptions = new Set<string>();
 	private _shuttingDown = false;
 	private readonly _recoveryRetry = this._register(new MutableDisposable());
 	private readonly _startingRuns = new Set<string>();
@@ -915,6 +921,11 @@ export class AgentHostAutomationService extends Disposable implements IAgentHost
 		this._runTurns = nextRunTurns;
 	}
 
+	private _persistRunTurn(turn: IStoredRunTurn): Promise<void> {
+		const turns = new Map(this._runTurns).set(turn.run, turn);
+		return this._persist(this._requireCatalog(), this._runs, this._manualRunRequests, undefined, undefined, undefined, undefined, turns);
+	}
+
 	private _requireCatalog(): AutomationState {
 		if (!this._catalog) {
 			throw new Error('Automation storage is unavailable and must be recovered before automations can run.');
@@ -1160,8 +1171,29 @@ export class AgentHostAutomationService extends Disposable implements IAgentHost
 			this._runsToRecover.delete(resource);
 			return;
 		}
-		if (!automation || !this._isAutomationsEnabled() || !this._systemWake.isReadyForScheduledWork.get()
-			|| !this._isExecutionAvailable(automation)) {
+		const ready = automation !== undefined && this._isAutomationsEnabled() && this._systemWake.isReadyForScheduledWork.get()
+			&& this._isExecutionAvailable(automation);
+		const attempt = await this._enqueueMutation(async () => {
+			const current = this._runs.get(resource);
+			if (this._shuttingDown || this._store.isDisposed || !current || isTerminalLifecycle(current.lifecycle)
+				|| this._runTurns.get(resource) !== target) {
+				return undefined;
+			}
+			const interruptions = (target.interruptions ?? []).filter(timestamp => timestamp >= this._restartObservedAt - RESTART_INTERRUPTION_WINDOW_MS);
+			if (!this._countedInterruptions.has(resource) && !target.awaitingReadiness) {
+				interruptions.push(this._restartObservedAt);
+			}
+			if (interruptions.length >= MAX_RESTART_INTERRUPTIONS) {
+				await this._failRun(resource, new Error(localize('automationRecoveryCrashLoop', "Automation stopped after three interruptions within five minutes.")), 'interrupted');
+				return undefined;
+			}
+			const attempt: IStoredRunTurn = { ...target, interruptions, awaitingReadiness: !ready };
+			// Persist before provider restoration, which can itself crash the host.
+			await this._persistRunTurn(attempt);
+			this._countedInterruptions.add(resource);
+			return attempt;
+		});
+		if (!attempt || !ready || !automation) {
 			return;
 		}
 		let recovery: AutomationRunRecovery | undefined;
@@ -1169,6 +1201,11 @@ export class AgentHostAutomationService extends Disposable implements IAgentHost
 			recovery = await this._execution.prepareRunResume?.(URI.parse(target.session), URI.parse(target.chat), target.turnId, this._customizations.toRunActiveClient(automation));
 		} catch (error) {
 			if (error instanceof ProtocolError && error.code === AhpErrorCodes.AuthRequired) {
+				await this._enqueueMutation(async () => {
+					if (!this._store.isDisposed && this._runTurns.get(resource) === attempt) {
+						await this._persistRunTurn({ ...attempt, awaitingReadiness: true });
+					}
+				});
 				throw error;
 			}
 			this._logService.error(`[AgentHostAutomationService] Cannot restore interrupted run: run=${resource}`, error);
@@ -1176,7 +1213,7 @@ export class AgentHostAutomationService extends Disposable implements IAgentHost
 		await this._enqueueMutation(async () => {
 			const current = this._runs.get(resource);
 			if (this._shuttingDown || this._store.isDisposed || !current || isTerminalLifecycle(current.lifecycle)
-				|| this._runTurns.get(resource) !== target) {
+				|| this._runTurns.get(resource) !== attempt) {
 				return;
 			}
 			if (!recovery) {
@@ -1188,10 +1225,7 @@ export class AgentHostAutomationService extends Disposable implements IAgentHost
 					: { status: AutomationRunStatus.Completed, createdAt: current.lifecycle.createdAt, startedAt: current.lifecycle.status === AutomationRunStatus.Running ? current.lifecycle.startedAt : current.lifecycle.createdAt, completedAt };
 				await this._commitRun({ ...current, lifecycle }, [{ type: ActionType.AutomationRunLifecycleChanged, lifecycle }]);
 			} else {
-				const remaining = new Map(this._runTurns);
-				remaining.delete(resource);
-				// Consume the durable retry before execution, so another restart cannot replay it.
-				await this._persist(this._requireCatalog(), this._runs, this._manualRunRequests, undefined, undefined, undefined, undefined, remaining);
+				await this._persistRunTurn({ ...attempt, turnId: recovery.turnId });
 				this._queuedRuns.set(resource, recovery.turnId);
 				try {
 					recovery.resume();
@@ -1607,8 +1641,7 @@ export class AgentHostAutomationService extends Disposable implements IAgentHost
 						if (!current || isTerminalLifecycle(current.lifecycle) || this._runTurns.has(run.resource)) {
 							return;
 						}
-						const turns = new Map(this._runTurns).set(run.resource, { run: run.resource, session, chat: envelope.channel, turnId: action.turnId });
-						await this._persist(this._requireCatalog(), this._runs, this._manualRunRequests, undefined, undefined, undefined, undefined, turns);
+						await this._persistRunTurn({ run: run.resource, session, chat: envelope.channel, turnId: action.turnId });
 					}).catch(error => this._logService.error(`[AgentHostAutomationService] Failed to record automation turn for recovery: run=${run.resource}`, error));
 				}
 			}
@@ -1835,6 +1868,8 @@ export class AgentHostAutomationService extends Disposable implements IAgentHost
 			this._queuedRuns.delete(run.resource);
 			this._resumesAfterWake.delete(run.resource);
 			this._resumedAfterWake.delete(run.resource);
+			this._countedInterruptions.delete(run.resource);
+			this._runsToRecover.delete(run.resource);
 			this._manuallyRequestedRuns.delete(run.resource);
 			this._scheduleNext();
 		}
@@ -2159,7 +2194,10 @@ function isStoredRunTurn(value: unknown): value is IStoredRunTurn {
 		return false;
 	}
 	const record = value as Record<string, unknown>;
-	return ['run', 'session', 'chat', 'turnId'].every(key => typeof record[key] === 'string' && record[key].length > 0);
+	return ['run', 'session', 'chat', 'turnId'].every(key => typeof record[key] === 'string' && record[key].length > 0)
+		&& (record.interruptions === undefined || Array.isArray(record.interruptions)
+			&& record.interruptions.every(timestamp => typeof timestamp === 'number' && Number.isFinite(timestamp) && timestamp >= 0))
+		&& (record.awaitingReadiness === undefined || typeof record.awaitingReadiness === 'boolean');
 }
 
 function isStoredSessionCreation(value: unknown): value is IStoredSessionCreation {
