@@ -1089,6 +1089,35 @@ suite('AutomationsCardsWidget', () => {
 		]);
 	});
 
+	for (const catalogueState of ['ready', 'unavailable', 'loading', 'error'] as const) {
+		test(`saved disabled automations can be revealed without enabling them (${catalogueState})`, () => {
+			const { widget, automationService, disabledFilter } = setup();
+			automationService.setCatalogueState(catalogueState);
+			automationService.setAutomations([automation({ enabled: false })]);
+			const container = widget.element.querySelector<HTMLElement>(catalogueState === 'ready'
+				? '.automations-cards-scroll-content > .automations-cards-empty'
+				: `.automations-cards-${catalogueState}`)!;
+			const reveal = container.querySelector<HTMLElement>('.automations-show-disabled-button')!;
+			const before = {
+				revealVisible: reveal.checkVisibility(),
+				falseEmpty: container.textContent!.includes('No automations yet'),
+				label: reveal.textContent,
+			};
+			reveal.focus();
+			reveal.click();
+			assert.deepStrictEqual({
+				before,
+				visible: widget.element.querySelector<HTMLElement>('.automations-card-wrapper')!.checkVisibility(),
+				enabled: automationService.automations.get()[0].enabled,
+				filter: disabledFilter().checked,
+				focusedVisible: (document.activeElement as HTMLElement).checkVisibility(),
+			}, {
+				before: { revealVisible: true, falseEmpty: false, label: 'Show Disabled Automations' },
+				visible: true, enabled: false, filter: true, focusedVisible: true,
+			});
+		});
+	}
+
 	test('template onboarding opens templates alongside disabled shared automations', async () => {
 		const { widget, automationService } = setup('archive', NullHoverService, undefined, disposables.add(new InMemoryStorageService()));
 		automationService.setAutomations([automation({ ownership: 'repository', enabled: false })]);

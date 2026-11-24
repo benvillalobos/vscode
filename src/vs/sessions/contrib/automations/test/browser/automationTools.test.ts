@@ -4,10 +4,11 @@
  *--------------------------------------------------------------------------------------------*/
 
 import assert from 'assert';
-import { timeout } from '../../../../../base/common/async.js';
+import { DeferredPromise, timeout } from '../../../../../base/common/async.js';
 import { AutomationDisableConditionKind } from '../../../../../platform/agentHost/common/state/protocol/channels-automation/state.js';
 import { CancellationToken, CancellationTokenSource } from '../../../../../base/common/cancellation.js';
 import { constObservable, observableValue } from '../../../../../base/common/observable.js';
+import { Disposable } from '../../../../../base/common/lifecycle.js';
 import { URI } from '../../../../../base/common/uri.js';
 import { mock, upcastPartial } from '../../../../../base/test/common/mock.js';
 import { runWithFakedTimers } from '../../../../../base/test/common/timeTravelScheduler.js';
@@ -17,6 +18,7 @@ import { ChatAIDisabledSettingId } from '../../../../../platform/chat/common/cha
 import { TestConfigurationService } from '../../../../../platform/configuration/test/common/testConfigurationService.js';
 import { NullLogService } from '../../../../../platform/log/common/log.js';
 import { INotificationService } from '../../../../../platform/notification/common/notification.js';
+import { ILabelService } from '../../../../../platform/label/common/label.js';
 import { ITelemetryService } from '../../../../../platform/telemetry/common/telemetry.js';
 import { NullTelemetryService } from '../../../../../platform/telemetry/common/telemetryUtils.js';
 import { ChatContextKeys } from '../../../../../workbench/contrib/chat/common/actions/chatContextKeys.js';
@@ -25,12 +27,18 @@ import { IAutomationRunDispatch, IAutomationRunner, IAutomationRunOperation } fr
 import { type AutomationCatalogueState, AutomationMutationGuard, AutomationMutationUncertainError, AutomationSessionTemplateAuthorityError, AutomationUnavailableError, IAutomationProviderConfiguration, IAutomationService, ICreateAutomationOptions, IDeleteAutomationOptions, IGuardedAutomationUpdateResult, IUpdateAutomationOptions } from '../../../../../workbench/contrib/chat/common/automations/automationService.js';
 import { ChatAutomationsEnabledContext, CHAT_AUTOMATIONS_ENABLED_SETTING } from '../../../../../workbench/contrib/chat/common/automations/automationsEnabled.js';
 import { IToolImpl, IToolInvocation, IToolResult, ToolProgress } from '../../../../../workbench/contrib/chat/common/tools/languageModelToolsService.js';
+import { IAutomationDialogService, IShowAutomationDialogOptions } from '../../../../../workbench/contrib/chat/common/automations/automationDialogService.js';
+import { IChatService, ElicitationState } from '../../../../../workbench/contrib/chat/common/chatService/chatService.js';
+import { ChatElicitationRequestPart } from '../../../../../workbench/contrib/chat/common/model/chatProgressTypes/chatElicitationRequestPart.js';
+import { IChatModel, IChatRequestModel } from '../../../../../workbench/contrib/chat/common/model/chatModel.js';
+import { ChatConfiguration, ChatPermissionLevel } from '../../../../../workbench/contrib/chat/common/constants.js';
 import { ISessionsProvidersService } from '../../../../../workbench/contrib/sessions/browser/sessionsProvidersService.js';
 import { IPendingScheduledChatRequest, IScheduledChatsService, IScheduledChatRequestOptions, ScheduledChatSubmission } from '../../../../../workbench/contrib/sessions/browser/scheduledChatsService.js';
 import { IChat, ISession, ISessionType, ISessionWorkspace } from '../../../../../workbench/services/sessions/common/session.js';
 import { IProviderSessionType, ISessionsManagementService } from '../../../../../workbench/contrib/sessions/common/sessionsManagement.js';
 import { ISessionsProvider, ISessionsProviderAutomations } from '../../../../../workbench/contrib/sessions/common/sessionsProvider.js';
-import { ConfigureAutomationTool, ConfigureAutomationToolId, DeleteAutomationTool, DeleteAutomationToolId, ListAutomationsTool, ListAutomationsToolId, RunAutomationTool, RunAutomationToolId } from '../../browser/automationTools.js';
+import { IAgentHostSessionsProvider } from '../../../../../workbench/contrib/sessions/common/agentHostSessionsProvider.js';
+import { ConfigureAutomationTool, ConfigureAutomationToolId, DeleteAutomationTool, DeleteAutomationToolId, ListAutomationsTool, ListAutomationsToolId, ProposeAutomationTool, RunAutomationTool, RunAutomationToolId } from '../../browser/automationTools.js';
 import { TestDataTelemetryService } from '../../../../../platform/telemetry/test/common/testTelemetryService.js';
 import { AutomationRunner } from '../../browser/automationRunner.js';
 
@@ -385,6 +393,192 @@ function getText(result: IToolResult): string {
 
 suite('AutomationTools', () => {
 	ensureNoDisposablesAreLeakedInTestSuite();
+
+	suite('proposeAutomation', () => {
+		const parameters = { name: 'Review', prompt: 'First line\n\nSecond line', schedule: { interval: 'manual' }, enabled: false };
+
+		function setup(options?: { service?: FakeAutomationService; permissionLevel?: ChatPermissionLevel; mode?: string; autoReply?: boolean; peer?: boolean }) {
+			const service = options?.service ?? new FakeAutomationService();
+			const config = createConfigurationService();
+			config.setUserConfiguration(ChatConfiguration.AutoReply, options?.autoReply ?? false);
+			const chat = upcastPartial<IChat>({ resource: options?.peer ? URI.parse('agent-chat://local/main') : CHAT_RESOURCE });
+			const providerId = options?.mode !== undefined ? 'local-agent-host' : 'test-provider';
+			const session = { ...createSession({ workspace: FOLDER }), providerId, sessionId: 'session-1', mainChat: constObservable(chat) };
+			const sessions = new FakeSessionsManagementService(session, options?.peer ?? false, [providerSessionType(providerId, 'copilot')]);
+			const request = upcastPartial<IChatRequestModel>({ id: 'request-1', modeInfo: upcastPartial<NonNullable<IChatRequestModel['modeInfo']>>({ permissionLevel: options?.permissionLevel ?? ChatPermissionLevel.Default }) });
+			let review: ChatElicitationRequestPart | undefined;
+			const chatService = upcastPartial<IChatService>({
+				getSession: () => upcastPartial<IChatModel>({ getRequests: () => [request] }),
+				appendProgress: (_request, part) => {
+					if (part.kind === 'elicitation2' && part instanceof ChatElicitationRequestPart) {
+						review = part;
+					}
+				},
+			});
+			const configReads: Array<{ sessionId: string; chat: URI }> = [];
+			const provider: ISessionsProvider = upcastPartial<IAgentHostSessionsProvider>({
+				id: providerId,
+				label: 'Local',
+				environment: { id: 'local', label: 'This Computer' },
+				sessionTypes: [upcastPartial<ISessionType>({ id: 'copilot', label: 'Copilot' })],
+				...(options?.mode !== undefined ? {
+					acquireSessionConfig: async () => Disposable.None,
+					getSessionConfig: (sessionId: string, chat: URI) => {
+						configReads.push({ sessionId, chat });
+						return {
+							schema: { type: 'object' as const, properties: { mode: { type: 'string' as const, title: 'Mode', enum: ['interactive', 'autopilot'], default: 'interactive' } } },
+							values: { mode: options.mode },
+						};
+					},
+				} : {}),
+			});
+			const providers = new class extends mock<ISessionsProvidersService>() {
+				override getProvider<T extends ISessionsProvider>(): T { return provider as T; }
+			}();
+			let dialogOptions: IShowAutomationDialogOptions | undefined;
+			const dialogCompletion = new DeferredPromise<undefined>();
+			const dialog = upcastPartial<IAutomationDialogService>({
+				showAutomationDialog: async options => {
+					dialogOptions = options;
+					const listener = options.token?.onCancellationRequested(() => dialogCompletion.complete(undefined));
+					try {
+						return await dialogCompletion.p;
+					} finally {
+						listener?.dispose();
+					}
+				},
+			});
+			const tool = new ProposeAutomationTool(createConfigureAutomationTool(service, sessions, config), chatService, dialog, sessions, providers, config, new NullLogService(), upcastPartial<ILabelService>({ getUriLabel: uri => uri.fsPath }));
+			return { tool, service, config, configReads, getReview: () => { assert.ok(review); return review; }, getDialog: () => { assert.ok(dialogOptions); return dialogOptions; }, closeDialog: () => dialogCompletion.complete(undefined), hasReview: () => !!review };
+		}
+
+		test('approval creates the displayed snapshot once, including under Allow All', async () => {
+			const fixture = setup({ permissionLevel: ChatPermissionLevel.AutoApprove });
+			const result = invoke(fixture.tool, parameters);
+			const review = fixture.getReview();
+			const before = fixture.service.created.length;
+			await Promise.all([review.accept(true), review.accept(true)]);
+			const output = await result;
+			assert.deepStrictEqual({
+				before,
+				created: fixture.service.created.map(value => ({ name: value.name, prompt: value.prompt, enabled: value.enabled, folder: value.target.kind === 'workspace' && value.target.folderUri })),
+				promptShown: typeof review.message !== 'string' && review.message.value.includes(parameters.prompt),
+				status: JSON.parse(getText(output)).status,
+				state: review.state.get(),
+			}, { before: 0, created: [{ name: 'Review', prompt: parameters.prompt, enabled: false, folder: FOLDER }], promptShown: true, status: 'created', state: ElicitationState.Accepted });
+		});
+
+		test('Edit opens an unsaved draft and Create saves only edited values', async () => {
+			const fixture = setup();
+			const result = invoke(fixture.tool, parameters);
+			const review = fixture.getReview();
+			const editing = review.accept(review.inlineActions![0]);
+			const dialog = fixture.getDialog();
+			const before = fixture.service.created.length;
+			assert.ok(dialog.initialValues?.target);
+			await dialog.commit!({ kind: 'create', value: { ...dialog.initialValues, target: dialog.initialValues.target, name: 'Edited', prompt: 'Edited prompt' } });
+			await fixture.closeDialog();
+			await editing;
+			assert.deepStrictEqual({ before, prefilled: dialog.initialValues.prompt, created: fixture.service.created.map(value => value.prompt), status: JSON.parse(getText(await result)).status }, {
+				before: 0, prefilled: parameters.prompt, created: ['Edited prompt'], status: 'created',
+			});
+		});
+
+		for (const action of ['cancel', 'editCancel', 'cancelTurn', 'cancelEditing'] as const) {
+			test(`${action} creates nothing and restored history has no live actions`, async () => {
+				const fixture = setup();
+				const cancellation = new CancellationTokenSource();
+				try {
+					const result = invoke(fixture.tool, parameters, SESSION_RESOURCE, cancellation.token);
+					const review = fixture.getReview();
+					const editing = action === 'editCancel' || action === 'cancelEditing' ? review.accept(review.inlineActions![0]) : undefined;
+					if (action === 'cancel') {
+						await review.reject!();
+					} else if (action === 'editCancel') {
+						await fixture.closeDialog();
+					} else {
+						cancellation.cancel();
+					}
+					await editing;
+					const output = await result;
+					await review.accept(true);
+					assert.deepStrictEqual({ writes: fixture.service.created.length, status: JSON.parse(getText(output)).status, restoredKind: review.toJSON().kind, state: review.toJSON().state }, {
+						writes: 0, status: 'cancelled', restoredKind: 'elicitationSerialized', state: ElicitationState.Rejected,
+					});
+				} finally {
+					cancellation.dispose();
+				}
+			});
+		}
+
+		for (const options of [{ permissionLevel: ChatPermissionLevel.Autopilot }, { autoReply: true }, { mode: 'autopilot' }]) {
+			test(`unattended review delegates without creating: ${JSON.stringify(options)}`, async () => {
+				const fixture = setup(options);
+				const result = await invoke(fixture.tool, parameters);
+				assert.deepStrictEqual({ status: JSON.parse(getText(result)).status, review: fixture.hasReview(), writes: fixture.service.created.length }, { status: 'delegated', review: false, writes: 0 });
+			});
+		}
+
+		test('the originating chat mode wins over a stale stamped Autopilot mode', async () => {
+			const fixture = setup({ permissionLevel: ChatPermissionLevel.Autopilot, mode: 'interactive', peer: true });
+			const result = invoke(fixture.tool, parameters, SESSION_RESOURCE, CancellationToken.None, undefined, undefined, CHAT_RESOURCE);
+			await timeout(0);
+			await fixture.getReview().reject!();
+			await result;
+			assert.deepStrictEqual(fixture.configReads, [{ sessionId: 'session-1', chat: CHAT_RESOURCE }]);
+		});
+
+		test('disabling Automations while reviewing blocks the write', async () => {
+			const fixture = setup();
+			const result = invoke(fixture.tool, parameters);
+			await fixture.config.setUserConfiguration(CHAT_AUTOMATIONS_ENABLED_SETTING, false);
+			await fixture.getReview().accept(true);
+			assert.deepStrictEqual({ writes: fixture.service.created.length, error: (await result).toolResultError }, { writes: 0, error: 'Automations are disabled.' });
+		});
+
+		test('unknown dialog outcomes block retries and survive Cancel', async () => {
+			let attempts = 0;
+			const fixture = setup({ service: new class extends FakeAutomationService {
+				override async createAutomation(): Promise<IAutomationDescriptor> {
+					attempts++;
+					throw new AutomationMutationUncertainError('Acknowledgement lost');
+				}
+			}() });
+			const result = invoke(fixture.tool, parameters);
+			const review = fixture.getReview();
+			const editing = review.accept(review.inlineActions![0]);
+			const dialog = fixture.getDialog();
+			assert.ok(dialog.initialValues?.target);
+			const value = { ...dialog.initialValues, target: dialog.initialValues.target };
+			await assert.rejects(() => dialog.commit!({ kind: 'create', value }), /Acknowledgement lost/);
+			await assert.rejects(() => dialog.commit!({ kind: 'create', value }), /outcome is unknown/);
+			await fixture.closeDialog();
+			await editing;
+			assert.deepStrictEqual({ attempts, status: JSON.parse(getText(await result)).status }, { attempts: 1, status: 'unknown' });
+		});
+	});
+
+	test('a reviewed create snapshot resolves its target and preserves its prompt', () => {
+		const service = new FakeAutomationService();
+		const sessions = new FakeSessionsManagementService(createSession({ workspace: FOLDER }), false, [providerSessionType('local-agent-host', 'copilot')]);
+		const tool = createConfigureAutomationTool(service, sessions, createConfigurationService());
+		const options = tool.resolveCreateOptions({
+			name: 'Review',
+			prompt: 'First line\n\nSecond line',
+			schedule: { interval: 'manual' },
+			enabled: false,
+		}, SESSION_RESOURCE, undefined, 'proposal');
+		assert.deepStrictEqual({ options, writes: service.created }, {
+			options: {
+				name: 'Review',
+				prompt: 'First line\n\nSecond line',
+				schedule: { interval: 'manual', scheduleHour: 9, scheduleMinute: 0, scheduleDay: 1 },
+				target: { kind: 'workspace', folderUri: FOLDER, providerId: 'local-agent-host', sessionTypeId: 'copilot', isolation: { kind: 'default' } },
+				enabled: false,
+			},
+			writes: [],
+		});
+	});
 
 	test('cloud tool guidance covers consequences, current defaults and unsupported resets', () => {
 		const service = new FakeAutomationService();

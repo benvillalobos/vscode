@@ -16,6 +16,7 @@ import { IAutomationCloudTrigger, IAutomationDescriptor, IAutomationRun, IAutoma
 
 export const IAutomationService = createDecorator<IAutomationService>('automationService');
 export const ConfigureAutomationToolReferenceName = 'configureAutomation';
+export const ProposeAutomationToolReferenceName = 'proposeAutomation';
 
 /** Provider-owned cloud configuration consumed by the Automation dialog and tools. */
 export interface IAutomationProviderConfiguration {

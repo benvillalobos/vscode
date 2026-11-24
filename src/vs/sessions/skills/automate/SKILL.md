@@ -40,7 +40,11 @@ Use only schedules supported by the current tool. Explain unsupported event trig
 
 Show an ordinary-chat draft: name; **Runs** with plain location, full folder path in code, and direct-folder/worktree distinction; **When**; decision-relevant verified settings, ownership, or costs; and the exact prompt. For local runs, use the selected agent's display name followed by "on this computer", such as "Copilot on this computer" or "Claude on this computer", not "Copilot SDK", "folder isolation", or "Local Agent Host". Separate suggestions and unresolved choices from verified settings.
 
-Complete the proposal without an acceptance form. End: "Say Create it when ready, or tell me what to change." Ask only for missing facts. Never use `configureAutomation` as a preview: it saves. Invoking the skill or supplying an idea is not acceptance.
+For a complete new recurring or manual draft, call `proposeAutomation` when available. Its review card shows the details and exact prompt, so do not repeat the full draft in chat. Approve creates that draft; Edit opens the prefilled automation dialog and its Create button saves the edited draft; Cancel creates nothing. Do not call `configureAutomation` after a successful creation result.
+
+The card is a workflow decision, not a tool permission prompt: Allow All still shows it. If the tool returns `delegated` because Autopilot or Auto-Reply is active, make a pragmatic decision under the user's existing authorization; use `configureAutomation` if creating is appropriate, rather than asking the unavailable user or repeatedly proposing. Do not describe a delegated decision as human approval.
+
+If `proposeAutomation` is unavailable, complete the proposal in ordinary chat and end: "Say Create it when ready, or tell me what to change." Ask only for missing facts. Never use `configureAutomation` as a preview: it saves. Invoking the skill or supplying an idea is not acceptance.
 
 If the user accepts with a rename or unambiguous edit, save the reviewed draft plus only that edit without another round. If resolving a change requires judgment, conflicting choices, or consequential assumptions, show the resolved draft and wait for acceptance. Add no new task behavior while saving.
 
@@ -56,6 +60,6 @@ Report the accepted destination and local send time with its time zone. Accepted
 
 ## Create only after acceptance
 
-For the proposal workflow, after acceptance, resolve remaining blockers and call `configureAutomation` with the reviewed configuration and the same prompt, retaining its line breaks. Preserve explicit creation-state requests; otherwise omit `enabled` and retain existing tool defaults. Do not claim confirmation choices the tool does not offer. Respect tool approval and organization policy; never bypass them through shell, HTTP, or repository edits. Chat targets omit workspace, isolation, and branch fields. Never guess settings or widen permissions.
+For the conversational fallback, after acceptance, resolve remaining blockers and call `configureAutomation` with the reviewed configuration and the same prompt, retaining its line breaks. The proposal tool handles creation itself after a human choice; never create a second copy. Preserve explicit creation-state requests; otherwise omit `enabled` and retain existing tool defaults. Do not claim confirmation choices the tool does not offer. Respect tool approval and organization policy; never bypass them through shell, HTTP, or repository edits. Chat targets omit workspace, isolation, and branch fields. Never guess settings or widen permissions.
 
 Report saved identity, state, and accepted prompt edits. Reconcile uncertain results before retrying. Do not enable, run, change, or delete an automation without explicit authorization. Creating does not authorize a run.

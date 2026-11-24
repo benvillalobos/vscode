@@ -99,6 +99,9 @@ export class AutomationDialogService implements IAutomationDialogService {
 	) { }
 
 	async showAutomationDialog(options: IShowAutomationDialogOptions): Promise<IAutomationDialogResult | undefined> {
+		if (options.token?.isCancellationRequested) {
+			return undefined;
+		}
 		const disposables = new DisposableStore();
 		const initialDefinition = options.existing ?? options.initialValues;
 		if (initialDefinition?.schedule.interval === 'once') {
@@ -573,6 +576,13 @@ export class AutomationDialogService implements IAutomationDialogService {
 		disposables.add(toDisposable(() => activeContainer.classList.remove('automation-dialog-open')));
 
 		try {
+			if (options.token) {
+				disposables.add(options.token.onCancellationRequested(() => closeDialog(undefined)));
+			}
+			if (options.token?.isCancellationRequested) {
+				closeDialog(undefined);
+				return undefined;
+			}
 			void dialog.show().then(() => closeDialog(undefined));
 			// eslint-disable-next-line eslint-js/no-restricted-syntax -- Dialog owns its close toolbar and exposes no enablement API.
 			closeToolbar = dialogElement?.querySelector<HTMLElement>('.dialog-toolbar') ?? undefined;

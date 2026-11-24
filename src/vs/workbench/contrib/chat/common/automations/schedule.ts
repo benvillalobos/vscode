@@ -59,3 +59,23 @@ export const DAYS_OF_WEEK: readonly string[] = [
 	localize('automation.day.fri', "Friday"),
 	localize('automation.day.sat', "Saturday"),
 ];
+
+export function formatAutomationSchedule(schedule: IAutomationSchedule): string {
+	const localSchedule = automationScheduleToLocal(schedule);
+	const { interval, scheduleHour, scheduleMinute } = localSchedule;
+	const date = new Date(Date.UTC(2000, 0, 1, Math.max(0, Math.min(23, scheduleHour | 0)), Math.max(0, Math.min(59, scheduleMinute | 0))));
+	const time = date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit', timeZone: 'UTC' });
+	switch (interval) {
+		case 'once': return localize('scheduleOnceAt', "Once: {0}", schedule.runAt ? new Date(schedule.runAt).toLocaleString() : '');
+		case 'cron': return localize('scheduleCron', "Cron: {0}", schedule.cronExpression);
+		case 'hourly': return localize('scheduleHourly', "Hourly");
+		case 'daily': return localize('scheduleDailyAt', "Daily at {0}", time);
+		case 'weekdays': return localize('scheduleWeekdaysAt', "Weekdays at {0}", time);
+		case 'weekly': {
+			const day = DAYS_OF_WEEK[((localSchedule.scheduleDay % 7) + 7) % 7];
+			return localize('scheduleWeeklyAt', "{0} at {1}", day, time);
+		}
+		case 'manual': return localize('scheduleManual', "Manual");
+		case 'custom': return localize('scheduleCustom', "Custom schedule");
+	}
+}

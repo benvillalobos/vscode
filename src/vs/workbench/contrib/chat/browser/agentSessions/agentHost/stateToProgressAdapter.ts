@@ -51,7 +51,7 @@ import { MessageAttachmentKind, type FileEdit, type MessageAttachment, type Reas
 import { normalizeFileEdit } from '../../../../../../platform/agentHost/common/fileEditDiff.js';
 import { AgentSession } from '../../../../../../platform/agentHost/common/agentService.js';
 import product from '../../../../../../platform/product/common/product.js';
-import { ConfigureAutomationToolReferenceName } from '../../../common/automations/automationService.js';
+import { ConfigureAutomationToolReferenceName, ProposeAutomationToolReferenceName } from '../../../common/automations/automationService.js';
 import { OPEN_SESSION_COMPARISON_COMMAND_ID } from '../../../../../common/sessionComparisonConstants.js';
 import { formatCopilotCreditsLabel, getSubagentIsActive, ElicitationState, type ChatExternalEditKind, type ChatMcpAppData, type IChatAgentFeedbackReviewConfirmationData, type IChatAutomationConfiguredData, type IChatAutoModeResolutionPart, type IChatExternalEdit, type IChatGeneratedImageData, type IChatMcpAuthenticationRequiredServer, type IChatModifiedFilesConfirmationData, type IChatProgress, type IChatQuestion, type IChatQuestionAnswerValue, type IChatQuestionAnswers, type IChatSingleSelectAnswer, type IChatResponseErrorDetails, type IChatSearchToolInvocationData, type IChatSessionTargetData, type IChatSubagentToolInvocationData, type IChatTerminalToolInvocationData, type IChatThinkingPart, type IChatToolInputInvocationData, type IChatToolInvocationSerialized, type IChatUsage, type IChatUsagePromptTokenDetail, ToolConfirmKind, AgentFeedbackReviewCommandId } from '../../../common/chatService/chatService.js';
 import { isTerminalCommandPrompt, type IChatSessionHistoryItem } from '../../../common/chatSessionsService.js';
@@ -2343,7 +2343,7 @@ function buildImageGenerationInputData(tc: ToolCallState): IChatToolInputInvocat
 }
 
 function buildAutomationConfiguredToolData(tc: ToolCallState): IChatAutomationConfiguredData | undefined {
-	if (tc.status !== ToolCallStatus.Completed || !tc.success || tc.toolName !== ConfigureAutomationToolReferenceName) {
+	if (tc.status !== ToolCallStatus.Completed || !tc.success || (tc.toolName !== ConfigureAutomationToolReferenceName && tc.toolName !== ProposeAutomationToolReferenceName)) {
 		return undefined;
 	}
 	const output = getToolOutputText(tc);

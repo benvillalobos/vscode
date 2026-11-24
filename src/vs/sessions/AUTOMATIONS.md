@@ -131,6 +131,8 @@ Blueprint schedules are manual, hourly, or five-field cron schedules interpreted
 
 ## Availability and routing
 
+The Agents Window `proposeAutomation` tool owns a live review before creating a recurring or manual definition. The review is user input within tool execution, independent of tool permission auto-approval. Approve submits the displayed snapshot; Edit opens the existing creation dialog and submits only its accepted values; cancellation before dispatch creates nothing. Autopilot and Auto-Reply delegate the decision back to the agent without a mutation or a human-approval receipt. Pending reviews are not durable jobs: restored history is inert, and all accepted writes still use the ordinary provider capability, policy, and mutation boundaries.
+
 A store's catalogue is `loading`, `ready`, `unavailable`, or in `error`. Only `ready` makes an empty catalogue authoritative.
 
 - `loading` means initial provider discovery, capability negotiation, or an authoritative snapshot is still in flight.

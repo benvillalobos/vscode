@@ -13,7 +13,7 @@ import { Button } from '../../../../../base/browser/ui/button/button.js';
 import { Dialog } from '../../../../../base/browser/ui/dialog/dialog.js';
 import { SelectBox } from '../../../../../base/browser/ui/selectBox/selectBox.js';
 import { DeferredPromise, timeout } from '../../../../../base/common/async.js';
-import { CancellationToken } from '../../../../../base/common/cancellation.js';
+import { CancellationToken, CancellationTokenSource } from '../../../../../base/common/cancellation.js';
 import { StandardMouseEvent } from '../../../../../base/browser/mouseEvent.js';
 import { Codicon } from '../../../../../base/common/codicons.js';
 import { Action, IAction } from '../../../../../base/common/actions.js';
@@ -88,6 +88,16 @@ const REPOSITORY = URI.from({ scheme: GITHUB_REMOTE_FILE_SCHEME, authority: 'git
 
 suite('Automation dialog creation', () => {
 	const disposables = ensureNoDisposablesAreLeakedInTestSuite();
+
+	test('cancelling the originating proposal closes its unsaved dialog', async () => {
+		const cancellation = disposables.add(new CancellationTokenSource());
+		let commits = 0;
+		const dialog = openDialog({ token: cancellation.token, commit: async () => { commits++; } });
+		cancellation.cancel();
+		assert.deepStrictEqual({ result: await dialog.result, commits, open: dialog.container.querySelector('.monaco-dialog-box') !== null }, {
+			result: undefined, commits: 0, open: false,
+		});
+	});
 
 	for (const inputEditorOptions of [undefined, { fontSize: 16, lineHeight: 24 }]) {
 		test(`the prompt receives the entry's input metrics (${inputEditorOptions?.fontSize ?? 'default'})`, async () => {

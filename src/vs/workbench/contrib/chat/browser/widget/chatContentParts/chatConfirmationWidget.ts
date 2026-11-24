@@ -28,6 +28,7 @@ import { IChatContentPartRenderContext } from './chatContentParts.js';
 import { IChatMarkdownAnchorService } from './chatMarkdownAnchorService.js';
 import { ChatMarkdownContentPart, IChatMarkdownContentPartOptions } from './chatMarkdownContentPart.js';
 import { renderSubagentChatLinks } from './chatSubagentOpenChat.js';
+import { ICodeBlockRenderOptions } from './codeBlockPart.js';
 import './media/chatConfirmationWidget.css';
 
 export interface IChatConfirmationButton<T> {
@@ -323,6 +324,8 @@ export interface IChatConfirmationWidget2Options<T> {
 	buttons: IChatConfirmationButton<T>[];
 	toolbarData?: { arg: unknown; partType: string; partSource?: string };
 	fileWidgetOptions?: IRenderFileWidgetsOptions;
+	codeBlockRenderOptions?: ICodeBlockRenderOptions;
+	resizeObserverCtor?: typeof ResizeObserver;
 }
 
 abstract class BaseChatConfirmationWidget<T> extends Disposable {
@@ -353,6 +356,8 @@ abstract class BaseChatConfirmationWidget<T> extends Disposable {
 	private readonly messageContentDisposables = this._register(new MutableDisposable<DisposableStore>());
 	private readonly markdownContentPart = this._register(new MutableDisposable<ChatMarkdownContentPart>());
 	private readonly fileWidgetOptions: IRenderFileWidgetsOptions | undefined;
+	protected readonly codeBlockRenderOptions: ICodeBlockRenderOptions | undefined;
+	private readonly resizeObserverCtor: typeof ResizeObserver | undefined;
 
 	public get codeblocksPartId() {
 		return this.markdownContentPart.value?.codeblocksPartId;
@@ -375,6 +380,8 @@ abstract class BaseChatConfirmationWidget<T> extends Disposable {
 
 		const { title, subtitle, message, buttons, icon, footerBanner, additionalContent } = options;
 		this.fileWidgetOptions = options.fileWidgetOptions;
+		this.codeBlockRenderOptions = options.codeBlockRenderOptions;
+		this.resizeObserverCtor = options.resizeObserverCtor;
 
 		const elements = dom.h('.chat-confirmation-widget-container@container', [
 			dom.h('.chat-confirmation-widget2@root', [
@@ -524,6 +531,7 @@ abstract class BaseChatConfirmationWidget<T> extends Disposable {
 				{
 					allowInlineDiffs: true,
 					horizontalPadding: 6,
+					codeBlockRenderOptions: this.codeBlockRenderOptions,
 				} satisfies IChatMarkdownContentPartOptions,
 			));
 			renderFileWidgets(part.domNode, this.instantiationService, this.chatMarkdownAnchorService, this._store, this.fileWidgetOptions);
@@ -537,7 +545,20 @@ abstract class BaseChatConfirmationWidget<T> extends Disposable {
 		const messageContentResizeObserver = store.add(new dom.DisposableResizeObserver('BaseChatConfirmationWidget.messageContent', () => this.messageScrollable.scanDomNode()));
 		store.add(messageContentResizeObserver.observe(element));
 		if (this.markdownContentPart.value) {
-			store.add(this.markdownContentPart.value.onDidChangeHeight(() => this.messageScrollable.scanDomNode()));
+			const part = this.markdownContentPart.value;
+			store.add(part.onDidChangeHeight(() => this.messageScrollable.scanDomNode()));
+			if (this.codeBlockRenderOptions) {
+				let previousWidth = 0;
+				const layoutObserver = store.add(new dom.DisposableResizeObserver('BaseChatConfirmationWidget.codeBlocks', () => {
+					const width = part.domNode.clientWidth;
+					if (width > 0 && width !== previousWidth) {
+						previousWidth = width;
+						part.layout(width);
+						this.messageScrollable.scanDomNode();
+					}
+				}, dom.getWindow(part.domNode), { resizeObserverCtor: this.resizeObserverCtor }));
+				store.add(layoutObserver.observe(part.domNode));
+			}
 		}
 		this.messageContentDisposables.value = store;
 		this.messageElement.append(element);
@@ -561,6 +582,10 @@ export class ChatConfirmationWidget<T> extends BaseChatConfirmationWidget<T> {
 	}
 
 	public updateMessage(message: string | IMarkdownString): void {
+		if (this.codeBlockRenderOptions) {
+			this.renderMessage(message);
+			return;
+		}
 		this._renderedMessage?.remove();
 		const renderedMessage = this._register(this.markdownRendererService.render(
 			typeof message === 'string' ? new MarkdownString(message) : message,

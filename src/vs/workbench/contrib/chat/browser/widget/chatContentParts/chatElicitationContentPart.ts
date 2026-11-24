@@ -13,13 +13,14 @@ import { IChatProgressRenderableResponseContent } from '../../../common/model/ch
 import { ChatContextKeys } from '../../../common/actions/chatContextKeys.js';
 import { ElicitationState, IChatElicitationRequest, IChatElicitationRequestSerialized } from '../../../common/chatService/chatService.js';
 import { ILanguageModelToolsService } from '../../../common/tools/languageModelToolsService.js';
-import { IChatAccessibilityService } from '../../chat.js';
+import { IChatAccessibilityService, IChatWidgetService } from '../../chat.js';
 import { AcceptElicitationRequestActionId } from '../../actions/chatElicitationActions.js';
 import { IChatToolRiskAssessmentService } from '../../tools/chatToolRiskAssessmentService.js';
 import { ChatConfirmationWidget, IChatConfirmationButton } from './chatConfirmationWidget.js';
 import { IChatContentPart, IChatContentPartRenderContext } from './chatContentParts.js';
 import { createToolRiskBadge } from './toolInvocationParts/toolRiskBadgeHelper.js';
 import { IAction } from '../../../../../../base/common/actions.js';
+import { Event } from '../../../../../../base/common/event.js';
 
 export class ChatElicitationContentPart extends Disposable implements IChatContentPart {
 	public readonly domNode: HTMLElement;
@@ -43,6 +44,7 @@ export class ChatElicitationContentPart extends Disposable implements IChatConte
 		@IKeybindingService private readonly keybindingService: IKeybindingService,
 		@ILanguageModelToolsService private readonly languageModelToolsService: ILanguageModelToolsService,
 		@IChatToolRiskAssessmentService private readonly riskAssessmentService: IChatToolRiskAssessmentService,
+		@IChatWidgetService private readonly chatWidgetService: IChatWidgetService,
 	) {
 		super();
 
@@ -60,8 +62,18 @@ export class ChatElicitationContentPart extends Disposable implements IChatConte
 					run: action.run
 				}))
 			});
+			for (const action of elicitation.inlineActions ?? []) {
+				buttons.push({ label: action.label, data: action, isSecondary: true });
+			}
 			if (elicitation.rejectButtonLabel && elicitation.reject) {
 				buttons.push({ label: elicitation.rejectButtonLabel, data: false, isSecondary: true });
+			}
+			if (elicitation.isBusy) {
+				const busy = elicitation.isBusy;
+				const onDidChangeDisablement = Event.map(Event.fromObservableLight(busy), () => busy.get());
+				for (let index = 0; index < buttons.length; index++) {
+					buttons[index] = { ...buttons[index], disabled: busy.get(), onDidChangeDisablement };
+				}
 			}
 
 			this._register(autorun(reader => {
@@ -84,6 +96,7 @@ export class ChatElicitationContentPart extends Disposable implements IChatConte
 			subtitle: elicitation.subtitle,
 			buttons,
 			message: this.getMessageToRender(elicitation),
+			codeBlockRenderOptions: elicitation.wrapCodeBlocks ? { editorOptions: { wordWrap: 'on', readOnly: true, scrollbar: { vertical: 'auto' } }, maxHeightInLines: 12, hideToolbar: true } : undefined,
 			footerBanner: this._createRiskBadge(elicitation),
 			toolbarData: { partType: 'elicitation', partSource: elicitation.source?.type, arg: elicitation },
 		}));
@@ -94,7 +107,7 @@ export class ChatElicitationContentPart extends Disposable implements IChatConte
 			this._register(autorun(reader => confirmationWidget.setShowButtons(elicitation.state.read(reader) === ElicitationState.Pending)));
 		}
 
-		this._register(confirmationWidget.onDidClick(async ({ button: e }) => {
+		this._register(confirmationWidget.onDidClick(async ({ button: e, isTouchClick }) => {
 			if (elicitation.kind !== 'elicitation2') {
 				return;
 			}
@@ -117,6 +130,12 @@ export class ChatElicitationContentPart extends Disposable implements IChatConte
 				confirmationWidget.setShowButtons(false);
 			}
 			confirmationWidget.updateMessage(this.getMessageToRender(elicitation));
+			if (!isTouchClick && elicitation.inlineActions?.length && elicitation.state.get() !== ElicitationState.Pending) {
+				const activeElement = this.domNode.ownerDocument.activeElement;
+				if (activeElement === this.domNode.ownerDocument.body || this.domNode.contains(activeElement)) {
+					this.chatWidgetService.getWidgetBySessionResource(context.element.sessionResource)?.focusInput();
+				}
+			}
 		}));
 
 		this.domNode = confirmationWidget.domNode;

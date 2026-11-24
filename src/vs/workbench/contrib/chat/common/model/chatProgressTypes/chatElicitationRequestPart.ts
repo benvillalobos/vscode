@@ -14,6 +14,9 @@ export class ChatElicitationRequestPart implements IChatElicitationRequest {
 	public state = observableValue('state', ElicitationState.Pending);
 	public acceptedResult?: Record<string, unknown>;
 	public keepActionsWhilePending = false;
+	public inlineActions?: readonly IAction[];
+	public isBusy?: IObservable<boolean>;
+	public wrapCodeBlocks?: boolean;
 
 	private readonly _isHiddenValue = observableValue<boolean>('isHidden', false);
 	public readonly isHidden: IObservable<boolean> = this._isHiddenValue;
@@ -70,6 +73,7 @@ export class ChatElicitationRequestPart implements IChatElicitationRequest {
 			subtitle: this.subtitle,
 			source: this.source,
 			isHidden: this._isHiddenValue.get(),
+			...(this.wrapCodeBlocks ? { wrapCodeBlocks: true } : {}),
 		} satisfies IChatElicitationRequestSerialized;
 	}
 }

@@ -6,8 +6,10 @@
 import assert from 'assert';
 import * as sinon from 'sinon';
 import { mainWindow } from '../../../../../../../base/browser/window.js';
-import { Separator } from '../../../../../../../base/common/actions.js';
-import { Emitter } from '../../../../../../../base/common/event.js';
+import { Action, Separator } from '../../../../../../../base/common/actions.js';
+import { constObservable, observableValue } from '../../../../../../../base/common/observable.js';
+import { upcastPartial } from '../../../../../../../base/test/common/mock.js';
+import { Emitter, Event } from '../../../../../../../base/common/event.js';
 import { DeferredPromise } from '../../../../../../../base/common/async.js';
 import { URI } from '../../../../../../../base/common/uri.js';
 import { MarkdownString } from '../../../../../../../base/common/htmlContent.js';
@@ -16,10 +18,25 @@ import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../../../ba
 import { IMarkdownRendererService } from '../../../../../../../platform/markdown/browser/markdownRenderer.js';
 import { INotificationService } from '../../../../../../../platform/notification/common/notification.js';
 import { workbenchInstantiationService } from '../../../../../../test/browser/workbenchTestServices.js';
-import { ChatCustomConfirmationWidget, ChatQueryTitlePart, type IChatConfirmationButton } from '../../../../browser/widget/chatContentParts/chatConfirmationWidget.js';
+import { ChatConfirmationWidget, ChatCustomConfirmationWidget, ChatQueryTitlePart, type IChatConfirmationButton } from '../../../../browser/widget/chatContentParts/chatConfirmationWidget.js';
 import type { IChatContentPartRenderContext } from '../../../../browser/widget/chatContentParts/chatContentParts.js';
 import { ChatTerminalToolExplanation } from '../../../../browser/widget/chatContentParts/toolInvocationParts/chatTerminalToolExplanation.js';
 import { IChatSideChatService } from '../../../../common/chatSideChatService.js';
+import { ChatElicitationRequestPart } from '../../../../common/model/chatProgressTypes/chatElicitationRequestPart.js';
+import { ElicitationState } from '../../../../common/chatService/chatService.js';
+import { ChatElicitationContentPart } from '../../../../browser/widget/chatContentParts/chatElicitationContentPart.js';
+import { IChatAccessibilityService, IChatWidget, IChatWidgetService } from '../../../../browser/chat.js';
+import { IChatResponseViewModel } from '../../../../common/model/chatViewModel.js';
+import { EditorPool } from '../../../../browser/widget/chatContentParts/chatContentCodePools.js';
+import { IChatOutputRendererService } from '../../../../browser/chatOutputItemRenderer.js';
+import { ChatMarkdownContentPart } from '../../../../browser/widget/chatContentParts/chatMarkdownContentPart.js';
+import { ChatEditorOptions } from '../../../../browser/widget/chatOptions.js';
+import { IChatRendererDelegate } from '../../../../browser/widget/chatListRenderer.js';
+import { EditorOption } from '../../../../../../../editor/common/config/editorOptions.js';
+import { IUserInteractionService, MockUserInteractionService } from '../../../../../../../platform/userInteraction/browser/userInteractionService.js';
+import { ITextModelService } from '../../../../../../../editor/common/services/resolverService.js';
+import { IModelService } from '../../../../../../../editor/common/services/model.js';
+import { Schemas } from '../../../../../../../base/common/network.js';
 
 suite('ChatTerminalToolExplanation', () => {
 	const store = ensureNoDisposablesAreLeakedInTestSuite();
@@ -146,6 +163,119 @@ suite('ChatQueryTitlePart', () => {
 		}));
 		assert.deepStrictEqual({ markdownRenders: render.callCount, hasLink: !!container.querySelector('a') }, {
 			markdownRenders: 1, hasLink: false,
+		});
+	});
+});
+
+suite('Chat elicitation inline actions', () => {
+	const store = ensureNoDisposablesAreLeakedInTestSuite();
+
+	for (const restored of [false, true]) {
+		test(`long literal input follows the card width without changing its text (${restored ? 'restored' : 'live'})`, async () => {
+			const instantiationService = workbenchInstantiationService(undefined, store);
+			instantiationService.stub(IChatAccessibilityService, upcastPartial<IChatAccessibilityService>({ acceptElicitation: () => { } }));
+			instantiationService.stub(IChatOutputRendererService, upcastPartial<IChatOutputRendererService>({ hasCodeBlockRenderer: () => false }));
+			instantiationService.stub(IUserInteractionService, new MockUserInteractionService());
+			store.add(instantiationService.get(ITextModelService).registerTextModelContentProvider(Schemas.vscodeChatCodeBlock, {
+				provideTextContent: async uri => instantiationService.get(IModelService).getModel(uri),
+			}));
+			const prompt = 'Keep <tags>, `backticks`, and [links](command:example) literal.\n\n' + 'Long paragraph with words to wrap. '.repeat(80);
+			const review = new ChatElicitationRequestPart('Review', new MarkdownString().appendCodeblock('text', prompt), '', 'Approve', 'Cancel', async () => ElicitationState.Accepted);
+			review.wrapCodeBlocks = true;
+			const layout = sinon.spy(ChatMarkdownContentPart.prototype, 'layout');
+			store.add(toDisposable(() => layout.restore()));
+			const editorOptions = upcastPartial<ChatEditorOptions>({
+				onDidChange: Event.None,
+				configuration: {
+					foreground: undefined, inputEditor: { backgroundColor: undefined, accessibilitySupport: 'off' },
+					resultEditor: { fontSize: 14, lineHeight: 20, fontFamily: 'monospace', fontWeight: 'normal', backgroundColor: undefined, wordWrap: 'off', fontLigatures: false, bracketPairColorization: { enabled: false, independentColorPoolPerBracketType: false } },
+				},
+			});
+			const editorPool = store.add(instantiationService.createInstance(EditorPool, editorOptions, upcastPartial<IChatRendererDelegate>({}), undefined, true));
+			const data = restored ? review.toJSON() : review;
+			const context = upcastPartial<IChatContentPartRenderContext>({
+				element: upcastPartial<IChatResponseViewModel>({ id: 'response', sessionResource: URI.parse('test:///chat'), isComplete: restored }),
+				content: [data], contentIndex: 0, currentWidth: constObservable(1000), editorPool, codeBlockStartIndex: 0,
+			});
+			const resizes: (() => void)[] = [];
+			class TestResizeObserver implements ResizeObserver {
+				constructor(callback: ResizeObserverCallback) {
+					resizes.push(() => callback([], this));
+				}
+				observe(): void { }
+				unobserve(): void { }
+				disconnect(): void { }
+			}
+			const part = store.add(instantiationService.createInstance(ChatConfirmationWidget, context, {
+				title: data.title, message: data.message, buttons: [],
+				codeBlockRenderOptions: data.wrapCodeBlocks ? { editorOptions: { wordWrap: 'on', readOnly: true, scrollbar: { vertical: 'auto' } }, maxHeightInLines: 12, hideToolbar: true } : undefined,
+				resizeObserverCtor: TestResizeObserver,
+			}));
+			const container = mainWindow.document.createElement('div');
+			container.style.width = '320px';
+			container.appendChild(part.domNode);
+			mainWindow.document.body.append(container);
+			store.add(toDisposable(() => container.remove()));
+			const sizes: number[] = [];
+			const block = [...editorPool.inUse()][0];
+			const editorSizes: { width: number; height: number; scrollWidth: number }[] = [];
+			for (const width of [320, 500, 280]) {
+				container.style.width = `${width}px`;
+				resizes.forEach(resize => resize());
+				block.editor.render();
+				sizes.push(layout.lastCall.args[0]);
+				editorSizes.push({ width: block.editor.getLayoutInfo().width, height: block.editor.getLayoutInfo().height, scrollWidth: block.editor.getScrollWidth() });
+			}
+			assert.deepStrictEqual({
+				text: block.editor.getModel()?.getLinesContent().join('\n').trimEnd(),
+				wrap: block.editor.getOption(EditorOption.wordWrap),
+				boundedHeight: editorSizes.every(size => size.height <= 240),
+				noHorizontalScroll: editorSizes.every(size => size.scrollWidth <= size.width),
+				fits: sizes.every((width, index) => width > 0 && width < [320, 500, 280][index]),
+				resized: sizes[0] < sizes[1] && sizes[2] < sizes[0],
+			}, { text: prompt.trimEnd(), wrap: 'on', boundedHeight: true, noHorizontalScroll: true, fits: true, resized: true });
+		});
+	}
+
+	test('shows Edit beside Approve, disables pending decisions, and restores focus after settling', async () => {
+		const instantiationService = workbenchInstantiationService(undefined, store);
+		instantiationService.stub(IChatAccessibilityService, upcastPartial<IChatAccessibilityService>({ acceptElicitation: () => { } }));
+		const focusInput = sinon.spy();
+		instantiationService.stub(IChatWidgetService, upcastPartial<IChatWidgetService>({
+			getWidgetBySessionResource: () => upcastPartial<IChatWidget>({ focusInput }),
+		}));
+		const settled = new DeferredPromise<void>();
+		const busy = observableValue('busy', false);
+		const choices: string[] = [];
+		const edit = store.add(new Action('edit', 'Edit'));
+		const review = new ChatElicitationRequestPart('Review', 'Draft', '', 'Approve', 'Cancel', async choice => {
+			choices.push(choice === edit ? 'edit' : 'approve');
+			busy.set(true, undefined);
+			await settled.p;
+			busy.set(false, undefined);
+			return ElicitationState.Rejected;
+		}, async () => ElicitationState.Rejected);
+		review.inlineActions = [edit];
+		review.isBusy = busy;
+		review.keepActionsWhilePending = true;
+		const context = upcastPartial<IChatContentPartRenderContext>({
+			element: upcastPartial<IChatResponseViewModel>({ id: 'response', sessionResource: URI.parse('test:///chat'), isComplete: false }),
+			content: [review],
+			contentIndex: 0,
+			currentWidth: constObservable(600),
+		});
+		const part = store.add(instantiationService.createInstance(ChatElicitationContentPart, review, context));
+		mainWindow.document.body.append(part.domNode);
+		store.add(toDisposable(() => part.domNode.remove()));
+		const buttons = [...part.domNode.querySelectorAll<HTMLElement>('.chat-buttons > .monaco-button')];
+		const labels = buttons.map(button => button.textContent);
+		buttons[1].focus();
+		buttons[1].click();
+		const disabled = buttons.map(button => button.getAttribute('aria-disabled'));
+		await settled.complete();
+		await new Promise<void>(resolve => setTimeout(resolve, 0));
+		assert.deepStrictEqual({ labels, disabled, choices, hidden: part.domNode.classList.contains('hideButtons'), focused: focusInput.calledOnce }, {
+			labels: ['Approve', 'Edit', 'Cancel'], disabled: ['true', 'true', 'true'], choices: ['edit'], hidden: true, focused: true,
 		});
 	});
 });

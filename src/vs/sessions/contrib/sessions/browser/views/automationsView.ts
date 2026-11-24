@@ -39,13 +39,13 @@ import { normalizeRemoteAgentHostAddress } from '../../../../../platform/agentHo
 import { IMissionControlEnvironmentService } from '../../../../../platform/agentHost/common/missionControlEnvironment.js';
 import { WorkbenchToolBar } from '../../../../../platform/actions/browser/toolbar.js';
 import { IUriIdentityService } from '../../../../../platform/uriIdentity/common/uriIdentity.js';
-import type { IAutomationDescriptor, IAutomationRun, IAutomationSchedule, AutomationTarget } from '../../../../../workbench/contrib/chat/common/automations/automation.js';
+import type { IAutomationDescriptor, IAutomationRun, AutomationTarget } from '../../../../../workbench/contrib/chat/common/automations/automation.js';
 import { type AutomationCatalogueState, type AutomationHistoryState, type IAutomationProviderDescriptor, type IAutomationRefreshOptions, IAutomationService, type IUpdateAutomationOptions } from '../../../../../workbench/contrib/chat/common/automations/automationService.js';
 import { CHAT_AUTOMATIONS_ENABLED_SETTING, CHAT_CLOUD_AUTOMATIONS_ENABLED_SETTING, ChatAutomationsEnabledContext } from '../../../../../workbench/contrib/chat/common/automations/automationsEnabled.js';
 import { IAutomationRunner } from '../../../../../workbench/contrib/chat/common/automations/automationRunner.js';
 import { type AutomationDialogCreateInitialValues, IAutomationDialogService } from '../../../../../workbench/contrib/chat/common/automations/automationDialogService.js';
 import { AUTOMATION_BLUEPRINT_FILE_SUFFIX, AutomationBlueprintParseError, automationToBlueprint, createAutomationBlueprintFileName, parseAutomationBlueprint, serializeAutomationBlueprint } from '../../../../../workbench/contrib/chat/common/automations/automationBlueprint.js';
-import { automationScheduleToLocal, DAYS_OF_WEEK } from '../../../../../workbench/contrib/chat/common/automations/schedule.js';
+import { formatAutomationSchedule as formatSchedule } from '../../../../../workbench/contrib/chat/common/automations/schedule.js';
 import { automationTriggerSummary, hasAutomationEventTrigger } from '../../../../../workbench/contrib/chat/common/automations/automationTriggers.js';
 import { IAgentPluginService } from '../../../../../workbench/contrib/chat/common/plugins/agentPluginService.js';
 import { AgentSessionApprovalModel } from '../../../../../workbench/contrib/chat/browser/agentSessions/agentSessionApprovalModel.js';
@@ -397,6 +397,7 @@ export class AutomationsCardsWidget extends Disposable {
 class AutomationCardsSection extends Disposable {
 
 	readonly showDisabled: ISettableObservable<boolean>;
+	private readonly hasHiddenDisabled = observableValue(this, false);
 	private readonly container: HTMLElement;
 	private readonly emptyContainer: HTMLElement;
 	private readonly loadingContainer: HTMLElement;
@@ -470,8 +471,7 @@ class AutomationCardsSection extends Disposable {
 		this._register(toDisposable(() => showDisabledContext.reset()));
 		this._register(autorun(reader => showDisabledContext.set(this.showDisabled.read(reader))));
 		this._register(CommandsRegistry.registerCommand(TOGGLE_SHOW_DISABLED_AUTOMATIONS_COMMAND_ID, () => {
-			this.showDisabled.set(!this.showDisabled.get(), undefined);
-			this.storageService.store(SHOW_DISABLED_AUTOMATIONS_STORAGE_KEY, this.showDisabled.get(), StorageScope.PROFILE, StorageTarget.MACHINE);
+			this.setShowDisabled(!this.showDisabled.get());
 		}));
 		this.seenPluginTemplateIds = this.readSeenPluginTemplateIds();
 		this._register(this.storageService.onDidChangeValue(StorageScope.PROFILE, SEEN_PLUGIN_AUTOMATION_TEMPLATES_STORAGE_KEY, this._store)(() => {
@@ -607,6 +607,7 @@ class AutomationCardsSection extends Disposable {
 		}
 
 		const visibleAutomations = automations.filter(automation => showDisabled || automation.enabled || automation.ownership === 'repository');
+		this.hasHiddenDisabled.set(visibleAutomations.length < automations.length, undefined);
 		const hiddenDisabledDescription = visibleAutomations.length < automations.length
 			? localize('hiddenDisabledAutomations', "Disabled automations are hidden. Use View options, then Show disabled automations to reveal them.")
 			: undefined;
@@ -1100,10 +1101,37 @@ class AutomationCardsSection extends Disposable {
 
 	private renderEmptyState(container: HTMLElement, disposables: DisposableStore): IButton {
 		const title = DOM.append(container, $('h3.automations-cards-empty-title'));
-		title.textContent = localize('noAutomationsYet', "No automations yet");
 		const desc = DOM.append(container, $('p.automations-cards-empty-description'));
-		desc.textContent = localize('noAutomationsDesc', "Describe what you want to automate, then choose when it runs.");
-		return this.renderCreateWithAgentButton(container, disposables, 'automations-cards-create-button');
+		this.updateEmptyStateText(title, desc, disposables);
+		const createButton = this.renderCreateWithAgentButton(container, disposables, 'automations-cards-create-button');
+		this.renderShowDisabledButton(container, disposables);
+		return createButton;
+	}
+
+	private updateEmptyStateText(title: HTMLElement, description: HTMLElement, disposables: DisposableStore): void {
+		disposables.add(autorun(reader => {
+			const hidden = this.hasHiddenDisabled.read(reader);
+			title.textContent = hidden
+				? localize('automationsHidden', "Disabled automations are hidden")
+				: localize('noAutomationsYet', "No automations yet");
+			description.textContent = hidden
+				? localize('automationsHiddenDescription', "Your saved automations are disabled. Show them to review or edit them without enabling scheduled runs.")
+				: localize('noAutomationsDesc', "Describe what you want to automate, then choose when it runs.");
+		}));
+	}
+
+	private setShowDisabled(show: boolean): void {
+		this.showDisabled.set(show, undefined);
+		this.storageService.store(SHOW_DISABLED_AUTOMATIONS_STORAGE_KEY, show, StorageScope.PROFILE, StorageTarget.MACHINE);
+	}
+
+	private renderShowDisabledButton(container: HTMLElement, disposables: DisposableStore): void {
+		const button = disposables.add(new Button(container, { ...defaultButtonStyles, secondary: true }));
+		button.element.classList.add('automations-show-disabled-button');
+		button.element.style.width = 'auto';
+		button.label = localize('showDisabledAutomationsButton', "Show Disabled Automations");
+		disposables.add(autorun(reader => DOM.setVisibility(this.hasHiddenDisabled.read(reader), button.element)));
+		disposables.add(button.onDidClick(() => this.setShowDisabled(true)));
 	}
 
 	private renderCreateWithAgentButton(container: HTMLElement, disposables: DisposableStore, buttonClassName: string): IButton {
@@ -1289,9 +1317,8 @@ class AutomationCardsSection extends Disposable {
 
 	private renderUnavailableState(): { readonly createButton: IButton; readonly description: HTMLElement; readonly manageRemotesTarget: HTMLElement } {
 		const title = DOM.append(this.unavailableContainer, $('h3.automations-cards-state-title'));
-		title.textContent = localize('noAutomationsYet', "No automations yet");
 		const emptyDescription = DOM.append(this.unavailableContainer, $('p.automations-cards-state-description'));
-		emptyDescription.textContent = localize('noAutomationsDesc', "Describe what you want to automate, then choose when it runs.");
+		this.updateEmptyStateText(title, emptyDescription, this.stateDisposables);
 		const manageRemotesTarget = DOM.append(this.unavailableContainer, $('div.automations-manage-remotes-target'));
 		const description = DOM.append(this.unavailableContainer, $('div.automations-cards-state-description.automations-cards-unavailable-message'));
 		description.textContent = localize('automationsUnavailableDescription', "One or more providers are disconnected, disabled, or do not support automations.");
@@ -1383,7 +1410,9 @@ class AutomationCardsSection extends Disposable {
 	}
 
 	private renderStateCreateButton(container: HTMLElement): IButton {
-		return this.renderCreateWithAgentButton(container, this.stateDisposables, 'automations-cards-state-create-button');
+		const button = this.renderCreateWithAgentButton(container, this.stateDisposables, 'automations-cards-state-create-button');
+		this.renderShowDisabledButton(container, this.stateDisposables);
+		return button;
 	}
 
 	private renderPartialState(catalogueState: AutomationCatalogueState, unavailableProviders: readonly IAutomationProviderDescriptor[]): void {
@@ -2540,31 +2569,6 @@ function isUnreadAutomationRun(run: IAutomationRun, session: ISession | undefine
 	const state = run.externalResource ? session?.status.read(reader) : undefined;
 	const completed = state !== undefined ? state === SessionStatus.Completed || state === SessionStatus.Error : run.status === 'completed' || run.status === 'failed';
 	return completed && !!session && !session.isRead.read(reader);
-}
-
-function formatSchedule(schedule: IAutomationSchedule): string {
-	const localSchedule = automationScheduleToLocal(schedule);
-	const { interval, scheduleHour, scheduleMinute } = localSchedule;
-	const time = formatHourMinute(scheduleHour, scheduleMinute);
-	switch (interval) {
-		case 'once': return localize('scheduleOnceAt', "Once: {0}", schedule.runAt ? new Date(schedule.runAt).toLocaleString() : '');
-		case 'cron': return localize('scheduleCron', "Cron: {0}", schedule.cronExpression);
-		case 'hourly': return localize('scheduleHourly', "Hourly");
-		case 'daily': return localize('scheduleDailyAt', "Daily at {0}", time);
-		case 'weekdays': return localize('scheduleWeekdaysAt', "Weekdays at {0}", time);
-		case 'weekly': {
-			const day = DAYS_OF_WEEK[((localSchedule.scheduleDay % 7) + 7) % 7];
-			return localize('scheduleWeeklyAt', "{0} at {1}", day, time);
-		}
-		case 'manual': return localize('scheduleManual', "Manual");
-		case 'custom': return localize('scheduleCustom', "Custom schedule");
-		default: return localize('scheduleManual', "Manual");
-	}
-}
-
-function formatHourMinute(hour: number, minute: number): string {
-	const date = new Date(Date.UTC(2000, 0, 1, Math.max(0, Math.min(23, hour | 0)), Math.max(0, Math.min(59, minute | 0))));
-	return date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit', timeZone: 'UTC' });
 }
 
 function getAutomationTargetLabel(target: AutomationTarget): string {

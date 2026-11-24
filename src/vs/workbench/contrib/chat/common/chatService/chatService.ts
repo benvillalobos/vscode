@@ -636,6 +636,11 @@ export interface IChatElicitationRequest {
 	state: IObservable<ElicitationState>;
 	acceptedResult?: Record<string, unknown>;
 	moreActions?: IAction[];
+	/** Secondary decisions shown beside the primary action rather than in its dropdown. */
+	readonly inlineActions?: readonly IAction[];
+	readonly isBusy?: IObservable<boolean>;
+	/** Wrap and vertically bound literal text blocks used for reviewing long inputs. */
+	readonly wrapCodeBlocks?: boolean;
 	riskAssessment?: { toolId: string; parameters: unknown };
 	accept(value: IAction | true): Promise<void>;
 	reject?: () => Promise<void>;
@@ -651,6 +656,7 @@ export interface IChatElicitationRequest {
 
 export interface IChatElicitationRequestSerialized {
 	kind: 'elicitationSerialized';
+	readonly wrapCodeBlocks?: boolean;
 	title: string | IMarkdownString;
 	message: string | IMarkdownString;
 	subtitle: string | IMarkdownString | undefined;

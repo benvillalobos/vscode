@@ -70,7 +70,7 @@ suite('ToolSetsContribution', () => {
 		});
 		const createContribution = (isSessionsWindow: boolean) => {
 			const toolsService = createToolsService();
-			for (const tool of ['listAutomations', 'configureAutomation', 'runAutomation', 'deleteAutomation'].map(makeTool)) {
+			for (const tool of ['listAutomations', 'proposeAutomation', 'configureAutomation', 'runAutomation', 'deleteAutomation'].map(makeTool)) {
 				store.add(toolsService.registerToolData(tool));
 			}
 			const workspaceService = new class extends mock<IAICustomizationWorkspaceService>() {
@@ -87,7 +87,7 @@ suite('ToolSetsContribution', () => {
 			sessionsMembers: Array.from(sessionsToolsService.getToolSet('vscode-automations')?.getTools() ?? [], tool => tool.toolReferenceName),
 			coreHasSet: !!coreToolsService.getToolSet('vscode-automations'),
 		}, {
-			sessionsMembers: ['listAutomations', 'configureAutomation', 'runAutomation', 'deleteAutomation'],
+			sessionsMembers: ['listAutomations', 'proposeAutomation', 'configureAutomation', 'runAutomation', 'deleteAutomation'],
 			coreHasSet: false,
 		});
 	});

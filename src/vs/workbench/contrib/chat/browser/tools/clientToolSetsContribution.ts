@@ -72,9 +72,10 @@ export class ClientToolSetsContribution extends Disposable implements IWorkbench
 				referenceName: 'vscodeAutomations',
 				icon: Codicon.calendar,
 				description: localize('clientToolSet.automations.description', "Automations"),
-				detail: localize('clientToolSet.automations.detail', "List, configure, run, and delete scheduled agent automations."),
+				detail: localize('clientToolSet.automations.detail', "List, propose, configure, run, and delete scheduled agent automations."),
 				members: [
 					'listAutomations',
+					'proposeAutomation',
 					'configureAutomation',
 					'runAutomation',
 					'deleteAutomation',

@@ -3147,44 +3147,46 @@ suite('stateToProgressAdapter', () => {
 			});
 		});
 
-		test('attaches automation result data to live and restored configureAutomation calls', () => {
-			const content: ToolResultContent[] = [{
-				type: ToolResultContentType.Text,
-				text: JSON.stringify({
-					status: 'created',
-					automation: { id: 'automation-1', name: 'Morning review' },
-				}),
-			}];
-			const completed = createCompletedToolCall({
-				toolCallId: 'automation-call',
-				toolName: 'configureAutomation',
-				content,
-			});
-			const restored = completedToolCallToSerialized(completed, undefined, URI.file('/'), 'local');
-			const live = toolCallStateToInvocation(createToolCallState({
-				toolCallId: 'automation-call',
-				toolName: 'configureAutomation',
-			}));
-			finalizeToolInvocation(live, completed);
+		for (const toolName of ['configureAutomation', 'proposeAutomation']) {
+			test(`attaches automation result data to live and restored ${toolName} calls`, () => {
+				const content: ToolResultContent[] = [{
+					type: ToolResultContentType.Text,
+					text: JSON.stringify({
+						status: 'created',
+						automation: { id: 'automation-1', name: 'Morning review' },
+					}),
+				}];
+				const completed = createCompletedToolCall({
+					toolCallId: 'automation-call',
+					toolName,
+					content,
+				});
+				const restored = completedToolCallToSerialized(completed, undefined, URI.file('/'), 'local');
+				const live = toolCallStateToInvocation(createToolCallState({
+					toolCallId: 'automation-call',
+					toolName,
+				}));
+				finalizeToolInvocation(live, completed);
 
-			assert.deepStrictEqual({
-				restored: restored.toolSpecificData,
-				live: live.toolSpecificData,
-			}, {
-				restored: {
-					kind: 'automationConfigured',
-					automationId: 'automation-1',
-					automationName: 'Morning review',
-					operation: 'created',
-				},
-				live: {
-					kind: 'automationConfigured',
-					automationId: 'automation-1',
-					automationName: 'Morning review',
-					operation: 'created',
-				},
+				assert.deepStrictEqual({
+					restored: restored.toolSpecificData,
+					live: live.toolSpecificData,
+				}, {
+					restored: {
+						kind: 'automationConfigured',
+						automationId: 'automation-1',
+						automationName: 'Morning review',
+						operation: 'created',
+					},
+					live: {
+						kind: 'automationConfigured',
+						automationId: 'automation-1',
+						automationName: 'Morning review',
+						operation: 'created',
+					},
+				});
 			});
-		});
+		}
 
 		test('represents another client tool without surfacing its confirmation', () => {
 			const toolCall: ToolCallPendingConfirmationState = {

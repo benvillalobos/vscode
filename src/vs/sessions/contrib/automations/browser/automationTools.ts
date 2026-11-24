@@ -3,11 +3,17 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { raceCancellation } from '../../../../base/common/async.js';
+import { DeferredPromise, raceCancellation } from '../../../../base/common/async.js';
+import { Action } from '../../../../base/common/actions.js';
 import { CancellationToken, CancellationTokenSource } from '../../../../base/common/cancellation.js';
 import { Codicon } from '../../../../base/common/codicons.js';
 import { MarkdownString } from '../../../../base/common/htmlContent.js';
-import { Disposable } from '../../../../base/common/lifecycle.js';
+import { Disposable, DisposableStore } from '../../../../base/common/lifecycle.js';
+import { deepClone } from '../../../../base/common/objects.js';
+import { observableValue } from '../../../../base/common/observable.js';
+import { getErrorMessage, isCancellationError } from '../../../../base/common/errors.js';
+import { AgentHostAutoReplyAnswer } from '../../../../platform/agentHost/common/agentHostSchema.js';
+import { getSessionModeProperty } from '../../../../platform/agentHost/common/sessionConfigProperties.js';
 import { URI } from '../../../../base/common/uri.js';
 import { getComparisonKey, isEqual } from '../../../../base/common/resources.js';
 import { localize } from '../../../../nls.js';
@@ -20,17 +26,22 @@ import { IConfigurationService } from '../../../../platform/configuration/common
 import { ContextKeyExpr } from '../../../../platform/contextkey/common/contextkey.js';
 import { IInstantiationService } from '../../../../platform/instantiation/common/instantiation.js';
 import { ITelemetryService } from '../../../../platform/telemetry/common/telemetry.js';
+import { ILogService } from '../../../../platform/log/common/log.js';
+import { ILabelService } from '../../../../platform/label/common/label.js';
 import { IWorkbenchContribution } from '../../../../workbench/common/contributions.js';
 import { ChatContextKeys } from '../../../../workbench/contrib/chat/common/actions/chatContextKeys.js';
 import { AutomationInterval, AutomationTarget, AutomationWorkspaceIsolation, IAutomationDescriptor, IAutomationRun, IAutomationSchedule, IAutomationSessionTemplate, isAutomationModelConfiguration } from '../../../../workbench/contrib/chat/common/automations/automation.js';
 import { IAutomationRunDispatch, IAutomationRunner } from '../../../../workbench/contrib/chat/common/automations/automationRunner.js';
-import { type AutomationCatalogueState, type AutomationMutationGuard, AutomationMutationUncertainError, AutomationToolCatalog, AutomationSessionTemplateAuthorityError, AutomationUnavailableError, assertAutomationTargetAuthority, ConfigureAutomationToolReferenceName, IAutomationProviderConfiguration, IAutomationService, ICreateAutomationOptions, IUpdateAutomationOptions, serializeAutomationEditableState } from '../../../../workbench/contrib/chat/common/automations/automationService.js';
+import { type AutomationCatalogueState, type AutomationMutationGuard, AutomationMutationUncertainError, AutomationToolCatalog, AutomationSessionTemplateAuthorityError, AutomationUnavailableError, assertAutomationTargetAuthority, ConfigureAutomationToolReferenceName, ProposeAutomationToolReferenceName, IAutomationProviderConfiguration, IAutomationService, ICreateAutomationOptions, IUpdateAutomationOptions, serializeAutomationEditableState } from '../../../../workbench/contrib/chat/common/automations/automationService.js';
 import { ChatAutomationsEnabledContext, CHAT_AUTOMATIONS_ENABLED_SETTING } from '../../../../workbench/contrib/chat/common/automations/automationsEnabled.js';
-import { getAutomationCronValidationError } from '../../../../workbench/contrib/chat/common/automations/schedule.js';
-import { IChatAutomationConfiguredData } from '../../../../workbench/contrib/chat/common/chatService/chatService.js';
-import { ChatPermissionLevel } from '../../../../workbench/contrib/chat/common/constants.js';
+import { formatAutomationSchedule, getAutomationCronValidationError } from '../../../../workbench/contrib/chat/common/automations/schedule.js';
+import { IAutomationDialogService } from '../../../../workbench/contrib/chat/common/automations/automationDialogService.js';
+import { ElicitationState, IChatAutomationConfiguredData, IChatService } from '../../../../workbench/contrib/chat/common/chatService/chatService.js';
+import { ChatElicitationRequestPart } from '../../../../workbench/contrib/chat/common/model/chatProgressTypes/chatElicitationRequestPart.js';
+import { ChatConfiguration, ChatPermissionLevel } from '../../../../workbench/contrib/chat/common/constants.js';
 import { CountTokensCallback, ILanguageModelToolsService, IPreparedToolInvocation, IToolData, IToolImpl, IToolInvocation, IToolInvocationPreparationContext, IToolResult, ToolDataSource, ToolProgress } from '../../../../workbench/contrib/chat/common/tools/languageModelToolsService.js';
 import { ISessionsProvidersService } from '../../../../workbench/contrib/sessions/browser/sessionsProvidersService.js';
+import { getSessionConfigProvider, isAgentHostProvider } from '../../../../workbench/contrib/sessions/common/agentHostSessionsProvider.js';
 import { IPendingScheduledChatRequest, IScheduledChatsService } from '../../../../workbench/contrib/sessions/browser/scheduledChatsService.js';
 import { ISession } from '../../../../workbench/services/sessions/common/session.js';
 import { IProviderSessionType, ISessionsManagementService } from '../../../../workbench/contrib/sessions/common/sessionsManagement.js';
@@ -38,6 +49,7 @@ import { logAutomationConfigureOutcome } from './automationTelemetry.js';
 
 export const ListAutomationsToolId = 'vscode_listAutomations';
 export const ConfigureAutomationToolId = 'vscode_configureAutomation';
+export const ProposeAutomationToolId = 'vscode_proposeAutomation';
 export const RunAutomationToolId = 'vscode_runAutomation';
 export const DeleteAutomationToolId = 'vscode_deleteAutomation';
 
@@ -902,14 +914,34 @@ The change uses the current tool-approval policy. When approval is required, the
 			}
 			created = submission.automation;
 		} else {
-			created = await this.automationService.createAutomation(options, this.createMutationGuard(token));
+			created = await this.createRecurringAutomation(options, token);
 		}
-		const result = automationToolResult(JSON.stringify({ status: 'created', automation: toAutomationToolOutput(created) }, undefined, 2));
-		result.toolSpecificData = toAutomationConfiguredData(created, 'created');
-		result.toolResultMessage = created.purpose === 'scheduledChat'
-			? localize('automation.tool.configure.scheduled', "Scheduled {0} for {1}", created.name, new Date(created.schedule.runAt!).toLocaleString(undefined, { timeZoneName: 'short' }))
-			: localize('automation.tool.configure.created', "Created automation {0}", created.name);
-		return result;
+		return automationCreatedResult(created);
+	}
+
+	resolveCreateOptions(parameters: unknown, sessionResource: URI, originatingChatResource: URI | undefined, toolCallId: string): ICreateAutomationOptions {
+		if (!isAutomationsEnabled(this.configurationService)) {
+			throw new AutomationToolInputError('Automations are disabled.');
+		}
+		const proposal = this.parseProposal(parameters, sessionResource, originatingChatResource, toolCallId);
+		if (proposal.kind !== 'create' || proposal.initialValues.schedule.interval === 'once') {
+			throw new AutomationToolInputError('Proposals support new recurring or manual automations. Use configureAutomation for updates and one-time requests.');
+		}
+		const target = this.resolveAvailableTarget(proposal.initialValues.target);
+		this.assertContinueSessionSupported(proposal.initialValues.continueSession, target.providerId);
+		return { ...proposal.initialValues, target, enabled: proposal.initialValues.enabled ?? true };
+	}
+
+	async createRecurringAutomation(options: ICreateAutomationOptions, token: CancellationToken): Promise<IAutomationDescriptor> {
+		this.createMutationGuard(token)();
+		if (options.schedule.interval === 'once' || options.purpose === 'scheduledChat') {
+			throw new AutomationToolInputError('One-time requests must use the scheduled request workflow.');
+		}
+		if (!this.automationService.canCreateAutomation(options.target.providerId)) {
+			throw new AutomationToolInputError('The selected provider is unavailable or does not support automations.');
+		}
+		this.assertContinueSessionSupported(options.continueSession, options.target.providerId);
+		return this.automationService.createAutomation(options, this.createMutationGuard(token));
 	}
 
 	private async applyUpdate(existing: IAutomationDescriptor, patch: IUpdateAutomationOptions, token: CancellationToken): Promise<IToolResult> {
@@ -1184,6 +1216,237 @@ The change uses the current tool-approval policy. When approval is required, the
 	}
 }
 
+export class ProposeAutomationTool implements IToolImpl {
+
+	constructor(
+		private readonly configureTool: ConfigureAutomationTool,
+		@IChatService private readonly chatService: IChatService,
+		@IAutomationDialogService private readonly dialogService: IAutomationDialogService,
+		@ISessionsManagementService private readonly sessionsManagementService: ISessionsManagementService,
+		@ISessionsProvidersService private readonly providersService: ISessionsProvidersService,
+		@IConfigurationService private readonly configurationService: IConfigurationService,
+		@ILogService private readonly logService: ILogService,
+		@ILabelService private readonly labelService: ILabelService,
+	) { }
+
+	getToolData(): IToolData {
+		const inputSchema = deepClone(this.configureTool.getToolData().inputSchema!);
+		delete inputSchema.properties!.automationId;
+		const schedule = inputSchema.properties!.schedule;
+		delete schedule.properties!.runAt;
+		schedule.properties!.interval.enum = automationIntervals.filter(interval => interval !== 'once');
+		schedule.required = ['interval'];
+		inputSchema.properties!.target.properties!.kind.enum = ['currentSession', 'workspace', 'quickChat'];
+		inputSchema.required = ['name', 'prompt', 'schedule'];
+		return {
+			id: ProposeAutomationToolId,
+			toolReferenceName: ProposeAutomationToolReferenceName,
+			canBeReferencedInPrompt: false,
+			icon: Codicon.calendar,
+			displayName: localize('automation.tool.propose.displayName', "Propose Automation"),
+			userDescription: localize('automation.tool.propose.description', "Review an automation before creating it"),
+			modelDescription: 'Present a new recurring or manual automation for review during the /automate proposal workflow. Use configureAutomation instead for updates and clear one-time requests. Call listAutomations first to check capabilities and duplicates, and resolve missing decisions before proposing. Supply the complete draft and exact prompt; the card displays them, so do not repeat the full draft in chat. Approve creates the reviewed automation; Edit opens the prefilled creation dialog; Cancel creates nothing. Creation defaults to enabled and may start scheduled work; preserve explicit disabled requests. This review is user input, not a tool permission prompt. In Autopilot or Auto-Reply the result delegates the decision to you without creating: decide pragmatically whether to call configureAutomation under existing authorization. After a created result, never create again. After cancellation, do not retry unless asked. Reconcile unknown outcomes with listAutomations before another request.',
+			source: ToolDataSource.Internal,
+			when: automationToolWhen,
+			runsInWorkspace: false,
+			inputSchema,
+		};
+	}
+
+	async prepareToolInvocation(): Promise<IPreparedToolInvocation> {
+		return {
+			invocationMessage: localize('automation.tool.propose.invocation', "Reviewing an automation"),
+			pastTenseMessage: localize('automation.tool.propose.past', "Reviewed an automation"),
+		};
+	}
+
+	async invoke(invocation: IToolInvocation, _countTokens: CountTokensCallback, _progress: ToolProgress, token: CancellationToken): Promise<IToolResult> {
+		if (token.isCancellationRequested) {
+			return automationToolCancelled();
+		}
+		const resource = invocation.context?.sessionResource;
+		const model = resource && this.chatService.getSession(resource);
+		const request = model && (invocation.chatRequestId
+			? model.getRequests().find(request => request.id === invocation.chatRequestId)
+			: model.getRequests().at(-1));
+		if (!resource || !request || request.response?.isComplete || request.response?.isCanceled) {
+			return automationToolError('An automation proposal requires an active chat request.');
+		}
+
+		const configurationLease = new DisposableStore();
+		try {
+			const origin = invocation.originatingChatResource ?? resource;
+			const current = this.sessionsManagementService.getSessionForChatResource(origin);
+			const session = current?.session ?? this.sessionsManagementService.getSession(origin);
+			if (!session) {
+				throw new AutomationToolInputError('The originating session is no longer available.');
+			}
+			const options = this.configureTool.resolveCreateOptions(invocation.parameters, origin, invocation.originatingChatResource, invocation.callId);
+			const provider = this.providersService.getProvider(session.providerId, session.sessionId);
+			if (!provider) {
+				throw new AutomationToolInputError('The originating provider is unavailable.');
+			}
+			const chat = current?.chat.resource ?? session.mainChat.get().resource;
+			if (isAgentHostProvider(provider)) {
+				configurationLease.add(await provider.acquireSessionConfig(session.sessionId, chat, token));
+			}
+			let isAutopilot = request.modeInfo?.permissionLevel === ChatPermissionLevel.Autopilot;
+			const configProvider = getSessionConfigProvider(provider);
+			if (configProvider) {
+				const config = configProvider.getSessionConfig(session.sessionId, chat);
+				if (!config) {
+					throw new AutomationToolInputError('The originating chat configuration is not ready.');
+				}
+				const mode = getSessionModeProperty(config.schema);
+				isAutopilot = mode !== undefined && (config.values[mode.key] ?? mode.schema.default) === 'autopilot';
+			}
+			if (isAutopilot || this.configurationService.getValue<boolean>(ChatConfiguration.AutoReply)) {
+				return automationToolResult(JSON.stringify({ status: 'delegated', message: AgentHostAutoReplyAnswer }));
+			}
+			return await this.review(options, invocation, token);
+		} catch (error) {
+			if (isCancellationError(error)) {
+				return automationToolCancelled();
+			}
+			this.logService.error('[ProposeAutomationTool] Proposal failed', error);
+			return error instanceof AutomationToolMutationBlockedError ? error.result : automationToolError(getErrorMessage(error));
+		} finally {
+			configurationLease.dispose();
+		}
+	}
+
+	private async review(options: ICreateAutomationOptions, invocation: IToolInvocation, token: CancellationToken): Promise<IToolResult> {
+		const store = new DisposableStore();
+		const cancellation = store.add(new CancellationTokenSource(token));
+		const completion = new DeferredPromise<IToolResult>();
+		const busy = observableValue('automationProposal.busy', false);
+		let uncertain: IToolResult | undefined;
+		const finish = (result: IToolResult): ElicitationState => {
+			void completion.complete(result);
+			return result.toolSpecificData?.kind === 'automationConfigured' ? ElicitationState.Accepted : ElicitationState.Rejected;
+		};
+		const create = async (value: ICreateAutomationOptions) => {
+			if (uncertain) {
+				throw new AutomationMutationUncertainError('The previous creation outcome is unknown. Refresh automations before submitting another request.');
+			}
+			try {
+				return await this.configureTool.createRecurringAutomation(value, cancellation.token);
+			} catch (error) {
+				if (error instanceof AutomationMutationUncertainError) {
+					uncertain = automationUnknownOutcome(error.message);
+				}
+				throw error;
+			}
+		};
+		const edit = store.add(new Action('automation.proposal.edit', localize('automation.tool.propose.edit', "Edit")));
+		const review = new ChatElicitationRequestPart(
+			localize('automation.tool.propose.title', "Review automation"),
+			this.describe(options),
+			'',
+			localize('automation.tool.propose.approve', "Approve"),
+			localize('automation.tool.propose.cancel', "Cancel"),
+			async choice => {
+				if (busy.get() || completion.isSettled) {
+					return review.state.get();
+				}
+				busy.set(true, undefined);
+				try {
+					if (choice === edit) {
+						let created: IAutomationDescriptor | undefined;
+						await this.dialogService.showAutomationDialog({
+							initialValues: options,
+							token: cancellation.token,
+							commit: async result => {
+								if (result.kind !== 'create') {
+									throw new Error('An automation proposal must create a new definition.');
+								}
+								created = await create(result.value);
+							},
+						});
+						return finish(created ? automationCreatedResult(created) : uncertain ?? automationToolCancelled());
+					}
+					if (choice !== true) {
+						return finish(automationToolCancelled());
+					}
+					return finish(automationCreatedResult(await create(options)));
+				} catch (error) {
+					this.logService.error('[ProposeAutomationTool] Creation failed', error);
+					return finish(uncertain ?? (error instanceof AutomationToolMutationBlockedError ? error.result : automationToolError(getErrorMessage(error))));
+				} finally {
+					busy.set(false, undefined);
+				}
+			},
+			async () => busy.get() || completion.isSettled ? review.state.get() : finish(automationToolCancelled()),
+			ToolDataSource.Internal,
+			undefined,
+			() => cancellation.cancel(),
+		);
+		review.inlineActions = [edit];
+		review.isBusy = busy;
+		review.keepActionsWhilePending = true;
+		review.wrapCodeBlocks = true;
+		store.add(cancellation.token.onCancellationRequested(() => {
+			if (!busy.get() && !completion.isSettled) {
+				review.state.set(finish(automationToolCancelled()), undefined);
+			}
+		}));
+		try {
+			const model = this.chatService.getSession(invocation.context!.sessionResource);
+			const request = invocation.chatRequestId
+				? model?.getRequests().find(request => request.id === invocation.chatRequestId)
+				: model?.getRequests().at(-1);
+			if (!request || cancellation.token.isCancellationRequested) {
+				return automationToolCancelled();
+			}
+			this.chatService.appendProgress(request, review);
+			return await completion.p;
+		} finally {
+			store.dispose();
+		}
+	}
+
+	private describe(options: ICreateAutomationOptions): MarkdownString {
+		const provider = options.target.providerId ? this.providersService.getProvider(options.target.providerId) : undefined;
+		const message = new MarkdownString();
+		const field = (label: string, value: string) => message.appendMarkdown(`**${label}** `).appendText(value).appendMarkdown('\n\n');
+		field(localize('automation.proposal.name', "Name:"), options.name);
+		const agentLabel = provider?.sessionTypes.find(type => type.id === options.target.sessionTypeId)?.label ?? options.target.sessionTypeId;
+		field(localize('automation.proposal.runs', "Runs:"), localize('automation.proposal.target', "{0} - {1}", agentLabel, provider?.environment.label ?? options.target.providerId));
+		if (options.target.kind === 'workspace') {
+			field(localize('automation.proposal.folder', "Folder:"), this.labelService.getUriLabel(options.target.folderUri));
+			field(localize('automation.proposal.isolation', "Isolation:"), options.target.isolation.kind === 'worktree'
+				? localize('automation.proposal.worktree', "Worktree from {0}", options.target.isolation.branch)
+				: options.target.isolation.kind === 'folder' ? localize('automation.proposal.direct', "Folder directly") : localize('automation.proposal.default', "Provider default"));
+		} else {
+			field(localize('automation.proposal.location', "Location:"), localize('automation.proposal.chat', "Chat"));
+		}
+		field(localize('automation.proposal.when', "When:"), formatAutomationSchedule(options.schedule));
+		if (options.schedule.interval !== 'manual') {
+			field(localize('automation.proposal.zone', "Time zone:"), options.schedule.cronTimeZone ?? Intl.DateTimeFormat().resolvedOptions().timeZone);
+			if (options.schedule.timeZone === 'UTC') {
+				message.appendText(localize('automation.proposal.utc', "Displayed in local time; the saved schedule is fixed to UTC.")).appendMarkdown('\n\n');
+			}
+		}
+		field(localize('automation.proposal.state', "State:"), options.enabled ? localize('automation.proposal.enabled', "Enabled") : localize('automation.proposal.disabled', "Disabled"));
+		const endDate = getAutomationAfterDate(options.disableConditions);
+		if (endDate) {
+			field(localize('automation.proposal.until', "Until:"), new Date(endDate).toLocaleString());
+		}
+		if (options.continueSession) {
+			field(localize('automation.proposal.continue', "Conversation:"), localize('automation.proposal.sameChat', "Continue the previous run's chat"));
+		}
+		const configuration = options.sessionTemplate ?? { modelId: options.modelId, mode: options.mode, permissionLevel: options.permissionLevel };
+		message.appendMarkdown(`**${localize('automation.proposal.settings', "Session settings:")}**\n\n`);
+		if (Object.values(configuration).some(value => value !== undefined)) {
+			message.appendCodeblock('json', JSON.stringify(configuration, undefined, 2));
+		} else {
+			message.appendText(localize('automation.proposal.defaultSettings', "Provider defaults; current policy still applies.")).appendMarkdown('\n\n');
+		}
+		message.appendMarkdown(`**${localize('automation.proposal.prompt', "Prompt:")}**\n\n`).appendCodeblock('text', options.prompt);
+		return message;
+	}
+}
+
 export class AutomationToolsContribution extends Disposable implements IWorkbenchContribution {
 
 	static readonly ID = 'sessions.contrib.automationTools';
@@ -1196,10 +1459,12 @@ export class AutomationToolsContribution extends Disposable implements IWorkbenc
 
 		const listTool = instantiationService.createInstance(ListAutomationsTool);
 		const configureTool = instantiationService.createInstance(ConfigureAutomationTool);
+		const proposeTool = instantiationService.createInstance(ProposeAutomationTool, configureTool);
 		const runTool = instantiationService.createInstance(RunAutomationTool);
 		const deleteTool = instantiationService.createInstance(DeleteAutomationTool);
 		this._register(toolsService.registerTool(listTool.getToolData(), listTool));
 		this._register(toolsService.registerTool(configureTool.getToolData(), configureTool));
+		this._register(toolsService.registerTool(proposeTool.getToolData(), proposeTool));
 		this._register(toolsService.registerTool(runTool.getToolData(), runTool));
 		this._register(toolsService.registerTool(deleteTool.getToolData(), deleteTool));
 	}
@@ -1522,6 +1787,15 @@ function toAutomationConfiguredData(automation: IAutomationDescriptor, operation
 
 function automationToolResult(value: string): IToolResult {
 	return { content: [{ kind: 'text', value }] };
+}
+
+function automationCreatedResult(created: IAutomationDescriptor): IToolResult {
+	const result = automationToolResult(JSON.stringify({ status: 'created', automation: toAutomationToolOutput(created) }, undefined, 2));
+	result.toolSpecificData = toAutomationConfiguredData(created, 'created');
+	result.toolResultMessage = created.purpose === 'scheduledChat'
+		? localize('automation.tool.configure.scheduled', "Scheduled {0} for {1}", created.name, new Date(created.schedule.runAt!).toLocaleString(undefined, { timeZoneName: 'short' }))
+		: localize('automation.tool.configure.created', "Created automation {0}", created.name);
+	return result;
 }
 
 function automationUnknownOutcome(message: string, automation?: IAutomationDescriptor): IToolResult {
